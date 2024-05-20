@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RolePermission.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">RolePermission.java</span></div><h1>RolePermission.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
+
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.tinkerpop.shaded.jackson.annotation.JsonProperty;
+import org.apache.tinkerpop.shaded.jackson.core.JsonGenerator;
+import org.apache.tinkerpop.shaded.jackson.core.JsonParser;
+import org.apache.tinkerpop.shaded.jackson.core.type.TypeReference;
+import org.apache.tinkerpop.shaded.jackson.databind.DeserializationContext;
+import org.apache.tinkerpop.shaded.jackson.databind.JsonMappingException;
+import org.apache.tinkerpop.shaded.jackson.databind.SerializerProvider;
+import org.apache.tinkerpop.shaded.jackson.databind.deser.std.StdDeserializer;
+import org.apache.tinkerpop.shaded.jackson.databind.module.SimpleModule;
+import org.apache.tinkerpop.shaded.jackson.databind.ser.std.StdSerializer;
+
+import org.apache.hugegraph.util.E;
+
+public class RolePermission {
+
+<span class="nc" id="L44">    public static final RolePermission NONE = RolePermission.role(</span>
+                                              &quot;none&quot;, HugePermission.NONE);
+<span class="nc" id="L46">    public static final RolePermission ADMIN = RolePermission.role(</span>
+                                               &quot;admin&quot;, HugePermission.ANY);
+
+    static {
+<span class="nc" id="L50">        SimpleModule module = new SimpleModule();</span>
+
+<span class="nc" id="L52">        module.addSerializer(RolePermission.class, new RolePermissionSer());</span>
+<span class="nc" id="L53">        module.addDeserializer(RolePermission.class, new RolePermissionDeser());</span>
+
+<span class="nc" id="L55">        JsonUtil.registerModule(module);</span>
+<span class="nc" id="L56">    }</span>
+
+    // Mapping of: graph -&gt; action -&gt; resource
+    @JsonProperty(&quot;roles&quot;)
+    private final Map&lt;String, Map&lt;HugePermission, List&lt;HugeResource&gt;&gt;&gt; roles;
+
+    public RolePermission() {
+<span class="nc" id="L63">        this(new TreeMap&lt;&gt;());</span>
+<span class="nc" id="L64">    }</span>
+
+    private RolePermission(Map&lt;String, Map&lt;HugePermission,
+<span class="nc" id="L67">                                       List&lt;HugeResource&gt;&gt;&gt; roles) {</span>
+<span class="nc" id="L68">        this.roles = roles;</span>
+<span class="nc" id="L69">    }</span>
+
+    protected void add(String graph, String action,
+                       List&lt;HugeResource&gt; resources) {
+<span class="nc" id="L73">        this.add(graph, HugePermission.valueOf(action), resources);</span>
+<span class="nc" id="L74">    }</span>
+
+    protected void add(String graph, HugePermission action,
+                       List&lt;HugeResource&gt; resources) {
+<span class="nc" id="L78">        Map&lt;HugePermission, List&lt;HugeResource&gt;&gt; permissions =</span>
+<span class="nc" id="L79">                                                this.roles.get(graph);</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        if (permissions == null) {</span>
+<span class="nc" id="L81">            permissions = new TreeMap&lt;&gt;();</span>
+<span class="nc" id="L82">            this.roles.put(graph, permissions);</span>
+        }
+<span class="nc" id="L84">        List&lt;HugeResource&gt; mergedResources = permissions.get(action);</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (mergedResources == null) {</span>
+<span class="nc" id="L86">            mergedResources = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L87">            permissions.put(action, mergedResources);</span>
+        }
+<span class="nc" id="L89">        mergedResources.addAll(resources);</span>
+<span class="nc" id="L90">    }</span>
+
+    public Map&lt;String, Map&lt;HugePermission, List&lt;HugeResource&gt;&gt;&gt; map() {
+<span class="nc" id="L93">        return Collections.unmodifiableMap(this.roles);</span>
+    }
+
+    public boolean contains(RolePermission other) {
+        for (Map.Entry&lt;String, Map&lt;HugePermission, List&lt;HugeResource&gt;&gt;&gt; e1 :
+<span class="nc bnc" id="L98" title="All 2 branches missed.">             other.roles.entrySet()) {</span>
+<span class="nc" id="L99">            String g = e1.getKey();</span>
+<span class="nc" id="L100">            Map&lt;HugePermission, List&lt;HugeResource&gt;&gt; perms = this.roles.get(g);</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            if (perms == null) {</span>
+<span class="nc" id="L102">                return false;</span>
+            }
+            for (Map.Entry&lt;HugePermission, List&lt;HugeResource&gt;&gt; e2 :
+<span class="nc bnc" id="L105" title="All 2 branches missed.">                e1.getValue().entrySet()) {</span>
+<span class="nc" id="L106">                List&lt;HugeResource&gt; ress = perms.get(e2.getKey());</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">                if (ress == null) {</span>
+<span class="nc" id="L108">                    return false;</span>
+                }
+<span class="nc bnc" id="L110" title="All 2 branches missed.">                for (HugeResource r : e2.getValue()) {</span>
+<span class="nc" id="L111">                    boolean contains = false;</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">                    for (HugeResource res : ress) {</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">                        if (res.contains(r)) {</span>
+<span class="nc" id="L114">                            contains = true;</span>
+<span class="nc" id="L115">                            break;</span>
+                        }
+<span class="nc" id="L117">                    }</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">                    if (!contains) {</span>
+<span class="nc" id="L119">                        return false;</span>
+                    }
+<span class="nc" id="L121">                }</span>
+<span class="nc" id="L122">            }</span>
+<span class="nc" id="L123">        }</span>
+<span class="nc" id="L124">        return true;</span>
+    }
+
+    @Override
+    public boolean equals(Object object) {
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (!(object instanceof RolePermission)) {</span>
+<span class="nc" id="L130">            return false;</span>
+        }
+<span class="nc" id="L132">        RolePermission other = (RolePermission) object;</span>
+<span class="nc" id="L133">        return Objects.equals(this.roles, other.roles);</span>
+    }
+
+    public int hashCode() {
+<span class="nc" id="L137">        return Objects.hash(this.roles);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L142">        return this.roles.toString();</span>
+    }
+
+    public String toJson() {
+<span class="nc" id="L146">        return JsonUtil.toJson(this);</span>
+    }
+
+    public static RolePermission fromJson(Object json) {
+        RolePermission role;
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (json instanceof String) {</span>
+<span class="nc" id="L152">            role = JsonUtil.fromJson((String) json, RolePermission.class);</span>
+        } else {
+            // Optimized json with RolePermission object
+<span class="nc" id="L155">            E.checkArgument(json instanceof RolePermission,</span>
+                            &quot;Invalid role value: %s&quot;, json);
+<span class="nc" id="L157">            role = (RolePermission) json;</span>
+        }
+<span class="nc" id="L159">        return role;</span>
+    }
+
+    public static RolePermission all(String graph) {
+<span class="nc" id="L163">        return role(graph, HugePermission.ANY);</span>
+    }
+
+    public static RolePermission role(String graph, HugePermission perm) {
+<span class="nc" id="L167">        RolePermission role = new RolePermission();</span>
+<span class="nc" id="L168">        role.add(graph, perm, HugeResource.ALL_RES);</span>
+<span class="nc" id="L169">        return role;</span>
+    }
+
+    public static RolePermission none() {
+<span class="nc" id="L173">        return NONE;</span>
+    }
+
+    public static RolePermission admin() {
+<span class="nc" id="L177">        return ADMIN;</span>
+    }
+
+    public static RolePermission builtin(RolePermission role) {
+<span class="nc" id="L181">        E.checkNotNull(role, &quot;role&quot;);</span>
+<span class="nc bnc" id="L182" title="All 4 branches missed.">        if (role == ADMIN || role.equals(ADMIN)) {</span>
+<span class="nc" id="L183">            return ADMIN;</span>
+        }
+<span class="nc bnc" id="L185" title="All 4 branches missed.">        if (role == NONE || role.equals(NONE)) {</span>
+<span class="nc" id="L186">            return NONE;</span>
+        }
+<span class="nc" id="L188">        return role;</span>
+    }
+
+    private static class RolePermissionSer
+                   extends StdSerializer&lt;RolePermission&gt; {
+
+        private static final long serialVersionUID = -2533310506459479383L;
+
+        public RolePermissionSer() {
+<span class="nc" id="L197">            super(RolePermission.class);</span>
+<span class="nc" id="L198">        }</span>
+
+        @Override
+        public void serialize(RolePermission role, JsonGenerator generator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc" id="L204">            generator.writeStartObject();</span>
+<span class="nc" id="L205">            generator.writeObjectField(&quot;roles&quot;, role.roles);</span>
+<span class="nc" id="L206">            generator.writeEndObject();</span>
+<span class="nc" id="L207">        }</span>
+    }
+
+    private static class RolePermissionDeser
+                   extends StdDeserializer&lt;RolePermission&gt; {
+
+        private static final long serialVersionUID = -2038234657843260957L;
+
+        public RolePermissionDeser() {
+<span class="nc" id="L216">            super(RolePermission.class);</span>
+<span class="nc" id="L217">        }</span>
+
+        @Override
+        public RolePermission deserialize(JsonParser parser,
+                                          DeserializationContext ctxt)
+                                          throws IOException {
+<span class="nc" id="L223">            TypeReference&lt;?&gt; type = new TypeReference&lt;TreeMap&lt;String,</span>
+<span class="nc" id="L224">                             TreeMap&lt;HugePermission, List&lt;HugeResource&gt;&gt;&gt;&gt;() {};</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">            if (&quot;roles&quot;.equals(parser.nextFieldName())) {</span>
+<span class="nc" id="L226">                parser.nextValue();</span>
+<span class="nc" id="L227">                return new RolePermission(parser.readValueAs(type));</span>
+            }
+<span class="nc" id="L229">            throw JsonMappingException.from(parser, &quot;Expect field roles&quot;);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

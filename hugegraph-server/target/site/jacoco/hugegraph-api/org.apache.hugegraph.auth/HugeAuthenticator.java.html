@@ -1,0 +1,502 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeAuthenticator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">HugeAuthenticator.java</span></div><h1>HugeAuthenticator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.auth.HugeGraphAuthProxy.Context;
+import org.apache.hugegraph.auth.SchemaDefine.AuthElement;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.OptionSpace;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.type.Nameable;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.tinkerpop.gremlin.groovy.jsr223.dsl.credential.CredentialGraphTokens;
+import org.apache.tinkerpop.gremlin.server.auth.AuthenticatedUser;
+import org.apache.tinkerpop.gremlin.server.auth.AuthenticationException;
+import org.apache.tinkerpop.gremlin.server.auth.Authenticator;
+import org.apache.tinkerpop.shaded.jackson.annotation.JsonProperty;
+
+public interface HugeAuthenticator extends Authenticator {
+
+    String KEY_USERNAME = CredentialGraphTokens.PROPERTY_USERNAME;
+    String KEY_PASSWORD = CredentialGraphTokens.PROPERTY_PASSWORD;
+    String KEY_TOKEN = &quot;token&quot;;
+    String KEY_ROLE = &quot;role&quot;;
+    String KEY_ADDRESS = &quot;address&quot;;
+    String KEY_PATH = &quot;path&quot;;
+
+    String USER_SYSTEM = &quot;system&quot;;
+    String USER_ADMIN = &quot;admin&quot;;
+    String USER_ANONY = AuthenticatedUser.ANONYMOUS_USERNAME;
+
+<span class="nc" id="L55">    RolePermission ROLE_NONE = RolePermission.none();</span>
+<span class="nc" id="L56">    RolePermission ROLE_ADMIN = RolePermission.admin();</span>
+
+    String VAR_PREFIX = &quot;$&quot;;
+    String KEY_OWNER = VAR_PREFIX + &quot;owner&quot;;
+    String KEY_DYNAMIC = VAR_PREFIX + &quot;dynamic&quot;;
+    String KEY_ACTION = VAR_PREFIX + &quot;action&quot;;
+
+    void setup(HugeConfig config);
+
+    UserWithRole authenticate(String username, String password, String token);
+
+    AuthManager authManager();
+
+    HugeGraph graph();
+
+    @Override
+    default void setup(final Map&lt;String, Object&gt; config) {
+<span class="nc bnc" id="L73" title="All 2 branches missed.">        E.checkState(config != null,</span>
+                     &quot;Must provide a 'config' in the 'authentication'&quot;);
+<span class="nc" id="L75">        String path = (String) config.get(&quot;tokens&quot;);</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        E.checkState(path != null,</span>
+                     &quot;Credentials configuration missing key 'tokens'&quot;);
+<span class="nc" id="L78">        OptionSpace.register(&quot;tokens&quot;, ServerOptions.instance());</span>
+<span class="nc" id="L79">        this.setup(new HugeConfig(path));</span>
+<span class="nc" id="L80">    }</span>
+
+    @Override
+    default User authenticate(final Map&lt;String, String&gt; credentials)
+                              throws AuthenticationException {
+
+<span class="nc" id="L86">        HugeGraphAuthProxy.resetContext();</span>
+
+<span class="nc" id="L88">        User user = User.ANONYMOUS;</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        if (this.requireAuthentication()) {</span>
+<span class="nc" id="L90">            String username = credentials.get(KEY_USERNAME);</span>
+<span class="nc" id="L91">            String password = credentials.get(KEY_PASSWORD);</span>
+<span class="nc" id="L92">            String token = credentials.get(KEY_TOKEN);</span>
+
+            // Currently we just use config tokens to authenticate
+<span class="nc" id="L95">            UserWithRole role = this.authenticate(username, password, token);</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">            if (!verifyRole(role.role())) {</span>
+                // Throw if not certified
+<span class="nc" id="L98">                String message = &quot;Incorrect username or password&quot;;</span>
+<span class="nc" id="L99">                throw new AuthenticationException(message);</span>
+            }
+<span class="nc" id="L101">            user = new User(role.username(), role.role());</span>
+<span class="nc" id="L102">            user.client(credentials.get(KEY_ADDRESS));</span>
+        }
+
+<span class="nc" id="L105">        HugeGraphAuthProxy.logUser(user, credentials.get(KEY_PATH));</span>
+        /*
+         * Set authentication context
+         * TODO: unset context after finishing a request
+         */
+<span class="nc" id="L110">        HugeGraphAuthProxy.setContext(new Context(user));</span>
+
+<span class="nc" id="L112">        return user;</span>
+    }
+
+    @Override
+    default boolean requireAuthentication() {
+<span class="nc" id="L117">        return true;</span>
+    }
+
+    default boolean verifyRole(RolePermission role) {
+<span class="nc bnc" id="L121" title="All 4 branches missed.">        if (role == ROLE_NONE || role == null) {</span>
+<span class="nc" id="L122">            return false;</span>
+        } else {
+<span class="nc" id="L124">            return true;</span>
+        }
+    }
+
+    void initAdminUser(String password) throws Exception;
+
+    static HugeAuthenticator loadAuthenticator(HugeConfig conf) {
+<span class="nc" id="L131">        String authClass = conf.get(ServerOptions.AUTHENTICATOR);</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        if (authClass.isEmpty()) {</span>
+<span class="nc" id="L133">            return null;</span>
+        }
+
+        HugeAuthenticator authenticator;
+<span class="nc" id="L137">        ClassLoader cl = conf.getClass().getClassLoader();</span>
+        try {
+<span class="nc" id="L139">            authenticator = (HugeAuthenticator) cl.loadClass(authClass)</span>
+<span class="nc" id="L140">                                                  .newInstance();</span>
+<span class="nc" id="L141">        } catch (Exception e) {</span>
+<span class="nc" id="L142">            throw new HugeException(&quot;Failed to load authenticator: '%s'&quot;,</span>
+                                    authClass, e);
+<span class="nc" id="L144">        }</span>
+
+<span class="nc" id="L146">        authenticator.setup(conf);</span>
+
+<span class="nc" id="L148">        return authenticator;</span>
+    }
+
+    class User extends AuthenticatedUser {
+
+<span class="nc" id="L153">        public static final User ADMIN = new User(USER_ADMIN, ROLE_ADMIN);</span>
+<span class="nc" id="L154">        public static final User ANONYMOUS = new User(USER_ANONY, ROLE_ADMIN);</span>
+
+        private final RolePermission role;
+        private final Id userId;
+        private String client; // peer
+
+        public User(String username, RolePermission role) {
+<span class="nc" id="L161">            super(username);</span>
+<span class="nc" id="L162">            E.checkNotNull(username, &quot;username&quot;);</span>
+<span class="nc" id="L163">            E.checkNotNull(role, &quot;role&quot;);</span>
+<span class="nc" id="L164">            this.role = role;</span>
+<span class="nc" id="L165">            this.client = null;</span>
+            /*
+             * 1. Use username as the id to simplify getting userId
+             * 2. Only used as cache's key in auth proxy now
+             */
+<span class="nc" id="L170">            this.userId = IdGenerator.of(username);</span>
+<span class="nc" id="L171">        }</span>
+
+        public String username() {
+<span class="nc" id="L174">            return this.getName();</span>
+        }
+
+        public Id userId() {
+<span class="nc" id="L178">            return this.userId;</span>
+        }
+
+        public RolePermission role() {
+<span class="nc" id="L182">            return this.role;</span>
+        }
+
+        public void client(String client) {
+<span class="nc" id="L186">            this.client = client;</span>
+<span class="nc" id="L187">        }</span>
+
+        public String client() {
+<span class="nc" id="L190">            return client;</span>
+        }
+
+        @Override
+        public boolean isAnonymous() {
+<span class="nc bnc" id="L195" title="All 4 branches missed.">            return this == ANONYMOUS || this == ANONYMOUS_USER;</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L200">            return this.username().hashCode() ^ this.role().hashCode();</span>
+        }
+
+        @Override
+        public boolean equals(Object object) {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">            if (this == object) {</span>
+<span class="nc" id="L206">                return true;</span>
+            }
+<span class="nc bnc" id="L208" title="All 2 branches missed.">            if (!(object instanceof User)) {</span>
+<span class="nc" id="L209">                return false;</span>
+            }
+
+<span class="nc" id="L212">            User other = (User) object;</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">            return this.username().equals(other.username()) &amp;&amp;</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">                   this.role().equals(other.role());</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L219">            return String.format(&quot;User{username=%s,role=%s}&quot;,</span>
+<span class="nc" id="L220">                                 this.username(), this.role());</span>
+        }
+
+        public String toJson() {
+<span class="nc" id="L224">            UserJson json = new UserJson();</span>
+<span class="nc" id="L225">            json.username = this.username();</span>
+<span class="nc" id="L226">            json.role = this.role();</span>
+<span class="nc" id="L227">            json.client = this.client();</span>
+<span class="nc" id="L228">            return JsonUtil.toJson(json);</span>
+        }
+
+        public static User fromJson(String json) {
+<span class="nc bnc" id="L232" title="All 2 branches missed.">            if (json == null) {</span>
+<span class="nc" id="L233">                return null;</span>
+            }
+<span class="nc" id="L235">            UserJson userJson = JsonUtil.fromJson(json, UserJson.class);</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">            if (userJson != null) {</span>
+<span class="nc" id="L237">                User user = new User(userJson.username,</span>
+<span class="nc" id="L238">                                     RolePermission.builtin(userJson.role));</span>
+<span class="nc" id="L239">                user.client(userJson.client);</span>
+<span class="nc" id="L240">                return user;</span>
+            }
+<span class="nc" id="L242">            return null;</span>
+        }
+
+<span class="nc" id="L245">        public static class UserJson {</span>
+
+            @JsonProperty(&quot;username&quot;)
+            private String username;
+            @JsonProperty(&quot;role&quot;)
+            private RolePermission role;
+            @JsonProperty(&quot;client&quot;)
+            private String client;
+        }
+    }
+
+    class RolePerm {
+
+        @JsonProperty(&quot;roles&quot;) // graph -&gt; action -&gt; resource
+        private Map&lt;String, Map&lt;HugePermission, Object&gt;&gt; roles;
+
+<span class="nc" id="L261">        public RolePerm() {</span>
+<span class="nc" id="L262">            this.roles = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L263">        }</span>
+
+<span class="nc" id="L265">        public RolePerm(Map&lt;String, Map&lt;HugePermission, Object&gt;&gt; roles) {</span>
+<span class="nc" id="L266">            this.roles = roles;</span>
+<span class="nc" id="L267">        }</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L271">            return JsonUtil.toJson(this);</span>
+        }
+
+        private boolean matchOwner(String owner) {
+<span class="nc bnc" id="L275" title="All 2 branches missed.">            if (owner == null) {</span>
+<span class="nc" id="L276">                return true;</span>
+            }
+<span class="nc" id="L278">            return this.roles.containsKey(owner);</span>
+        }
+
+        private boolean matchResource(HugePermission requiredAction,
+                                      ResourceObject&lt;?&gt; requiredResource) {
+<span class="nc" id="L283">            E.checkNotNull(requiredResource, &quot;resource object&quot;);</span>
+
+            /*
+             * Is resource allowed to access by anyone?
+             * TODO: only allowed resource of related type(USER/TASK/VAR),
+             *       such as role VAR is allowed to access '~variables' label
+             */
+<span class="nc bnc" id="L290" title="All 2 branches missed.">            if (HugeResource.allowed(requiredResource)) {</span>
+<span class="nc" id="L291">                return true;</span>
+            }
+
+<span class="nc" id="L294">            String owner = requiredResource.graph();</span>
+<span class="nc" id="L295">            Map&lt;HugePermission, Object&gt; permissions = this.roles.get(owner);</span>
+<span class="nc bnc" id="L296" title="All 2 branches missed.">            if (permissions == null) {</span>
+<span class="nc" id="L297">                return false;</span>
+            }
+<span class="nc" id="L299">            Object permission = matchedAction(requiredAction, permissions);</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">            if (permission == null) {</span>
+                // Deny all if no specified permission
+<span class="nc" id="L302">                return false;</span>
+            }
+            List&lt;HugeResource&gt; ress;
+<span class="nc bnc" id="L305" title="All 2 branches missed.">            if (permission instanceof List) {</span>
+                @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L307">                List&lt;HugeResource&gt; list = (List&lt;HugeResource&gt;) permission;</span>
+<span class="nc" id="L308">                ress = list;</span>
+<span class="nc" id="L309">            } else {</span>
+<span class="nc" id="L310">                ress = HugeResource.parseResources(permission.toString());</span>
+            }
+<span class="nc bnc" id="L312" title="All 2 branches missed.">            for (HugeResource res : ress) {</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">                if (res.filter(requiredResource)) {</span>
+<span class="nc" id="L314">                    return true;</span>
+                }
+<span class="nc" id="L316">            }</span>
+<span class="nc" id="L317">            return false;</span>
+        }
+
+        private static Object matchedAction(HugePermission action,
+                                            Map&lt;HugePermission, Object&gt; perms) {
+<span class="nc" id="L322">            Object matched = perms.get(action);</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">            if (matched != null) {</span>
+<span class="nc" id="L324">                return matched;</span>
+            }
+<span class="nc bnc" id="L326" title="All 2 branches missed.">            for (Map.Entry&lt;HugePermission, Object&gt; e : perms.entrySet()) {</span>
+<span class="nc" id="L327">                HugePermission permission = e.getKey();</span>
+                // May be required = ANY
+<span class="nc bnc" id="L329" title="All 2 branches missed.">                if (action.match(permission)) {</span>
+                    // Return matched resource of corresponding action
+<span class="nc" id="L331">                    return e.getValue();</span>
+                }
+<span class="nc" id="L333">            }</span>
+<span class="nc" id="L334">            return null;</span>
+        }
+
+        @SuppressWarnings({ &quot;unchecked&quot;, &quot;rawtypes&quot; })
+        public static RolePerm fromJson(Object role) {
+<span class="nc" id="L339">            RolePermission table = RolePermission.fromJson(role);</span>
+<span class="nc" id="L340">            return new RolePerm((Map) table.map());</span>
+        }
+
+        public static boolean match(Object role, RequiredPerm requiredPerm) {
+<span class="nc bnc" id="L344" title="All 2 branches missed.">            if (role == ROLE_ADMIN) {</span>
+<span class="nc" id="L345">                return true;</span>
+            }
+<span class="nc bnc" id="L347" title="All 2 branches missed.">            if (role == ROLE_NONE) {</span>
+<span class="nc" id="L348">                return false;</span>
+            }
+
+<span class="nc" id="L351">            RolePerm rolePerm = RolePerm.fromJson(role);</span>
+
+<span class="nc bnc" id="L353" title="All 2 branches missed.">            if (requiredPerm.action() == HugePermission.NONE) {</span>
+                // None action means any action is OK if the owner matched
+<span class="nc" id="L355">                return rolePerm.matchOwner(requiredPerm.owner());</span>
+            }
+<span class="nc" id="L357">            return rolePerm.matchResource(requiredPerm.action(),</span>
+<span class="nc" id="L358">                                          requiredPerm.resourceObject());</span>
+        }
+
+        public static boolean match(Object role, HugePermission required,
+                                    ResourceObject&lt;?&gt; resourceObject) {
+<span class="nc bnc" id="L363" title="All 2 branches missed.">            if (role == ROLE_ADMIN) {</span>
+<span class="nc" id="L364">                return true;</span>
+            }
+<span class="nc bnc" id="L366" title="All 2 branches missed.">            if (role == ROLE_NONE) {</span>
+<span class="nc" id="L367">                return false;</span>
+            }
+<span class="nc" id="L369">            RolePerm rolePerm = RolePerm.fromJson(role);</span>
+<span class="nc" id="L370">            return rolePerm.matchResource(required, resourceObject);</span>
+        }
+
+        public static boolean match(Object role, RolePermission grant,
+                                    ResourceObject&lt;?&gt; resourceObject) {
+<span class="nc bnc" id="L375" title="All 2 branches missed.">            if (role == ROLE_ADMIN) {</span>
+<span class="nc" id="L376">                return true;</span>
+            }
+<span class="nc bnc" id="L378" title="All 2 branches missed.">            if (role == ROLE_NONE) {</span>
+<span class="nc" id="L379">                return false;</span>
+            }
+
+<span class="nc bnc" id="L382" title="All 2 branches missed.">            if (resourceObject != null) {</span>
+<span class="nc" id="L383">                AuthElement element = (AuthElement) resourceObject.operated();</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">                if (element instanceof HugeUser &amp;&amp;</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">                    ((HugeUser) element).name().equals(USER_ADMIN)) {</span>
+                    // Can't access admin by other users
+<span class="nc" id="L387">                    return false;</span>
+                }
+            }
+
+<span class="nc" id="L391">            RolePermission rolePerm = RolePermission.fromJson(role);</span>
+<span class="nc" id="L392">            return rolePerm.contains(grant);</span>
+        }
+    }
+
+    class RequiredPerm {
+
+        @JsonProperty(&quot;owner&quot;)
+        private String owner;
+        @JsonProperty(&quot;action&quot;)
+        private HugePermission action;
+        @JsonProperty(&quot;resource&quot;)
+        private ResourceType resource;
+
+<span class="nc" id="L405">        public RequiredPerm() {</span>
+<span class="nc" id="L406">            this.owner = &quot;&quot;;</span>
+<span class="nc" id="L407">            this.action = HugePermission.NONE;</span>
+<span class="nc" id="L408">            this.resource = ResourceType.NONE;</span>
+<span class="nc" id="L409">        }</span>
+
+        public RequiredPerm owner(String owner) {
+<span class="nc" id="L412">            this.owner = owner;</span>
+<span class="nc" id="L413">            return this;</span>
+        }
+
+        public String owner() {
+<span class="nc" id="L417">            return this.owner;</span>
+        }
+
+        public RequiredPerm action(String action) {
+<span class="nc" id="L421">            this.parseAction(action);</span>
+<span class="nc" id="L422">            return this;</span>
+        }
+
+        public HugePermission action() {
+<span class="nc" id="L426">            return this.action;</span>
+        }
+
+        public ResourceType resource() {
+<span class="nc" id="L430">            return this.resource;</span>
+        }
+
+        public ResourceObject&lt;?&gt; resourceObject() {
+<span class="nc" id="L434">            Nameable elem = HugeResource.NameObject.ANY;</span>
+<span class="nc" id="L435">            return ResourceObject.of(this.owner, this.resource, elem);</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L440">            return JsonUtil.toJson(this);</span>
+        }
+
+        private void parseAction(String action) {
+<span class="nc" id="L444">            int offset = action.lastIndexOf('_');</span>
+<span class="nc bnc" id="L445" title="All 4 branches missed.">            if (0 &lt; offset &amp;&amp; ++offset &lt; action.length()) {</span>
+                /*
+                 * In order to be compatible with the old permission mechanism,
+                 * here is only to provide pre-control by extract the
+                 * resource_action {vertex/edge/schema}_{read/write},
+                 * resource_action like vertex_read.
+                 */
+<span class="nc" id="L452">                String resource = action.substring(0, offset - 1);</span>
+<span class="nc" id="L453">                this.resource = ResourceType.valueOf(resource.toUpperCase());</span>
+<span class="nc" id="L454">                action = action.substring(offset);</span>
+            }
+<span class="nc" id="L456">            this.action = HugePermission.valueOf(action.toUpperCase());</span>
+<span class="nc" id="L457">        }</span>
+
+        public static String roleFor(String owner, HugePermission perm) {
+            /*
+             * Construct required permission such as:
+             *  $owner=graph1 $action=read
+             *  (means required read permission of any one resource)
+             *
+             * In the future maybe also support:
+             *  $owner=graph1 $action=vertex_read
+             */
+<span class="nc" id="L468">            return String.format(&quot;%s=%s %s=%s&quot;, KEY_OWNER, owner,</span>
+<span class="nc" id="L469">                                 KEY_ACTION, perm.string());</span>
+        }
+
+        public static RequiredPerm fromJson(String json) {
+<span class="nc" id="L473">            return JsonUtil.fromJson(json, RequiredPerm.class);</span>
+        }
+
+        public static RequiredPerm fromPermission(String permission) {
+            // Permission format like: &quot;$owner=$graph1 $action=vertex-write&quot;
+<span class="nc" id="L478">            RequiredPerm requiredPerm = new RequiredPerm();</span>
+<span class="nc" id="L479">            String[] ownerAndAction = permission.split(&quot; &quot;);</span>
+<span class="nc" id="L480">            String[] ownerKV = ownerAndAction[0].split(&quot;=&quot;, 2);</span>
+<span class="nc bnc" id="L481" title="All 4 branches missed.">            E.checkState(ownerKV.length == 2 &amp;&amp; ownerKV[0].equals(KEY_OWNER),</span>
+                         &quot;Bad permission format: '%s'&quot;, permission);
+<span class="nc" id="L483">            requiredPerm.owner(ownerKV[1]);</span>
+<span class="nc bnc" id="L484" title="All 2 branches missed.">            if (ownerAndAction.length == 1) {</span>
+                // Return owner if no action (means NONE)
+<span class="nc" id="L486">                return requiredPerm;</span>
+            }
+
+<span class="nc bnc" id="L489" title="All 2 branches missed.">            E.checkState(ownerAndAction.length == 2,</span>
+                         &quot;Bad permission format: '%s'&quot;, permission);
+<span class="nc" id="L491">            String[] actionKV = ownerAndAction[1].split(&quot;=&quot;, 2);</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">            E.checkState(actionKV.length == 2,</span>
+                         &quot;Bad permission format: '%s'&quot;, permission);
+<span class="nc" id="L494">            E.checkState(actionKV[0].equals(KEY_ACTION),</span>
+                         &quot;Bad permission format: '%s'&quot;, permission);
+<span class="nc" id="L496">            requiredPerm.action(actionKV[1]);</span>
+
+<span class="nc" id="L498">            return requiredPerm;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

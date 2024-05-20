@@ -1,0 +1,515 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MysqlStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-mysql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.mysql</a> &gt; <span class="el_source">MysqlStore.java</span></div><h1>MysqlStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.mysql;
+
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.AbstractBackendStore;
+import org.apache.hugegraph.backend.store.BackendAction;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.backend.store.mysql.MysqlSessions.Session;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.ConnectionException;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+
+public abstract class MysqlStore extends AbstractBackendStore&lt;Session&gt; {
+
+<span class="nc" id="L48">    private static final Logger LOG = Log.logger(MysqlStore.class);</span>
+
+<span class="nc" id="L50">    private static final BackendFeatures FEATURES = new MysqlFeatures();</span>
+
+    private final String store;
+    private final String database;
+
+    private final BackendStoreProvider provider;
+
+    private final Map&lt;HugeType, MysqlTable&gt; tables;
+
+    private MysqlSessions sessions;
+
+    public MysqlStore(final BackendStoreProvider provider,
+<span class="nc" id="L62">                      final String database, final String store) {</span>
+<span class="nc" id="L63">        E.checkNotNull(database, &quot;database&quot;);</span>
+<span class="nc" id="L64">        E.checkNotNull(store, &quot;store&quot;);</span>
+<span class="nc" id="L65">        this.provider = provider;</span>
+<span class="nc" id="L66">        this.database = database;</span>
+<span class="nc" id="L67">        this.store = store;</span>
+
+<span class="nc" id="L69">        this.sessions = null;</span>
+<span class="nc" id="L70">        this.tables = new ConcurrentHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L72">        this.registerMetaHandlers();</span>
+<span class="nc" id="L73">        LOG.debug(&quot;Store loaded: {}&quot;, store);</span>
+<span class="nc" id="L74">    }</span>
+
+    private void registerMetaHandlers() {
+<span class="nc" id="L77">        this.registerMetaHandler(&quot;metrics&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc" id="L78">            MysqlMetrics metrics = new MysqlMetrics();</span>
+<span class="nc" id="L79">            return metrics.metrics();</span>
+        });
+<span class="nc" id="L81">    }</span>
+
+    protected void registerTableManager(HugeType type, MysqlTable table) {
+<span class="nc" id="L84">        this.tables.put(type, table);</span>
+<span class="nc" id="L85">    }</span>
+
+    protected MysqlSessions openSessionPool(HugeConfig config) {
+<span class="nc" id="L88">        return new MysqlSessions(config, this.database, this.store);</span>
+    }
+
+    @Override
+    public String store() {
+<span class="nc" id="L93">        return this.store;</span>
+    }
+
+    @Override
+    public String database() {
+<span class="nc" id="L98">        return this.database;</span>
+    }
+
+    @Override
+    public BackendStoreProvider provider() {
+<span class="nc" id="L103">        return this.provider;</span>
+    }
+
+    @Override
+    public synchronized void open(HugeConfig config) {
+<span class="nc" id="L108">        LOG.debug(&quot;Store open: {}&quot;, this.store);</span>
+
+<span class="nc" id="L110">        E.checkNotNull(config, &quot;config&quot;);</span>
+
+<span class="nc bnc" id="L112" title="All 4 branches missed.">        if (this.sessions != null &amp;&amp; !this.sessions.closed()) {</span>
+<span class="nc" id="L113">            LOG.debug(&quot;Store {} has been opened before&quot;, this.store);</span>
+<span class="nc" id="L114">            this.sessions.useSession();</span>
+<span class="nc" id="L115">            return;</span>
+        }
+
+<span class="nc" id="L118">        this.sessions = this.openSessionPool(config);</span>
+
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (this.sessions.existsDatabase()) {</span>
+<span class="nc" id="L121">            LOG.debug(&quot;Store connect with database: {}&quot;, this.database);</span>
+            try {
+<span class="nc" id="L123">                this.sessions.open();</span>
+<span class="nc" id="L124">            } catch (Throwable e) {</span>
+<span class="nc" id="L125">                throw new ConnectionException(&quot;Failed to connect to MySQL&quot;, e);</span>
+<span class="nc" id="L126">            }</span>
+
+            try {
+<span class="nc" id="L129">                this.sessions.session().open();</span>
+<span class="nc" id="L130">            } catch (Throwable e) {</span>
+                try {
+<span class="nc" id="L132">                    this.sessions.close();</span>
+<span class="nc" id="L133">                } catch (Throwable e2) {</span>
+<span class="nc" id="L134">                    LOG.warn(&quot;Failed to close connection after an error&quot;, e2);</span>
+<span class="nc" id="L135">                }</span>
+<span class="nc" id="L136">                throw new BackendException(&quot;Failed to open database&quot;, e);</span>
+<span class="nc" id="L137">            }</span>
+        } else {
+<span class="nc bnc" id="L139" title="All 2 branches missed.">            if (this.isSchemaStore()) {</span>
+<span class="nc" id="L140">                LOG.info(&quot;Failed to open database '{}', &quot; +</span>
+                         &quot;try to init database later&quot;, this.database);
+            }
+<span class="nc" id="L143">            this.sessions.session();</span>
+        }
+
+<span class="nc" id="L146">        LOG.debug(&quot;Store opened: {}&quot;, this.store);</span>
+<span class="nc" id="L147">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L151">        LOG.debug(&quot;Store close: {}&quot;, this.store);</span>
+<span class="nc" id="L152">        this.checkClusterConnected();</span>
+<span class="nc" id="L153">        this.sessions.close();</span>
+<span class="nc" id="L154">    }</span>
+
+    @Override
+    public boolean opened() {
+<span class="nc" id="L158">        this.checkClusterConnected();</span>
+<span class="nc" id="L159">        return this.sessions.session().opened();</span>
+    }
+
+    @Override
+    public void init() {
+<span class="nc" id="L164">        this.checkClusterConnected();</span>
+<span class="nc" id="L165">        this.sessions.createDatabase();</span>
+        try {
+            // Open a new session connected with specified database
+<span class="nc" id="L168">            this.sessions.session().open();</span>
+<span class="nc" id="L169">        } catch (Exception e) {</span>
+<span class="nc" id="L170">            throw new BackendException(&quot;Failed to connect database '%s'&quot;,</span>
+                                       this.database);
+<span class="nc" id="L172">        }</span>
+<span class="nc" id="L173">        this.checkOpened();</span>
+<span class="nc" id="L174">        this.initTables();</span>
+
+<span class="nc" id="L176">        LOG.debug(&quot;Store initialized: {}&quot;, this.store);</span>
+<span class="nc" id="L177">    }</span>
+
+    @Override
+    public void clear(boolean clearSpace) {
+        // Check connected
+<span class="nc" id="L182">        this.checkClusterConnected();</span>
+
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (this.sessions.existsDatabase()) {</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">            if (!clearSpace) {</span>
+<span class="nc" id="L186">                this.checkOpened();</span>
+<span class="nc" id="L187">                this.clearTables();</span>
+                /*
+                 * Disconnect connections for following database drop.
+                 * Connections will be auto reconnected if not drop database
+                 * in next step, but never do this operation because database
+                 * might be blocked in mysql or throw 'terminating' exception.
+                 * we can't resetConnections() when dropDatabase(), because
+                 * there are 3 stores(schema,system,graph), which are shared
+                 * one database, other stores may keep connected with the
+                 * database when one store doing clear(clearSpace=false).
+                 */
+<span class="nc" id="L198">                this.sessions.resetConnections();</span>
+            } else {
+<span class="nc" id="L200">                this.sessions.dropDatabase();</span>
+            }
+        }
+
+<span class="nc" id="L204">        LOG.debug(&quot;Store cleared: {}&quot;, this.store);</span>
+<span class="nc" id="L205">    }</span>
+
+    @Override
+    public boolean initialized() {
+<span class="nc" id="L209">        this.checkClusterConnected();</span>
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (!this.sessions.existsDatabase()) {</span>
+<span class="nc" id="L212">            return false;</span>
+        }
+<span class="nc bnc" id="L214" title="All 2 branches missed.">        for (MysqlTable table : this.tables()) {</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">            if (!this.sessions.existsTable(table.table())) {</span>
+<span class="nc" id="L216">                return false;</span>
+            }
+<span class="nc" id="L218">        }</span>
+<span class="nc" id="L219">        return true;</span>
+    }
+
+    @Override
+    public void truncate() {
+<span class="nc" id="L224">        this.checkOpened();</span>
+
+<span class="nc" id="L226">        this.truncateTables();</span>
+<span class="nc" id="L227">        LOG.debug(&quot;Store truncated: {}&quot;, this.store);</span>
+<span class="nc" id="L228">    }</span>
+
+    @Override
+    public void mutate(BackendMutation mutation) {
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L233">            LOG.debug(&quot;Store {} mutation: {}&quot;, this.store, mutation);</span>
+        }
+
+<span class="nc" id="L236">        this.checkOpened();</span>
+<span class="nc" id="L237">        Session session = this.sessions.session();</span>
+
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        for (Iterator&lt;BackendAction&gt; it = mutation.mutation(); it.hasNext();) {</span>
+<span class="nc" id="L240">            this.mutate(session, it.next());</span>
+        }
+<span class="nc" id="L242">    }</span>
+
+    private void mutate(Session session, BackendAction item) {
+<span class="nc" id="L245">        MysqlBackendEntry entry = castBackendEntry(item.entry());</span>
+<span class="nc" id="L246">        MysqlTable table = this.table(entry.type());</span>
+
+<span class="nc bnc" id="L248" title="All 7 branches missed.">        switch (item.action()) {</span>
+            case INSERT:
+<span class="nc" id="L250">                table.insert(session, entry.row());</span>
+<span class="nc" id="L251">                break;</span>
+            case DELETE:
+<span class="nc" id="L253">                table.delete(session, entry.row());</span>
+<span class="nc" id="L254">                break;</span>
+            case APPEND:
+<span class="nc" id="L256">                table.append(session, entry.row());</span>
+<span class="nc" id="L257">                break;</span>
+            case ELIMINATE:
+<span class="nc" id="L259">                table.eliminate(session, entry.row());</span>
+<span class="nc" id="L260">                break;</span>
+            case UPDATE_IF_PRESENT:
+<span class="nc" id="L262">                table.updateIfPresent(session, entry.row());</span>
+<span class="nc" id="L263">                break;</span>
+            case UPDATE_IF_ABSENT:
+<span class="nc" id="L265">                table.updateIfAbsent(session, entry.row());</span>
+<span class="nc" id="L266">                break;</span>
+            default:
+<span class="nc" id="L268">                throw new AssertionError(String.format(</span>
+<span class="nc" id="L269">                          &quot;Unsupported mutate action: %s&quot;, item.action()));</span>
+        }
+<span class="nc" id="L271">    }</span>
+
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(Query query) {
+<span class="nc" id="L275">        this.checkOpened();</span>
+
+<span class="nc" id="L277">        MysqlTable table = this.table(MysqlTable.tableType(query));</span>
+<span class="nc" id="L278">        return table.query(this.sessions.session(), query);</span>
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+<span class="nc" id="L283">        this.checkOpened();</span>
+
+<span class="nc" id="L285">        MysqlTable table = this.table(MysqlTable.tableType(query));</span>
+<span class="nc" id="L286">        return table.queryNumber(this.sessions.session(), query);</span>
+    }
+
+    @Override
+    public void beginTx() {
+<span class="nc" id="L291">        this.checkOpened();</span>
+
+<span class="nc" id="L293">        Session session = this.sessions.session();</span>
+        try {
+<span class="nc" id="L295">            session.begin();</span>
+<span class="nc" id="L296">        } catch (SQLException e) {</span>
+<span class="nc" id="L297">            throw new BackendException(&quot;Failed to open transaction&quot;, e);</span>
+<span class="nc" id="L298">        }</span>
+<span class="nc" id="L299">    }</span>
+
+    @Override
+    public void commitTx() {
+<span class="nc" id="L303">        this.checkOpened();</span>
+
+<span class="nc" id="L305">        Session session = this.sessions.session();</span>
+<span class="nc" id="L306">        int count = session.commit();</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">        if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L308">            LOG.debug(&quot;Store {} committed {} items&quot;, this.store, count);</span>
+        }
+<span class="nc" id="L310">    }</span>
+
+    @Override
+    public void rollbackTx() {
+<span class="nc" id="L314">        this.checkOpened();</span>
+<span class="nc" id="L315">        Session session = this.sessions.session();</span>
+<span class="nc" id="L316">        session.rollback();</span>
+<span class="nc" id="L317">    }</span>
+
+    @Override
+    public BackendFeatures features() {
+<span class="nc" id="L321">        return FEATURES;</span>
+    }
+
+    protected void initTables() {
+<span class="nc" id="L325">        Session session = this.sessions.session();</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">        for (MysqlTable table : this.tables()) {</span>
+<span class="nc" id="L327">            table.init(session);</span>
+<span class="nc" id="L328">        }</span>
+<span class="nc" id="L329">    }</span>
+
+    protected void clearTables() {
+<span class="nc" id="L332">        Session session = this.sessions.session();</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">        for (MysqlTable table : this.tables()) {</span>
+<span class="nc" id="L334">            table.clear(session);</span>
+<span class="nc" id="L335">        }</span>
+<span class="nc" id="L336">    }</span>
+
+    protected void truncateTables() {
+<span class="nc" id="L339">        Session session = this.sessions.session();</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">        for (MysqlTable table : this.tables()) {</span>
+<span class="nc" id="L341">            table.truncate(session);</span>
+<span class="nc" id="L342">        }</span>
+<span class="nc" id="L343">    }</span>
+
+    protected Collection&lt;MysqlTable&gt; tables() {
+<span class="nc" id="L346">        return this.tables.values();</span>
+    }
+
+    @Override
+    protected final MysqlTable table(HugeType type) {
+<span class="nc bnc" id="L351" title="All 2 branches missed.">        assert type != null;</span>
+<span class="nc" id="L352">        MysqlTable table = this.tables.get(type);</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">        if (table == null) {</span>
+<span class="nc" id="L354">            throw new BackendException(&quot;Unsupported table type: %s&quot;, type);</span>
+        }
+<span class="nc" id="L356">        return table;</span>
+    }
+
+    @Override
+    protected Session session(HugeType type) {
+<span class="nc" id="L361">        this.checkOpened();</span>
+<span class="nc" id="L362">        return this.sessions.session();</span>
+    }
+
+    protected final void checkClusterConnected() {
+<span class="nc bnc" id="L366" title="All 2 branches missed.">        E.checkState(this.sessions != null,</span>
+                     &quot;MySQL store has not been initialized&quot;);
+<span class="nc" id="L368">    }</span>
+
+    protected static MysqlBackendEntry castBackendEntry(BackendEntry entry) {
+<span class="nc bnc" id="L371" title="All 2 branches missed.">        if (!(entry instanceof MysqlBackendEntry)) {</span>
+<span class="nc" id="L372">            throw new BackendException(</span>
+                      &quot;MySQL store only supports MysqlBackendEntry&quot;);
+        }
+<span class="nc" id="L375">        return (MysqlBackendEntry) entry;</span>
+    }
+
+    public static class MysqlSchemaStore extends MysqlStore {
+
+        private final MysqlTables.Counters counters;
+
+        public MysqlSchemaStore(BackendStoreProvider provider,
+                                String database, String store) {
+<span class="nc" id="L384">            super(provider, database, store);</span>
+
+<span class="nc" id="L386">            this.counters = new MysqlTables.Counters();</span>
+
+<span class="nc" id="L388">            registerTableManager(HugeType.VERTEX_LABEL,</span>
+                                 new MysqlTables.VertexLabel());
+<span class="nc" id="L390">            registerTableManager(HugeType.EDGE_LABEL,</span>
+                                 new MysqlTables.EdgeLabel());
+<span class="nc" id="L392">            registerTableManager(HugeType.PROPERTY_KEY,</span>
+                                 new MysqlTables.PropertyKey());
+<span class="nc" id="L394">            registerTableManager(HugeType.INDEX_LABEL,</span>
+                                 new MysqlTables.IndexLabel());
+<span class="nc" id="L396">        }</span>
+
+        @Override
+        protected Collection&lt;MysqlTable&gt; tables() {
+<span class="nc" id="L400">            List&lt;MysqlTable&gt; tables = new ArrayList&lt;&gt;(super.tables());</span>
+<span class="nc" id="L401">            tables.add(this.counters);</span>
+<span class="nc" id="L402">            return tables;</span>
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L407">            this.checkOpened();</span>
+<span class="nc" id="L408">            Session session = super.sessions.session();</span>
+<span class="nc" id="L409">            this.counters.increaseCounter(session, type, increment);</span>
+<span class="nc" id="L410">        }</span>
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L414">            this.checkOpened();</span>
+<span class="nc" id="L415">            Session session = super.sessions.session();</span>
+<span class="nc" id="L416">            return this.counters.getCounter(session, type);</span>
+        }
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L421">            return true;</span>
+        }
+    }
+
+    public static class MysqlGraphStore extends MysqlStore {
+
+        public MysqlGraphStore(BackendStoreProvider provider,
+                               String database, String store) {
+<span class="nc" id="L429">            super(provider, database, store);</span>
+
+<span class="nc" id="L431">            registerTableManager(HugeType.VERTEX,</span>
+                                 new MysqlTables.Vertex(store));
+
+<span class="nc" id="L434">            registerTableManager(HugeType.EDGE_OUT,</span>
+<span class="nc" id="L435">                                 MysqlTables.Edge.out(store));</span>
+<span class="nc" id="L436">            registerTableManager(HugeType.EDGE_IN,</span>
+<span class="nc" id="L437">                                 MysqlTables.Edge.in(store));</span>
+
+<span class="nc" id="L439">            registerTableManager(HugeType.SECONDARY_INDEX,</span>
+                                 new MysqlTables.SecondaryIndex(store));
+<span class="nc" id="L441">            registerTableManager(HugeType.RANGE_INT_INDEX,</span>
+                                 new MysqlTables.RangeIntIndex(store));
+<span class="nc" id="L443">            registerTableManager(HugeType.RANGE_FLOAT_INDEX,</span>
+                                 new MysqlTables.RangeFloatIndex(store));
+<span class="nc" id="L445">            registerTableManager(HugeType.RANGE_LONG_INDEX,</span>
+                                 new MysqlTables.RangeLongIndex(store));
+<span class="nc" id="L447">            registerTableManager(HugeType.RANGE_DOUBLE_INDEX,</span>
+                                 new MysqlTables.RangeDoubleIndex(store));
+<span class="nc" id="L449">            registerTableManager(HugeType.SEARCH_INDEX,</span>
+                                 new MysqlTables.SearchIndex(store));
+<span class="nc" id="L451">            registerTableManager(HugeType.SHARD_INDEX,</span>
+                                 new MysqlTables.ShardIndex(store));
+<span class="nc" id="L453">            registerTableManager(HugeType.UNIQUE_INDEX,</span>
+                                 new MysqlTables.UniqueIndex(store));
+<span class="nc" id="L455">        }</span>
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L459">            return false;</span>
+        }
+
+        @Override
+        public Id nextId(HugeType type) {
+<span class="nc" id="L464">            throw new UnsupportedOperationException(&quot;MysqlGraphStore.nextId()&quot;);</span>
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long num) {
+<span class="nc" id="L469">            throw new UnsupportedOperationException(</span>
+                      &quot;MysqlGraphStore.increaseCounter()&quot;);
+        }
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L475">            throw new UnsupportedOperationException(</span>
+                      &quot;MysqlGraphStore.getCounter()&quot;);
+        }
+    }
+
+    public static class MysqlSystemStore extends MysqlGraphStore {
+
+        private final MysqlTables.Meta meta;
+
+        public MysqlSystemStore(BackendStoreProvider provider,
+                                String database, String store) {
+<span class="nc" id="L486">            super(provider, database, store);</span>
+
+<span class="nc" id="L488">            this.meta = new MysqlTables.Meta();</span>
+<span class="nc" id="L489">        }</span>
+
+        @Override
+        public void init() {
+<span class="nc" id="L493">            super.init();</span>
+<span class="nc" id="L494">            Session session = super.session(null);</span>
+<span class="nc" id="L495">            String driverVersion = this.provider().driverVersion();</span>
+<span class="nc" id="L496">            this.meta.writeVersion(session, driverVersion);</span>
+<span class="nc" id="L497">            LOG.info(&quot;Write down the backend version: {}&quot;, driverVersion);</span>
+<span class="nc" id="L498">        }</span>
+
+        @Override
+        public String storedVersion() {
+<span class="nc" id="L502">            super.init();</span>
+<span class="nc" id="L503">            Session session = super.session(null);</span>
+<span class="nc" id="L504">            return this.meta.readVersion(session);</span>
+        }
+
+        @Override
+        protected Collection&lt;MysqlTable&gt; tables() {
+<span class="nc" id="L509">            List&lt;MysqlTable&gt; tables = new ArrayList&lt;&gt;(super.tables());</span>
+<span class="nc" id="L510">            tables.add(this.meta);</span>
+<span class="nc" id="L511">            return tables;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

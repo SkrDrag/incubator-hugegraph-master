@@ -1,0 +1,440 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ServerInfoManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.task</a> &gt; <span class="el_source">ServerInfoManager.java</span></div><h1>ServerInfoManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.task;
+
+import static org.apache.hugegraph.backend.query.Query.NO_LIMIT;
+
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.PageInfo;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.exception.ConnectionException;
+import org.apache.hugegraph.iterator.ListIterator;
+import org.apache.hugegraph.iterator.MapperIterator;
+import org.apache.hugegraph.masterelection.GlobalMasterInfo;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.type.define.NodeRole;
+import org.apache.hugegraph.util.DateUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.slf4j.Logger;
+
+import com.google.common.collect.ImmutableMap;
+
+public class ServerInfoManager {
+
+<span class="nc" id="L57">    private static final Logger LOG = Log.logger(ServerInfoManager.class);</span>
+
+    public static final long MAX_SERVERS = 100000L;
+    public static final long PAGE_SIZE = 10L;
+
+    private final HugeGraphParams graph;
+    private final ExecutorService dbExecutor;
+
+    private volatile GlobalMasterInfo globalNodeInfo;
+
+    private volatile boolean onlySingleNode;
+    private volatile boolean closed;
+
+    public ServerInfoManager(HugeGraphParams graph,
+<span class="nc" id="L71">                             ExecutorService dbExecutor) {</span>
+<span class="nc" id="L72">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+<span class="nc" id="L73">        E.checkNotNull(dbExecutor, &quot;db executor&quot;);</span>
+
+<span class="nc" id="L75">        this.graph = graph;</span>
+<span class="nc" id="L76">        this.dbExecutor = dbExecutor;</span>
+
+<span class="nc" id="L78">        this.globalNodeInfo = null;</span>
+
+<span class="nc" id="L80">        this.onlySingleNode = false;</span>
+<span class="nc" id="L81">        this.closed = false;</span>
+<span class="nc" id="L82">    }</span>
+
+    public void init() {
+<span class="nc" id="L85">        HugeServerInfo.schema(this.graph).initSchemaIfNeeded();</span>
+<span class="nc" id="L86">    }</span>
+
+    public synchronized boolean close() {
+<span class="nc" id="L89">        this.closed = true;</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">        if (!this.dbExecutor.isShutdown()) {</span>
+<span class="nc" id="L91">            this.removeSelfServerInfo();</span>
+<span class="nc" id="L92">            this.call(() -&gt; {</span>
+                try {
+<span class="nc" id="L94">                    this.tx().close();</span>
+<span class="nc" id="L95">                } catch (ConnectionException ignored) {</span>
+                    // ConnectionException means no connection established
+<span class="nc" id="L97">                }</span>
+<span class="nc" id="L98">                this.graph.closeTx();</span>
+<span class="nc" id="L99">                return null;</span>
+            });
+        }
+<span class="nc" id="L102">        return true;</span>
+    }
+
+    public synchronized void initServerInfo(GlobalMasterInfo nodeInfo) {
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        E.checkArgument(nodeInfo != null, &quot;The global node info can't be null&quot;);</span>
+
+<span class="nc" id="L108">        Id serverId = nodeInfo.nodeId();</span>
+<span class="nc" id="L109">        HugeServerInfo existed = this.serverInfo(serverId);</span>
+<span class="nc bnc" id="L110" title="All 4 branches missed.">        E.checkArgument(existed == null || !existed.alive(),</span>
+                        &quot;The server with name '%s' already in cluster&quot;,
+                        serverId);
+
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        if (nodeInfo.nodeRole().master()) {</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">            String page = this.supportsPaging() ? PageInfo.PAGE_NONE : null;</span>
+            do {
+<span class="nc" id="L117">                Iterator&lt;HugeServerInfo&gt; servers = this.serverInfos(PAGE_SIZE, page);</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">                while (servers.hasNext()) {</span>
+<span class="nc" id="L119">                    existed = servers.next();</span>
+<span class="nc bnc" id="L120" title="All 4 branches missed.">                    E.checkArgument(!existed.role().master() || !existed.alive(),</span>
+                                    &quot;Already existed master '%s' in current cluster&quot;, 
+<span class="nc" id="L122">                                    existed.id());</span>
+                }
+<span class="nc bnc" id="L124" title="All 2 branches missed.">                if (page != null) {</span>
+<span class="nc" id="L125">                    page = PageInfo.pageInfo(servers);</span>
+                }
+<span class="nc bnc" id="L127" title="All 2 branches missed.">            } while (page != null);</span>
+        }
+
+<span class="nc" id="L130">        this.globalNodeInfo = nodeInfo;</span>
+
+        // TODO: save ServerInfo to AuthServer
+<span class="nc" id="L133">        this.saveServerInfo(this.selfNodeId(), this.selfNodeRole());</span>
+<span class="nc" id="L134">    }</span>
+
+    public synchronized void changeServerRole(NodeRole nodeRole) {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        if (this.closed) {</span>
+<span class="nc" id="L138">            return;</span>
+        }
+
+<span class="nc" id="L141">        this.globalNodeInfo.changeNodeRole(nodeRole);</span>
+
+        // TODO: save ServerInfo to AuthServer
+<span class="nc" id="L144">        this.saveServerInfo(this.selfNodeId(), this.selfNodeRole());</span>
+<span class="nc" id="L145">    }</span>
+
+    public GlobalMasterInfo globalNodeRoleInfo() {
+<span class="nc" id="L148">        return this.globalNodeInfo;</span>
+    }
+
+    public Id selfNodeId() {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (this.globalNodeInfo == null) {</span>
+<span class="nc" id="L153">            return null;</span>
+        }
+<span class="nc" id="L155">        return this.globalNodeInfo.nodeId();</span>
+    }
+
+    public NodeRole selfNodeRole() {
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (this.globalNodeInfo == null) {</span>
+<span class="nc" id="L160">            return null;</span>
+        }
+<span class="nc" id="L162">        return this.globalNodeInfo.nodeRole();</span>
+    }
+
+    public boolean selfIsMaster() {
+<span class="nc bnc" id="L166" title="All 4 branches missed.">        return this.selfNodeRole() != null &amp;&amp; this.selfNodeRole().master();</span>
+    }
+
+    public boolean onlySingleNode() {
+        // Only exists one node in the whole master
+<span class="nc" id="L171">        return this.onlySingleNode;</span>
+    }
+
+    public synchronized void heartbeat() {
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        assert this.graphIsReady();</span>
+
+<span class="nc" id="L177">        HugeServerInfo serverInfo = this.selfServerInfo();</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (serverInfo != null) {</span>
+            // Update heartbeat time for this server
+<span class="nc" id="L180">            serverInfo.updateTime(DateUtil.now());</span>
+<span class="nc" id="L181">            this.save(serverInfo);</span>
+<span class="nc" id="L182">            return;</span>
+        }
+
+        /* ServerInfo is missing */
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (this.selfNodeId() == null) {</span>
+            // Ignore if ServerInfo is not initialized
+<span class="nc" id="L188">            LOG.info(&quot;ServerInfo is missing: {}, may not be initialized yet&quot;);</span>
+<span class="nc" id="L189">            return;</span>
+        }
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        if (this.selfIsMaster()) {</span>
+            // On master node, just wait for ServerInfo re-init
+<span class="nc" id="L193">            LOG.warn(&quot;ServerInfo is missing: {}, may be cleared before&quot;,</span>
+<span class="nc" id="L194">                     this.selfNodeId());</span>
+<span class="nc" id="L195">            return;</span>
+        }
+        /*
+         * Missing server info on non-master node, may be caused by graph
+         * truncated on master node then synced by raft.
+         * TODO: we just patch it here currently, to be improved.
+         */
+<span class="nc" id="L202">        serverInfo = this.saveServerInfo(this.selfNodeId(), this.selfNodeRole());</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        assert serverInfo != null;</span>
+<span class="nc" id="L204">    }</span>
+
+    public synchronized void decreaseLoad(int load) {
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        assert load &gt; 0 : load;</span>
+<span class="nc" id="L208">        HugeServerInfo serverInfo = this.selfServerInfo();</span>
+<span class="nc" id="L209">        serverInfo.increaseLoad(-load);</span>
+<span class="nc" id="L210">        this.save(serverInfo);</span>
+<span class="nc" id="L211">    }</span>
+
+    public int calcMaxLoad() {
+        // TODO: calc max load based on CPU and Memory resources
+<span class="nc" id="L215">        return 10000;</span>
+    }
+
+    protected boolean graphIsReady() {
+<span class="nc bnc" id="L219" title="All 6 branches missed.">        return !this.closed &amp;&amp; this.graph.started() &amp;&amp; this.graph.initialized();</span>
+    }
+
+    protected synchronized HugeServerInfo pickWorkerNode(Collection&lt;HugeServerInfo&gt; servers,
+                                                         HugeTask&lt;?&gt; task) {
+<span class="nc" id="L224">        HugeServerInfo master = null;</span>
+<span class="nc" id="L225">        HugeServerInfo serverWithMinLoad = null;</span>
+<span class="nc" id="L226">        int minLoad = Integer.MAX_VALUE;</span>
+<span class="nc" id="L227">        boolean hasWorkerNode = false;</span>
+<span class="nc" id="L228">        long now = DateUtil.now().getTime();</span>
+
+        // Iterate servers to find suitable one
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        for (HugeServerInfo server : servers) {</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">            if (!server.alive()) {</span>
+<span class="nc" id="L233">                continue;</span>
+            }
+
+<span class="nc bnc" id="L236" title="All 2 branches missed.">            if (server.role().master()) {</span>
+<span class="nc" id="L237">                master = server;</span>
+<span class="nc" id="L238">                continue;</span>
+            }
+
+<span class="nc" id="L241">            hasWorkerNode = true;</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">            if (!server.suitableFor(task, now)) {</span>
+<span class="nc" id="L243">                continue;</span>
+            }
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (server.load() &lt; minLoad) {</span>
+<span class="nc" id="L246">                minLoad = server.load();</span>
+<span class="nc" id="L247">                serverWithMinLoad = server;</span>
+            }
+<span class="nc" id="L249">        }</span>
+
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        boolean singleNode = !hasWorkerNode;</span>
+<span class="nc bnc" id="L252" title="All 2 branches missed.">        if (singleNode != this.onlySingleNode) {</span>
+<span class="nc" id="L253">            LOG.info(&quot;Switch only_single_node to {}&quot;, singleNode);</span>
+<span class="nc" id="L254">            this.onlySingleNode = singleNode;</span>
+        }
+
+        // Only schedule to master if there is no workers and master is suitable
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        if (!hasWorkerNode) {</span>
+<span class="nc bnc" id="L259" title="All 4 branches missed.">            if (master != null &amp;&amp; master.suitableFor(task, now)) {</span>
+<span class="nc" id="L260">                serverWithMinLoad = master;</span>
+            }
+        }
+
+<span class="nc" id="L264">        return serverWithMinLoad;</span>
+    }
+
+    private GraphTransaction tx() {
+<span class="nc bnc" id="L268" title="All 2 branches missed.">        assert Thread.currentThread().getName().contains(&quot;server-info-db-worker&quot;);</span>
+<span class="nc" id="L269">        return this.graph.systemTransaction();</span>
+    }
+
+    private HugeServerInfo saveServerInfo(Id serverId, NodeRole serverRole) {
+<span class="nc" id="L273">        HugeServerInfo serverInfo = new HugeServerInfo(serverId, serverRole);</span>
+<span class="nc" id="L274">        serverInfo.maxLoad(this.calcMaxLoad());</span>
+<span class="nc" id="L275">        this.save(serverInfo);</span>
+
+<span class="nc" id="L277">        LOG.info(&quot;Init server info: {}&quot;, serverInfo);</span>
+<span class="nc" id="L278">        return serverInfo;</span>
+    }
+
+    private Id save(HugeServerInfo serverInfo) {
+<span class="nc" id="L282">        return this.call(() -&gt; {</span>
+            // Construct vertex from server info
+<span class="nc" id="L284">            HugeServerInfo.Schema schema = HugeServerInfo.schema(this.graph);</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">            if (!schema.existVertexLabel(HugeServerInfo.P.SERVER)) {</span>
+<span class="nc" id="L286">                throw new HugeException(&quot;Schema is missing for %s '%s'&quot;,</span>
+                                        HugeServerInfo.P.SERVER, serverInfo);
+            }
+<span class="nc" id="L289">            HugeVertex vertex = this.tx().constructVertex(false,</span>
+<span class="nc" id="L290">                                                          serverInfo.asArray());</span>
+            // Add or update server info in backend store
+<span class="nc" id="L292">            vertex = this.tx().addVertex(vertex);</span>
+<span class="nc" id="L293">            return vertex.id();</span>
+        });
+    }
+
+    private int save(Collection&lt;HugeServerInfo&gt; serverInfos) {
+<span class="nc" id="L298">        return this.call(() -&gt; {</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">            if (serverInfos.isEmpty()) {</span>
+<span class="nc" id="L300">                return 0;</span>
+            }
+<span class="nc" id="L302">            HugeServerInfo.Schema schema = HugeServerInfo.schema(this.graph);</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">            if (!schema.existVertexLabel(HugeServerInfo.P.SERVER)) {</span>
+<span class="nc" id="L304">                throw new HugeException(&quot;Schema is missing for %s&quot;,</span>
+                                        HugeServerInfo.P.SERVER);
+            }
+            // Save server info in batch
+<span class="nc" id="L308">            GraphTransaction tx = this.tx();</span>
+<span class="nc" id="L309">            int updated = 0;</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">            for (HugeServerInfo server : serverInfos) {</span>
+<span class="nc bnc" id="L311" title="All 2 branches missed.">                if (!server.updated()) {</span>
+<span class="nc" id="L312">                    continue;</span>
+                }
+<span class="nc" id="L314">                HugeVertex vertex = tx.constructVertex(false, server.asArray());</span>
+<span class="nc" id="L315">                tx.addVertex(vertex);</span>
+<span class="nc" id="L316">                updated++;</span>
+<span class="nc" id="L317">            }</span>
+            // NOTE: actually it is auto-commit, to be improved
+<span class="nc" id="L319">            tx.commitOrRollback();</span>
+
+<span class="nc" id="L321">            return updated;</span>
+        });
+    }
+
+    private &lt;V&gt; V call(Callable&lt;V&gt; callable) {
+<span class="nc bnc" id="L326" title="All 2 branches missed.">        assert !Thread.currentThread().getName().startsWith(</span>
+               &quot;server-info-db-worker&quot;) : &quot;can't call by itself&quot;;
+        try {
+            // Pass context for db thread
+<span class="nc" id="L330">            callable = new TaskManager.ContextCallable&lt;&gt;(callable);</span>
+            // Ensure all db operations are executed in dbExecutor thread(s)
+<span class="nc" id="L332">            return this.dbExecutor.submit(callable).get();</span>
+<span class="nc" id="L333">        } catch (Throwable e) {</span>
+<span class="nc" id="L334">            throw new HugeException(&quot;Failed to update/query server info: %s&quot;,</span>
+<span class="nc" id="L335">                                    e, e.toString());</span>
+        }
+    }
+
+    private HugeServerInfo selfServerInfo() {
+<span class="nc" id="L340">        HugeServerInfo selfServerInfo = this.serverInfo(this.selfNodeId());</span>
+<span class="nc bnc" id="L341" title="All 4 branches missed.">        if (selfServerInfo == null &amp;&amp; this.selfNodeId() != null) {</span>
+<span class="nc" id="L342">            LOG.warn(&quot;ServerInfo is missing: {}&quot;, this.selfNodeId());</span>
+        }
+<span class="nc" id="L344">        return selfServerInfo;</span>
+    }
+
+    private HugeServerInfo serverInfo(Id serverId) {
+<span class="nc" id="L348">        return this.call(() -&gt; {</span>
+<span class="nc" id="L349">            Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(serverId);</span>
+<span class="nc" id="L350">            Vertex vertex = QueryResults.one(vertices);</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">            if (vertex == null) {</span>
+<span class="nc" id="L352">                return null;</span>
+            }
+<span class="nc" id="L354">            return HugeServerInfo.fromVertex(vertex);</span>
+        });
+    }
+
+    private HugeServerInfo removeSelfServerInfo() {
+        /*
+         * Check this.selfServerId != null to avoid graph.initialized() call.
+         * NOTE: graph.initialized() may throw exception if we can't connect to
+         * backend store, initServerInfo() is not called in this case, so
+         * this.selfServerId is null at this time.
+         */
+<span class="nc bnc" id="L365" title="All 4 branches missed.">        if (this.selfNodeId() != null &amp;&amp; this.graph.initialized()) {</span>
+<span class="nc" id="L366">            return this.removeServerInfo(this.selfNodeId());</span>
+        }
+<span class="nc" id="L368">        return null;</span>
+    }
+
+    private HugeServerInfo removeServerInfo(Id serverId) {
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        if (serverId == null) {</span>
+<span class="nc" id="L373">            return null;</span>
+        }
+<span class="nc" id="L375">        LOG.info(&quot;Remove server info: {}&quot;, serverId);</span>
+<span class="nc" id="L376">        return this.call(() -&gt; {</span>
+<span class="nc" id="L377">            Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(serverId);</span>
+<span class="nc" id="L378">            Vertex vertex = QueryResults.one(vertices);</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">            if (vertex == null) {</span>
+<span class="nc" id="L380">                return null;</span>
+            }
+<span class="nc" id="L382">            this.tx().removeVertex((HugeVertex) vertex);</span>
+<span class="nc" id="L383">            return HugeServerInfo.fromVertex(vertex);</span>
+        });
+    }
+
+    protected void updateServerInfos(Collection&lt;HugeServerInfo&gt; serverInfos) {
+<span class="nc" id="L388">        this.save(serverInfos);</span>
+<span class="nc" id="L389">    }</span>
+
+    protected Collection&lt;HugeServerInfo&gt; allServerInfos() {
+<span class="nc" id="L392">        Iterator&lt;HugeServerInfo&gt; infos = this.serverInfos(NO_LIMIT, null);</span>
+<span class="nc" id="L393">        try (ListIterator&lt;HugeServerInfo&gt; iter = new ListIterator&lt;&gt;(</span>
+                                                 MAX_SERVERS, infos)) {
+<span class="nc" id="L395">            return iter.list();</span>
+<span class="nc" id="L396">        } catch (Exception e) {</span>
+<span class="nc" id="L397">            throw new HugeException(&quot;Failed to close server info iterator&quot;, e);</span>
+        }
+    }
+
+    protected Iterator&lt;HugeServerInfo&gt; serverInfos(String page) {
+<span class="nc" id="L402">        return this.serverInfos(ImmutableMap.of(), PAGE_SIZE, page);</span>
+    }
+
+    protected Iterator&lt;HugeServerInfo&gt; serverInfos(long limit, String page) {
+<span class="nc" id="L406">        return this.serverInfos(ImmutableMap.of(), limit, page);</span>
+    }
+
+    private Iterator&lt;HugeServerInfo&gt; serverInfos(Map&lt;String, Object&gt; conditions,
+                                                 long limit, String page) {
+<span class="nc" id="L411">        return this.call(() -&gt; {</span>
+<span class="nc" id="L412">            ConditionQuery query = new ConditionQuery(HugeType.VERTEX);</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">            if (page != null) {</span>
+<span class="nc" id="L414">                query.page(page);</span>
+            }
+
+<span class="nc" id="L417">            HugeGraph graph = this.graph.graph();</span>
+<span class="nc" id="L418">            VertexLabel vl = graph.vertexLabel(HugeServerInfo.P.SERVER);</span>
+<span class="nc" id="L419">            query.eq(HugeKeys.LABEL, vl.id());</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">            for (Map.Entry&lt;String, Object&gt; entry : conditions.entrySet()) {</span>
+<span class="nc" id="L421">                PropertyKey pk = graph.propertyKey(entry.getKey());</span>
+<span class="nc" id="L422">                query.query(Condition.eq(pk.id(), entry.getValue()));</span>
+<span class="nc" id="L423">            }</span>
+<span class="nc" id="L424">            query.showHidden(true);</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">            if (limit != NO_LIMIT) {</span>
+<span class="nc" id="L426">                query.limit(limit);</span>
+            }
+<span class="nc" id="L428">            Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(query);</span>
+<span class="nc" id="L429">            Iterator&lt;HugeServerInfo&gt; servers =</span>
+                    new MapperIterator&lt;&gt;(vertices, HugeServerInfo::fromVertex);
+            // Convert iterator to list to avoid across thread tx accessed
+<span class="nc" id="L432">            return QueryResults.toList(servers);</span>
+        });
+    }
+
+    private boolean supportsPaging() {
+<span class="nc" id="L437">        return this.graph.graph().backendStoreFeatures().supportsQueryByPage();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

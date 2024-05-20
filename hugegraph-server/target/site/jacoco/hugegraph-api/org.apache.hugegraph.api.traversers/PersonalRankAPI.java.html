@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PersonalRankAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">PersonalRankAPI.java</span></div><h1>PersonalRankAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_LIMIT;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEPTH;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.NO_LIMIT;
+
+import java.util.Map;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
+
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.traversal.algorithm.PersonalRankTraverser;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Path(&quot;graphs/{graph}/traversers/personalrank&quot;)
+@Singleton
+@Tag(name = &quot;PersonalRankAPI&quot;)
+<span class="nc" id="L52">public class PersonalRankAPI extends API {</span>
+
+<span class="nc" id="L54">    private static final Logger LOG = Log.logger(PersonalRankAPI.class);</span>
+
+    private static final double DEFAULT_DIFF = 0.0001;
+    private static final double DEFAULT_ALPHA = 0.85;
+    private static final int DEFAULT_DEPTH = 5;
+
+    @POST
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String personalRank(@Context GraphManager manager,
+                               @PathParam(&quot;graph&quot;) String graph,
+                               RankRequest request) {
+<span class="nc" id="L66">        E.checkArgumentNotNull(request, &quot;The rank request body can't be null&quot;);</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">        E.checkArgument(request.source != null,</span>
+                        &quot;The source vertex id of rank request can't be null&quot;);
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        E.checkArgument(request.label != null,</span>
+                        &quot;The edge label of rank request can't be null&quot;);
+<span class="nc bnc" id="L71" title="All 4 branches missed.">        E.checkArgument(request.alpha &gt; 0 &amp;&amp; request.alpha &lt;= 1.0,</span>
+                        &quot;The alpha of rank request must be in range (0, 1], &quot; +
+<span class="nc" id="L73">                        &quot;but got '%s'&quot;, request.alpha);</span>
+<span class="nc bnc" id="L74" title="All 4 branches missed.">        E.checkArgument(request.maxDiff &gt; 0 &amp;&amp; request.maxDiff &lt;= 1.0,</span>
+                        &quot;The max diff of rank request must be in range &quot; +
+<span class="nc" id="L76">                        &quot;(0, 1], but got '%s'&quot;, request.maxDiff);</span>
+<span class="nc bnc" id="L77" title="All 4 branches missed.">        E.checkArgument(request.maxDegree &gt; 0L || request.maxDegree == NO_LIMIT,</span>
+                        &quot;The max degree of rank request must be &gt; 0 &quot; +
+<span class="nc" id="L79">                        &quot;or == -1, but got: %s&quot;, request.maxDegree);</span>
+<span class="nc bnc" id="L80" title="All 4 branches missed.">        E.checkArgument(request.limit &gt; 0L || request.limit == NO_LIMIT,</span>
+                        &quot;The limit of rank request must be &gt; 0 or == -1, &quot; +
+<span class="nc" id="L82">                        &quot;but got: %s&quot;, request.limit);</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        E.checkArgument(request.maxDepth &gt; 1L &amp;&amp;</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">                        request.maxDepth &lt;= DEFAULT_MAX_DEPTH,</span>
+                        &quot;The max depth of rank request must be &quot; +
+                        &quot;in range (1, %s], but got '%s'&quot;,
+<span class="nc" id="L87">                        DEFAULT_MAX_DEPTH, request.maxDepth);</span>
+
+<span class="nc" id="L89">        LOG.debug(&quot;Graph [{}] get personal rank from '{}' with &quot; +</span>
+                  &quot;edge label '{}', alpha '{}', maxDegree '{}', &quot; +
+                  &quot;max depth '{}' and sorted '{}'&quot;,
+<span class="nc" id="L92">                  graph, request.source, request.label, request.alpha,</span>
+<span class="nc" id="L93">                  request.maxDegree, request.maxDepth, request.sorted);</span>
+
+<span class="nc" id="L95">        Id sourceId = HugeVertex.getIdValue(request.source);</span>
+<span class="nc" id="L96">        HugeGraph g = graph(manager, graph);</span>
+
+        PersonalRankTraverser traverser;
+<span class="nc" id="L99">        traverser = new PersonalRankTraverser(g, request.alpha, request.maxDegree,</span>
+<span class="nc" id="L100">                                              request.maxDepth);</span>
+<span class="nc" id="L101">        Map&lt;Id, Double&gt; ranks = traverser.personalRank(sourceId, request.label,</span>
+<span class="nc" id="L102">                                                       request.withLabel);</span>
+<span class="nc" id="L103">        ranks = HugeTraverser.topN(ranks, request.sorted, request.limit);</span>
+<span class="nc" id="L104">        return manager.serializer(g).writeMap(ranks);</span>
+    }
+
+<span class="nc" id="L107">    private static class RankRequest {</span>
+
+        @JsonProperty(&quot;source&quot;)
+        private Object source;
+        @JsonProperty(&quot;label&quot;)
+        private String label;
+<span class="nc" id="L113">        @JsonProperty(&quot;alpha&quot;)</span>
+        private double alpha = DEFAULT_ALPHA;
+        // TODO: used for future enhancement
+<span class="nc" id="L116">        @JsonProperty(&quot;max_diff&quot;)</span>
+        private double maxDiff = DEFAULT_DIFF;
+<span class="nc" id="L118">        @JsonProperty(&quot;max_degree&quot;)</span>
+<span class="nc" id="L119">        private long maxDegree = Long.parseLong(DEFAULT_MAX_DEGREE);</span>
+<span class="nc" id="L120">        @JsonProperty(&quot;limit&quot;)</span>
+<span class="nc" id="L121">        private int limit = Integer.parseInt(DEFAULT_LIMIT);</span>
+<span class="nc" id="L122">        @JsonProperty(&quot;max_depth&quot;)</span>
+        private int maxDepth = DEFAULT_DEPTH;
+<span class="nc" id="L124">        @JsonProperty(&quot;with_label&quot;)</span>
+        private PersonalRankTraverser.WithLabel withLabel =
+                PersonalRankTraverser.WithLabel.BOTH_LABEL;
+<span class="nc" id="L127">        @JsonProperty(&quot;sorted&quot;)</span>
+        private boolean sorted = true;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L132">            return String.format(&quot;RankRequest{source=%s,label=%s,alpha=%s,&quot; +</span>
+                                 &quot;maxDiff=%s,maxDegree=%s,limit=%s,&quot; +
+                                 &quot;maxDepth=%s,withLabel=%s,sorted=%s}&quot;,
+<span class="nc" id="L135">                                 this.source, this.label, this.alpha,</span>
+<span class="nc" id="L136">                                 this.maxDiff, this.maxDegree, this.limit,</span>
+<span class="nc" id="L137">                                 this.maxDepth, this.withLabel, this.sorted);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

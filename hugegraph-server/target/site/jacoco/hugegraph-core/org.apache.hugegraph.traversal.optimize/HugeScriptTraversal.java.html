@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeScriptTraversal.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.optimize</a> &gt; <span class="el_source">HugeScriptTraversal.java</span></div><h1>HugeScriptTraversal.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * &quot;License&quot;); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * &quot;AS IS&quot; BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.apache.hugegraph.traversal.optimize;
+
+import java.util.Map;
+
+import javax.script.Bindings;
+import javax.script.ScriptEngine;
+import javax.script.ScriptException;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.tinkerpop.gremlin.jsr223.SingleGremlinScriptEngineManager;
+import org.apache.tinkerpop.gremlin.process.traversal.Traversal;
+import org.apache.tinkerpop.gremlin.process.traversal.TraversalSource;
+import org.apache.tinkerpop.gremlin.process.traversal.TraversalStrategy;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
+import org.apache.tinkerpop.gremlin.process.traversal.util.DefaultTraversal;
+
+/**
+ * ScriptTraversal encapsulates a {@link ScriptEngine} and a script which is
+ * compiled into a {@link Traversal} at {@link Admin#applyStrategies()}.
+ *
+ * This is useful for serializing traversals as the compilation can happen on
+ * the remote end where the traversal will ultimately be processed.
+ *
+ * @author Marko A. Rodriguez (http://markorodriguez.com)
+ */
+public final class HugeScriptTraversal&lt;S, E&gt; extends DefaultTraversal&lt;S, E&gt; {
+
+    private static final long serialVersionUID = 4617322697747299673L;
+
+    private final String script;
+    private final String language;
+    private final Map&lt;String, Object&gt; bindings;
+    private final Map&lt;String, String&gt; aliases;
+
+    private Object result;
+
+    public HugeScriptTraversal(TraversalSource traversalSource, String language, String script,
+<span class="nc" id="L57">                               Map&lt;String, Object&gt; bindings, Map&lt;String, String&gt; aliases) {</span>
+<span class="nc" id="L58">        this.graph = traversalSource.getGraph();</span>
+<span class="nc" id="L59">        this.language = language;</span>
+<span class="nc" id="L60">        this.script = script;</span>
+<span class="nc" id="L61">        this.bindings = bindings;</span>
+<span class="nc" id="L62">        this.aliases = aliases;</span>
+<span class="nc" id="L63">        this.result = null;</span>
+<span class="nc" id="L64">    }</span>
+
+    public Object result() {
+<span class="nc" id="L67">        return this.result;</span>
+    }
+
+    public String script() {
+<span class="nc" id="L71">        return this.script;</span>
+    }
+
+    @Override
+    public void applyStrategies() throws IllegalStateException {
+<span class="nc" id="L76">        ScriptEngine engine = SingleGremlinScriptEngineManager.get(this.language);</span>
+
+<span class="nc" id="L78">        Bindings bindings = engine.createBindings();</span>
+<span class="nc" id="L79">        bindings.putAll(this.bindings);</span>
+
+        @SuppressWarnings(&quot;rawtypes&quot;)
+<span class="nc" id="L82">        TraversalStrategy[] strategies = this.getStrategies().toList()</span>
+<span class="nc" id="L83">                                             .toArray(new TraversalStrategy[0]);</span>
+<span class="nc" id="L84">        GraphTraversalSource g = this.graph.traversal();</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (strategies.length &gt; 0) {</span>
+<span class="nc" id="L86">            g = g.withStrategies(strategies);</span>
+        }
+<span class="nc" id="L88">        bindings.put(&quot;g&quot;, g);</span>
+<span class="nc" id="L89">        bindings.put(&quot;graph&quot;, this.graph);</span>
+
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        for (Map.Entry&lt;String, String&gt; entry : this.aliases.entrySet()) {</span>
+<span class="nc" id="L92">            Object value = bindings.get(entry.getValue());</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">            if (value == null) {</span>
+<span class="nc" id="L94">                throw new IllegalArgumentException(String.format(&quot;Invalid alias '%s':'%s'&quot;,</span>
+<span class="nc" id="L95">                                                                 entry.getKey(), entry.getValue()));</span>
+            }
+<span class="nc" id="L97">            bindings.put(entry.getKey(), value);</span>
+<span class="nc" id="L98">        }</span>
+
+        try {
+<span class="nc" id="L101">            Object result = engine.eval(this.script, bindings);</span>
+
+<span class="nc bnc" id="L103" title="All 2 branches missed.">            if (result instanceof Admin) {</span>
+                @SuppressWarnings({ &quot;unchecked&quot;})
+<span class="nc" id="L105">                Admin&lt;S, E&gt; traversal = (Admin&lt;S, E&gt;) result;</span>
+<span class="nc" id="L106">                traversal.getSideEffects().mergeInto(this.sideEffects);</span>
+<span class="nc" id="L107">                traversal.getSteps().forEach(this::addStep);</span>
+<span class="nc" id="L108">                this.strategies = traversal.getStrategies();</span>
+<span class="nc" id="L109">            } else {</span>
+<span class="nc" id="L110">                this.result = result;</span>
+            }
+<span class="nc" id="L112">            super.applyStrategies();</span>
+<span class="nc" id="L113">        } catch (ScriptException e) {</span>
+<span class="nc" id="L114">            throw new HugeException(e.getMessage(), e);</span>
+<span class="nc" id="L115">        }</span>
+<span class="nc" id="L116">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

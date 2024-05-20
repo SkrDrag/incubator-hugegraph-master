@@ -1,0 +1,848 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MysqlTable.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-mysql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.mysql</a> &gt; <span class="el_source">MysqlTable.java</span></div><h1>MysqlTable.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.mysql;
+
+import java.math.BigDecimal;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.function.BiFunction;
+
+import org.apache.logging.log4j.util.Strings;
+import org.apache.tinkerpop.gremlin.util.iterator.IteratorUtils;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.query.Aggregate;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.IdQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendTable;
+import org.apache.hugegraph.backend.store.Shard;
+import org.apache.hugegraph.backend.store.TableDefine;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.iterator.ExtendableIterator;
+import org.apache.hugegraph.iterator.WrappedIterator;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.google.common.collect.ImmutableList;
+
+public abstract class MysqlTable
+                extends BackendTable&lt;MysqlSessions.Session, MysqlBackendEntry.Row&gt; {
+
+<span class="nc" id="L58">    private static final Logger LOG = Log.logger(MysqlTable.class);</span>
+
+    private static final String DECIMAL = &quot;DECIMAL&quot;;
+
+    // The template cache for insert and delete statements
+    private String insertTemplate;
+    private String insertTemplateTtl;
+    private String deleteTemplate;
+    private String updateIfPresentTemplate;
+    private String updateIfAbsentTemplate;
+
+    private final MysqlShardSplitter shardSplitter;
+
+    public MysqlTable(String table) {
+<span class="nc" id="L72">        super(table);</span>
+<span class="nc" id="L73">        this.insertTemplate = null;</span>
+<span class="nc" id="L74">        this.insertTemplateTtl = null;</span>
+<span class="nc" id="L75">        this.deleteTemplate = null;</span>
+<span class="nc" id="L76">        this.updateIfPresentTemplate = null;</span>
+<span class="nc" id="L77">        this.updateIfAbsentTemplate = null;</span>
+
+<span class="nc" id="L79">        this.shardSplitter = new MysqlShardSplitter(this.table());</span>
+<span class="nc" id="L80">    }</span>
+
+    @Override
+    protected void registerMetaHandlers() {
+<span class="nc" id="L84">        this.registerMetaHandler(&quot;splits&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            E.checkArgument(args.length == 1,</span>
+                            &quot;The args count of %s must be 1&quot;, meta);
+<span class="nc" id="L87">            long splitSize = (long) args[0];</span>
+<span class="nc" id="L88">            return this.shardSplitter.getSplits(session, splitSize);</span>
+        });
+<span class="nc" id="L90">    }</span>
+
+    public abstract TableDefine tableDefine();
+
+    @Override
+    public void init(MysqlSessions.Session session) {
+<span class="nc" id="L96">        this.createTable(session, this.tableDefine());</span>
+<span class="nc" id="L97">    }</span>
+
+    @Override
+    public void clear(MysqlSessions.Session session) {
+<span class="nc" id="L101">        this.dropTable(session);</span>
+<span class="nc" id="L102">    }</span>
+
+    public void truncate(MysqlSessions.Session session) {
+<span class="nc" id="L105">        this.truncateTable(session);</span>
+<span class="nc" id="L106">    }</span>
+
+    protected void createTable(MysqlSessions.Session session, TableDefine tableDefine) {
+<span class="nc" id="L109">        StringBuilder sql = new StringBuilder();</span>
+<span class="nc" id="L110">        sql.append(&quot;CREATE TABLE IF NOT EXISTS &quot;);</span>
+<span class="nc" id="L111">        sql.append(this.table()).append(&quot; (&quot;);</span>
+        // Add columns
+        for (Map.Entry&lt;HugeKeys, String&gt; entry :
+<span class="nc bnc" id="L114" title="All 2 branches missed.">             tableDefine.columns().entrySet()) {</span>
+<span class="nc" id="L115">            sql.append(formatKey(entry.getKey()));</span>
+<span class="nc" id="L116">            sql.append(&quot; &quot;);</span>
+<span class="nc" id="L117">            sql.append(entry.getValue());</span>
+<span class="nc" id="L118">            sql.append(&quot;, &quot;);</span>
+<span class="nc" id="L119">        }</span>
+        // Specified primary keys
+<span class="nc" id="L121">        sql.append(&quot; PRIMARY KEY (&quot;);</span>
+<span class="nc" id="L122">        int i = 0;</span>
+<span class="nc" id="L123">        int size = tableDefine.keys().size();</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        for (HugeKeys key : tableDefine.keys()) {</span>
+<span class="nc" id="L125">            sql.append(formatKey(key));</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            if (++i != size) {</span>
+<span class="nc" id="L127">                sql.append(&quot;, &quot;);</span>
+            }
+<span class="nc" id="L129">        }</span>
+<span class="nc" id="L130">        sql.append(&quot;))&quot;);</span>
+<span class="nc" id="L131">        sql.append(this.engine(session));</span>
+<span class="nc" id="L132">        sql.append(&quot;;&quot;);</span>
+
+<span class="nc" id="L134">        LOG.debug(&quot;Create table: {}&quot;, sql);</span>
+        try {
+<span class="nc" id="L136">            session.execute(sql.toString());</span>
+<span class="nc" id="L137">        } catch (SQLException e) {</span>
+<span class="nc" id="L138">            throw new BackendException(&quot;Failed to create table with '%s'&quot;,</span>
+                                       e, sql);
+<span class="nc" id="L140">        }</span>
+<span class="nc" id="L141">    }</span>
+
+    protected String engine(MysqlSessions.Session session) {
+<span class="nc" id="L144">        String engine = session.config().get(MysqlOptions.JDBC_STORAGE_ENGINE);</span>
+<span class="nc" id="L145">        return &quot; ENGINE=&quot; + engine;</span>
+    }
+
+    protected void dropTable(MysqlSessions.Session session) {
+<span class="nc" id="L149">        LOG.debug(&quot;Drop table: {}&quot;, this.table());</span>
+<span class="nc" id="L150">        String sql = this.buildDropTemplate();</span>
+        try {
+<span class="nc" id="L152">            session.execute(sql);</span>
+<span class="nc" id="L153">        } catch (SQLException e) {</span>
+<span class="nc" id="L154">            throw new BackendException(&quot;Failed to drop table with '%s'&quot;,</span>
+                                       e, sql);
+<span class="nc" id="L156">        }</span>
+<span class="nc" id="L157">    }</span>
+
+    protected void truncateTable(MysqlSessions.Session session) {
+<span class="nc" id="L160">        LOG.debug(&quot;Truncate table: {}&quot;, this.table());</span>
+<span class="nc" id="L161">        String sql = this.buildTruncateTemplate();</span>
+        try {
+<span class="nc" id="L163">            session.execute(sql);</span>
+<span class="nc" id="L164">        } catch (SQLException e) {</span>
+<span class="nc" id="L165">            throw new BackendException(&quot;Failed to truncate table with '%s'&quot;,</span>
+                                       e, sql);
+<span class="nc" id="L167">        }</span>
+<span class="nc" id="L168">    }</span>
+
+    protected List&lt;HugeKeys&gt; idColumnName() {
+<span class="nc" id="L171">        return this.tableDefine().keys();</span>
+    }
+
+    protected List&lt;Long&gt; idColumnValue(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L175">        return ImmutableList.of(entry.id().asLong());</span>
+    }
+
+    protected List&lt;Object&gt; idColumnValue(Id id) {
+<span class="nc" id="L179">        return ImmutableList.of(id.asObject());</span>
+    }
+
+    protected void insertOrUpdate(MysqlSessions.Session session, String template,
+                                  List&lt;?&gt; params) {
+        PreparedStatement insertStmt;
+        try {
+            // Create or get insert prepare statement
+<span class="nc" id="L187">            insertStmt = session.prepareStatement(template);</span>
+<span class="nc" id="L188">            int i = 1;</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            for (Object param : params) {</span>
+<span class="nc" id="L190">                insertStmt.setObject(i++, param);</span>
+<span class="nc" id="L191">            }</span>
+<span class="nc" id="L192">        } catch (SQLException e) {</span>
+<span class="nc" id="L193">            throw new BackendException(&quot;Failed to prepare statement '%s' &quot; +</span>
+                                       &quot;with params: %s&quot;, template, params);
+<span class="nc" id="L195">        }</span>
+<span class="nc" id="L196">        session.add(insertStmt);</span>
+<span class="nc" id="L197">    }</span>
+
+    protected final String buildUpdateTemplate(MysqlBackendEntry.Row entry) {
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        if (entry.ttl() != 0L) {</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            if (this.insertTemplateTtl != null) {</span>
+<span class="nc" id="L202">                return this.insertTemplateTtl;</span>
+            }
+
+<span class="nc" id="L205">            this.insertTemplateTtl = this.buildUpdateForcedTemplate(entry);</span>
+<span class="nc" id="L206">            return this.insertTemplateTtl;</span>
+        } else {
+<span class="nc bnc" id="L208" title="All 2 branches missed.">            if (this.insertTemplate != null) {</span>
+<span class="nc" id="L209">                return this.insertTemplate;</span>
+            }
+
+<span class="nc" id="L212">            this.insertTemplate = this.buildUpdateForcedTemplate(entry);</span>
+<span class="nc" id="L213">            return this.insertTemplate;</span>
+        }
+    }
+
+    protected String buildUpdateForcedTemplate(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L218">        StringBuilder insert = new StringBuilder();</span>
+<span class="nc" id="L219">        insert.append(&quot;REPLACE INTO &quot;).append(this.table());</span>
+<span class="nc" id="L220">        return this.buildInsertKeys(insert, entry);</span>
+    }
+
+    protected String buildUpdateIfAbsentTemplate(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L224">        StringBuilder insert = new StringBuilder();</span>
+<span class="nc" id="L225">        insert.append(&quot;INSERT IGNORE INTO &quot;).append(this.table());</span>
+<span class="nc" id="L226">        return this.buildInsertKeys(insert, entry);</span>
+    }
+
+    protected String buildInsertKeys(StringBuilder insert,
+                                     MysqlBackendEntry.Row entry) {
+<span class="nc" id="L231">        insert.append(&quot; (&quot;);</span>
+
+<span class="nc" id="L233">        int i = 0;</span>
+<span class="nc" id="L234">        int size = entry.columns().size();</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">        for (HugeKeys key : entry.columns().keySet()) {</span>
+<span class="nc" id="L236">            insert.append(formatKey(key));</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">            if (++i != size) {</span>
+<span class="nc" id="L238">                insert.append(&quot;, &quot;);</span>
+            }
+<span class="nc" id="L240">        }</span>
+<span class="nc" id="L241">        insert.append(&quot;) VALUES (&quot;);</span>
+        // Fill with '?' as a placeholder
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        for (i = 0; i &lt; size; i++) {</span>
+<span class="nc" id="L244">            insert.append(&quot;?&quot;);</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (i != size - 1) {</span>
+<span class="nc" id="L246">                insert.append(&quot;, &quot;);</span>
+            }
+        }
+<span class="nc" id="L249">        insert.append(&quot;)&quot;);</span>
+
+<span class="nc" id="L251">        return insert.toString();</span>
+    }
+
+    protected List&lt;?&gt; buildUpdateForcedParams(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L255">        return this.buildColumnsParams(entry);</span>
+    }
+
+    protected List&lt;?&gt; buildUpdateIfAbsentParams(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L259">        return this.buildColumnsParams(entry);</span>
+    }
+
+    protected List&lt;Object&gt; buildColumnsParams(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L263">        return this.buildColumnsParams(entry, null);</span>
+    }
+
+    protected List&lt;Object&gt; buildColumnsParams(MysqlBackendEntry.Row entry,
+                                              List&lt;HugeKeys&gt; skipKeys) {
+<span class="nc" id="L268">        List&lt;Object&gt; objects = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        for (Map.Entry&lt;HugeKeys, Object&gt; e : entry.columns().entrySet()) {</span>
+<span class="nc" id="L270">            HugeKeys key = e.getKey();</span>
+<span class="nc" id="L271">            Object value = e.getValue();</span>
+<span class="nc bnc" id="L272" title="All 4 branches missed.">            if (skipKeys != null &amp;&amp; skipKeys.contains(key)) {</span>
+<span class="nc" id="L273">                continue;</span>
+            }
+<span class="nc" id="L275">            String type = this.tableDefine().columns().get(key);</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">            if (type.startsWith(DECIMAL)) {</span>
+<span class="nc" id="L277">                value = new BigDecimal(value.toString());</span>
+            }
+<span class="nc" id="L279">            objects.add(value);</span>
+<span class="nc" id="L280">        }</span>
+<span class="nc" id="L281">        return objects;</span>
+    }
+
+    protected String buildUpdateIfPresentTemplate(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L285">        StringBuilder update = new StringBuilder();</span>
+<span class="nc" id="L286">        update.append(&quot;UPDATE &quot;).append(this.table());</span>
+<span class="nc" id="L287">        update.append(&quot; SET &quot;);</span>
+
+<span class="nc" id="L289">        List&lt;HugeKeys&gt; idNames = this.idColumnName();</span>
+
+<span class="nc" id="L291">        int i = 0;</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">        for (HugeKeys key : entry.columns().keySet()) {</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">            if (idNames.contains(key)) {</span>
+<span class="nc" id="L294">                continue;</span>
+            }
+<span class="nc bnc" id="L296" title="All 2 branches missed.">            if (i++ &gt; 0) {</span>
+<span class="nc" id="L297">                update.append(&quot;, &quot;);</span>
+            }
+<span class="nc" id="L299">            update.append(formatKey(key));</span>
+<span class="nc" id="L300">            update.append(&quot;=?&quot;);</span>
+<span class="nc" id="L301">        }</span>
+
+<span class="nc" id="L303">        WhereBuilder where = this.newWhereBuilder();</span>
+<span class="nc" id="L304">        where.and(formatKeys(idNames), &quot;=&quot;);</span>
+<span class="nc" id="L305">        update.append(where.build());</span>
+
+<span class="nc" id="L307">        return update.toString();</span>
+    }
+
+    protected List&lt;?&gt; buildUpdateIfPresentParams(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L311">        List&lt;HugeKeys&gt; idNames = this.idColumnName();</span>
+<span class="nc" id="L312">        List&lt;Object&gt; params = this.buildColumnsParams(entry, idNames);</span>
+
+<span class="nc" id="L314">        List&lt;Long&gt; idValues = this.idColumnValue(entry);</span>
+<span class="nc" id="L315">        params.addAll(idValues);</span>
+
+<span class="nc" id="L317">        return params;</span>
+    }
+
+    protected String buildDeleteTemplate(List&lt;HugeKeys&gt; idNames) {
+<span class="nc" id="L321">        StringBuilder delete = new StringBuilder();</span>
+<span class="nc" id="L322">        delete.append(&quot;DELETE FROM &quot;).append(this.table());</span>
+<span class="nc" id="L323">        this.appendPartition(delete);</span>
+
+<span class="nc" id="L325">        WhereBuilder where = this.newWhereBuilder();</span>
+<span class="nc" id="L326">        where.and(formatKeys(idNames), &quot;=&quot;);</span>
+<span class="nc" id="L327">        delete.append(where.build());</span>
+
+<span class="nc" id="L329">        return delete.toString();</span>
+    }
+
+    protected String buildDropTemplate() {
+<span class="nc" id="L333">        return String.format(&quot;DROP TABLE IF EXISTS %s;&quot;, this.table());</span>
+    }
+
+    protected String buildTruncateTemplate() {
+<span class="nc" id="L337">        return String.format(&quot;TRUNCATE TABLE %s;&quot;, this.table());</span>
+    }
+
+    protected void appendPartition(StringBuilder sb) {
+        // pass
+<span class="nc" id="L342">    }</span>
+
+    /**
+     * Insert an entire row
+     */
+    @Override
+    public void insert(MysqlSessions.Session session, MysqlBackendEntry.Row entry) {
+<span class="nc" id="L349">        String template = this.buildUpdateTemplate(entry);</span>
+<span class="nc" id="L350">        List&lt;?&gt; params = this.buildUpdateForcedParams(entry);</span>
+<span class="nc" id="L351">        this.insertOrUpdate(session, template, params);</span>
+<span class="nc" id="L352">    }</span>
+
+    @Override
+    public void delete(MysqlSessions.Session session, MysqlBackendEntry.Row entry) {
+<span class="nc" id="L356">        List&lt;HugeKeys&gt; idNames = this.idColumnName();</span>
+
+<span class="nc" id="L358">        String template = this.deleteTemplate;</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">        if (template == null) {</span>
+<span class="nc" id="L360">            template = this.buildDeleteTemplate(idNames);</span>
+<span class="nc" id="L361">            this.deleteTemplate = template;</span>
+        }
+
+        PreparedStatement deleteStmt;
+        try {
+<span class="nc" id="L366">            deleteStmt = session.prepareStatement(template);</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">            if (entry.columns().isEmpty()) {</span>
+                // Delete just by id
+<span class="nc" id="L369">                List&lt;Long&gt; idValues = this.idColumnValue(entry);</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">                assert idNames.size() == idValues.size();</span>
+
+<span class="nc bnc" id="L372" title="All 2 branches missed.">                for (int i = 0, n = idNames.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L373">                    deleteStmt.setObject(i + 1, idValues.get(i));</span>
+                }
+<span class="nc" id="L375">            } else {</span>
+                // Delete just by column keys(must be id columns)
+<span class="nc bnc" id="L377" title="All 2 branches missed.">                for (int i = 0, n = idNames.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L378">                    HugeKeys key = idNames.get(i);</span>
+<span class="nc" id="L379">                    Object value = entry.column(key);</span>
+
+<span class="nc" id="L381">                    deleteStmt.setObject(i + 1, value);</span>
+                }
+            }
+<span class="nc" id="L384">        } catch (SQLException e) {</span>
+<span class="nc" id="L385">            throw new BackendException(&quot;Failed to prepare statement '%s'&quot; +</span>
+                                       &quot;with entry columns %s&quot;,
+<span class="nc" id="L387">                                       template, entry.columns().values());</span>
+<span class="nc" id="L388">        }</span>
+<span class="nc" id="L389">        session.add(deleteStmt);</span>
+<span class="nc" id="L390">    }</span>
+
+    @Override
+    public void append(MysqlSessions.Session session, MysqlBackendEntry.Row entry) {
+<span class="nc" id="L394">        this.insert(session, entry);</span>
+<span class="nc" id="L395">    }</span>
+
+    @Override
+    public void eliminate(MysqlSessions.Session session, MysqlBackendEntry.Row entry) {
+<span class="nc" id="L399">        this.delete(session, entry);</span>
+<span class="nc" id="L400">    }</span>
+
+    @Override
+    public void updateIfPresent(MysqlSessions.Session session, MysqlBackendEntry.Row entry) {
+<span class="nc" id="L404">        String template = this.updateIfPresentTemplate;</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">        if (template == null) {</span>
+<span class="nc" id="L406">            template = this.buildUpdateIfPresentTemplate(entry);</span>
+<span class="nc" id="L407">            this.updateIfPresentTemplate = template;</span>
+        }
+<span class="nc" id="L409">        List&lt;?&gt; params = this.buildUpdateIfPresentParams(entry);</span>
+<span class="nc" id="L410">        this.insertOrUpdate(session, template, params);</span>
+<span class="nc" id="L411">    }</span>
+
+    @Override
+    public void updateIfAbsent(MysqlSessions.Session session, MysqlBackendEntry.Row entry) {
+<span class="nc" id="L415">        String template = this.updateIfAbsentTemplate;</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">        if (template == null) {</span>
+<span class="nc" id="L417">            template = this.buildUpdateIfAbsentTemplate(entry);</span>
+<span class="nc" id="L418">            this.updateIfAbsentTemplate = template;</span>
+        }
+<span class="nc" id="L420">        List&lt;?&gt; params = this.buildUpdateIfAbsentParams(entry);</span>
+<span class="nc" id="L421">        this.insertOrUpdate(session, template, params);</span>
+<span class="nc" id="L422">    }</span>
+
+    @Override
+    public boolean queryExist(MysqlSessions.Session session, MysqlBackendEntry.Row entry) {
+<span class="nc" id="L426">        Query query = new IdQuery.OneIdQuery(HugeType.UNKNOWN, entry.id());</span>
+<span class="nc" id="L427">        Iterator&lt;BackendEntry&gt; iter = this.query(session, query);</span>
+        try {
+<span class="nc" id="L429">            return iter.hasNext();</span>
+        } finally {
+<span class="nc" id="L431">            WrappedIterator.close(iter);</span>
+        }
+    }
+
+    @Override
+    public Number queryNumber(MysqlSessions.Session session, Query query) {
+<span class="nc" id="L437">        Aggregate aggregate = query.aggregateNotNull();</span>
+
+<span class="nc" id="L439">        Iterator&lt;Number&gt; results = this.query(session, query, (q, rs) -&gt; {</span>
+            try {
+<span class="nc bnc" id="L441" title="All 2 branches missed.">                if (!rs.resultSet().next()) {</span>
+<span class="nc" id="L442">                    return IteratorUtils.of(aggregate.defaultValue());</span>
+                }
+<span class="nc" id="L444">                return IteratorUtils.of(rs.resultSet().getLong(1));</span>
+<span class="nc" id="L445">            } catch (SQLException e) {</span>
+<span class="nc" id="L446">                throw new BackendException(e);</span>
+            } finally {
+<span class="nc" id="L448">                rs.close();</span>
+            }
+        });
+<span class="nc" id="L451">        return aggregate.reduce(results);</span>
+    }
+
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(MysqlSessions.Session session, Query query) {
+<span class="nc" id="L456">        return this.query(session, query, this::results2Entries);</span>
+    }
+
+    protected &lt;R&gt; Iterator&lt;R&gt; query(MysqlSessions.Session session, Query query,
+                                    BiFunction&lt;Query, ResultSetWrapper,
+                                               Iterator&lt;R&gt;&gt; parser) {
+<span class="nc" id="L462">        ExtendableIterator&lt;R&gt; rs = new ExtendableIterator&lt;&gt;();</span>
+
+<span class="nc bnc" id="L464" title="All 4 branches missed.">        if (query.limit() == 0L &amp;&amp; !query.noLimit()) {</span>
+<span class="nc" id="L465">            LOG.debug(&quot;Return empty result(limit=0) for query {}&quot;, query);</span>
+<span class="nc" id="L466">            return rs;</span>
+        }
+
+<span class="nc" id="L469">        List&lt;StringBuilder&gt; selections = this.query2Select(this.table(), query);</span>
+        try {
+<span class="nc bnc" id="L471" title="All 2 branches missed.">            for (StringBuilder selection : selections) {</span>
+<span class="nc" id="L472">                ResultSetWrapper results = session.select(selection.toString());</span>
+<span class="nc" id="L473">                rs.extend(parser.apply(query, results));</span>
+<span class="nc" id="L474">            }</span>
+<span class="nc" id="L475">        } catch (SQLException e) {</span>
+            // Closing the iterator
+            try {
+<span class="nc" id="L478">                rs.close();</span>
+<span class="nc" id="L479">            } catch (Exception e2) {</span>
+<span class="nc" id="L480">                LOG.error(&quot;Got error {} when closing iterator for query {}&quot;, e2, query);</span>
+<span class="nc" id="L481">            }</span>
+<span class="nc" id="L482">            throw new BackendException(&quot;Failed to query [%s]&quot;, e, query);</span>
+<span class="nc" id="L483">        }</span>
+
+<span class="nc" id="L485">        LOG.debug(&quot;Return {} for query {}&quot;, rs, query);</span>
+<span class="nc" id="L486">        return rs;</span>
+    }
+
+    protected List&lt;StringBuilder&gt; query2Select(String table, Query query) {
+        // Build query
+<span class="nc" id="L491">        StringBuilder select = new StringBuilder(64);</span>
+<span class="nc" id="L492">        select.append(&quot;SELECT &quot;);</span>
+
+        // Set aggregate
+<span class="nc" id="L495">        Aggregate aggregate = query.aggregate();</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">        if (aggregate != null) {</span>
+<span class="nc" id="L497">            select.append(aggregate.toString());</span>
+        } else {
+<span class="nc" id="L499">            select.append(&quot;*&quot;);</span>
+        }
+
+        // Set table
+<span class="nc" id="L503">        select.append(&quot; FROM &quot;).append(table);</span>
+
+        // Is query by id?
+<span class="nc" id="L506">        List&lt;StringBuilder&gt; ids = this.queryId2Select(query, select);</span>
+
+        List&lt;StringBuilder&gt; selections;
+
+<span class="nc bnc" id="L510" title="All 2 branches missed.">        if (query.conditionsSize() == 0) {</span>
+            // Query only by id
+<span class="nc" id="L512">            LOG.debug(&quot;Query only by id(s): {}&quot;, ids);</span>
+<span class="nc" id="L513">            selections = ids;</span>
+        } else {
+<span class="nc" id="L515">            ConditionQuery condQuery = (ConditionQuery) query;</span>
+<span class="nc bnc" id="L516" title="All 2 branches missed.">            if (condQuery.containsScanRelation()) {</span>
+<span class="nc bnc" id="L517" title="All 2 branches missed.">                assert ids.size() == 1;</span>
+<span class="nc" id="L518">                return ImmutableList.of(queryByRange(condQuery, ids.get(0)));</span>
+            }
+
+<span class="nc" id="L521">            selections = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L522" title="All 2 branches missed.">            for (StringBuilder selection : ids) {</span>
+                // Query by condition
+<span class="nc" id="L524">                selections.addAll(this.queryCondition2Select(query, selection));</span>
+<span class="nc" id="L525">            }</span>
+<span class="nc" id="L526">            LOG.debug(&quot;Query by conditions: {}&quot;, selections);</span>
+        }
+        // Set page, order-by and limit
+<span class="nc bnc" id="L529" title="All 2 branches missed.">        for (StringBuilder selection : selections) {</span>
+<span class="nc bnc" id="L530" title="All 2 branches missed.">            boolean hasOrder = !query.orders().isEmpty();</span>
+<span class="nc bnc" id="L531" title="All 2 branches missed.">            if (hasOrder) {</span>
+<span class="nc" id="L532">                this.wrapOrderBy(selection, query);</span>
+            }
+<span class="nc bnc" id="L534" title="All 2 branches missed.">            if (query.paging()) {</span>
+<span class="nc" id="L535">                this.wrapPage(selection, query, false);</span>
+<span class="nc" id="L536">                wrapLimit(selection, query);</span>
+            } else {
+<span class="nc bnc" id="L538" title="All 4 branches missed.">                if (aggregate == null &amp;&amp; !hasOrder) {</span>
+<span class="nc" id="L539">                    select.append(this.orderByKeys());</span>
+                }
+<span class="nc bnc" id="L541" title="All 4 branches missed.">                if (!query.noLimit() || query.offset() &gt; 0L) {</span>
+<span class="nc" id="L542">                    this.wrapOffset(selection, query);</span>
+                }
+            }
+<span class="nc" id="L545">        }</span>
+
+<span class="nc" id="L547">        return selections;</span>
+    }
+
+    protected StringBuilder queryByRange(ConditionQuery query,
+                                         StringBuilder select) {
+<span class="nc bnc" id="L552" title="All 2 branches missed.">        E.checkArgument(query.relations().size() == 1,</span>
+                        &quot;Invalid scan with multi conditions: %s&quot;, query);
+<span class="nc" id="L554">        Condition.Relation scan = query.relations().iterator().next();</span>
+<span class="nc" id="L555">        Shard shard = (Shard) scan.value();</span>
+
+<span class="nc" id="L557">        String page = query.page();</span>
+<span class="nc bnc" id="L558" title="All 2 branches missed.">        if (MysqlShardSplitter.START.equals(shard.start()) &amp;&amp;</span>
+<span class="nc bnc" id="L559" title="All 4 branches missed.">            MysqlShardSplitter.END.equals(shard.end()) &amp;&amp;</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">            (page == null || page.isEmpty())) {</span>
+<span class="nc" id="L561">            this.wrapLimit(select, query);</span>
+<span class="nc" id="L562">            return select;</span>
+        }
+
+<span class="nc" id="L565">        HugeKeys partitionKey = this.idColumnName().get(0);</span>
+
+<span class="nc bnc" id="L567" title="All 4 branches missed.">        if (page != null &amp;&amp; !page.isEmpty()) {</span>
+            // &gt;= page
+<span class="nc" id="L569">            this.wrapPage(select, query, true);</span>
+            // &lt; end
+<span class="nc" id="L571">            WhereBuilder where = this.newWhereBuilder(false);</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">            if (!MysqlShardSplitter.END.equals(shard.end())) {</span>
+<span class="nc" id="L573">                where.and();</span>
+<span class="nc" id="L574">                where.lt(formatKey(partitionKey), shard.end());</span>
+            }
+<span class="nc" id="L576">            select.append(where.build());</span>
+<span class="nc" id="L577">        } else {</span>
+            // &gt;= start
+<span class="nc" id="L579">            WhereBuilder where = this.newWhereBuilder();</span>
+<span class="nc" id="L580">            boolean hasStart = false;</span>
+<span class="nc bnc" id="L581" title="All 2 branches missed.">            if (!MysqlShardSplitter.START.equals(shard.start())) {</span>
+<span class="nc" id="L582">                where.gte(formatKey(partitionKey), shard.start());</span>
+<span class="nc" id="L583">                hasStart = true;</span>
+            }
+            // &lt; end
+<span class="nc bnc" id="L586" title="All 2 branches missed.">            if (!MysqlShardSplitter.END.equals(shard.end())) {</span>
+<span class="nc bnc" id="L587" title="All 2 branches missed.">                if (hasStart) {</span>
+<span class="nc" id="L588">                    where.and();</span>
+                }
+<span class="nc" id="L590">                where.lt(formatKey(partitionKey), shard.end());</span>
+            }
+<span class="nc" id="L592">            select.append(where.build());</span>
+        }
+<span class="nc" id="L594">        this.wrapLimit(select, query);</span>
+
+<span class="nc" id="L596">        return select;</span>
+    }
+
+    protected List&lt;StringBuilder&gt; queryId2Select(Query query,
+                                                 StringBuilder select) {
+        // Query by id(s)
+<span class="nc bnc" id="L602" title="All 2 branches missed.">        if (query.idsSize() == 0) {</span>
+<span class="nc" id="L603">            return ImmutableList.of(select);</span>
+        }
+
+<span class="nc" id="L606">        List&lt;HugeKeys&gt; nameParts = this.idColumnName();</span>
+
+<span class="nc" id="L608">        List&lt;List&lt;Object&gt;&gt; ids = new ArrayList&lt;&gt;(query.idsSize());</span>
+<span class="nc bnc" id="L609" title="All 2 branches missed.">        for (Id id : query.ids()) {</span>
+<span class="nc" id="L610">            List&lt;Object&gt; idParts = this.idColumnValue(id);</span>
+<span class="nc bnc" id="L611" title="All 2 branches missed.">            if (nameParts.size() != idParts.size()) {</span>
+<span class="nc" id="L612">                throw new NotFoundException(</span>
+                          &quot;Unsupported ID format: '%s' (should contain %s)&quot;,
+                          id, nameParts);
+            }
+<span class="nc" id="L616">            ids.add(idParts);</span>
+<span class="nc" id="L617">        }</span>
+
+        // Query only by partition-key
+<span class="nc bnc" id="L620" title="All 2 branches missed.">        if (nameParts.size() == 1) {</span>
+<span class="nc" id="L621">            List&lt;Object&gt; values = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">            for (List&lt;Object&gt; objects : ids) {</span>
+<span class="nc bnc" id="L623" title="All 2 branches missed.">                assert objects.size() == 1;</span>
+<span class="nc" id="L624">                values.add(objects.get(0));</span>
+<span class="nc" id="L625">            }</span>
+
+<span class="nc" id="L627">            WhereBuilder where = this.newWhereBuilder();</span>
+<span class="nc" id="L628">            where.in(formatKey(nameParts.get(0)), values);</span>
+<span class="nc" id="L629">            select.append(where.build());</span>
+<span class="nc" id="L630">            return ImmutableList.of(select);</span>
+        }
+
+        /*
+         * Query by partition-key + clustering-key
+         * NOTE: Error if multi-column IN clause include partition key:
+         * error: multi-column relations can only be applied to clustering
+         * columns when using: select.where(QueryBuilder.in(names, idList));
+         * So we use multi-query instead of IN
+         */
+<span class="nc" id="L640">        List&lt;StringBuilder&gt; selections = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">        for (List&lt;Object&gt; objects : ids) {</span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">            assert nameParts.size() == objects.size();</span>
+<span class="nc" id="L643">            StringBuilder idSelection = new StringBuilder(select);</span>
+            /*
+             * NOTE: concat with AND relation, like:
+             * &quot;pk = id and ck1 = v1 and ck2 = v2&quot;
+             */
+<span class="nc" id="L648">            WhereBuilder where = this.newWhereBuilder();</span>
+<span class="nc" id="L649">            where.and(formatKeys(nameParts), objects);</span>
+
+<span class="nc" id="L651">            idSelection.append(where.build());</span>
+<span class="nc" id="L652">            selections.add(idSelection);</span>
+<span class="nc" id="L653">        }</span>
+<span class="nc" id="L654">        return selections;</span>
+    }
+
+    protected List&lt;StringBuilder&gt; queryCondition2Select(Query query,
+                                                        StringBuilder select) {
+        // Query by conditions
+<span class="nc" id="L660">        Collection&lt;Condition&gt; conditions = query.conditions();</span>
+<span class="nc" id="L661">        List&lt;StringBuilder&gt; clauses = new ArrayList&lt;&gt;(conditions.size());</span>
+<span class="nc bnc" id="L662" title="All 2 branches missed.">        for (Condition condition : conditions) {</span>
+<span class="nc" id="L663">            clauses.add(this.condition2Sql(condition));</span>
+<span class="nc" id="L664">        }</span>
+<span class="nc" id="L665">        WhereBuilder where = this.newWhereBuilder();</span>
+<span class="nc" id="L666">        where.and(clauses);</span>
+<span class="nc" id="L667">        select.append(where.build());</span>
+<span class="nc" id="L668">        return ImmutableList.of(select);</span>
+    }
+
+    protected StringBuilder condition2Sql(Condition condition) {
+<span class="nc bnc" id="L672" title="All 4 branches missed.">        switch (condition.type()) {</span>
+            case AND:
+<span class="nc" id="L674">                Condition.And and = (Condition.And) condition;</span>
+<span class="nc" id="L675">                StringBuilder left = this.condition2Sql(and.left());</span>
+<span class="nc" id="L676">                StringBuilder right = this.condition2Sql(and.right());</span>
+<span class="nc" id="L677">                int size = left.length() + right.length() + &quot; AND &quot;.length();</span>
+<span class="nc" id="L678">                StringBuilder sql = new StringBuilder(size);</span>
+<span class="nc" id="L679">                sql.append(left).append(&quot; AND &quot;).append(right);</span>
+<span class="nc" id="L680">                return sql;</span>
+            case OR:
+<span class="nc" id="L682">                throw new BackendException(&quot;Not support OR currently&quot;);</span>
+            case RELATION:
+<span class="nc" id="L684">                Condition.Relation r = (Condition.Relation) condition;</span>
+<span class="nc" id="L685">                return this.relation2Sql(r);</span>
+            default:
+<span class="nc" id="L687">                final String msg = &quot;Unsupported condition: &quot; + condition;</span>
+<span class="nc" id="L688">                throw new AssertionError(msg);</span>
+        }
+    }
+
+    protected StringBuilder relation2Sql(Condition.Relation relation) {
+<span class="nc" id="L693">        String key = relation.serialKey().toString();</span>
+<span class="nc" id="L694">        Object value = relation.serialValue();</span>
+
+<span class="nc" id="L696">        WhereBuilder sql = this.newWhereBuilder(false);</span>
+<span class="nc" id="L697">        sql.relation(key, relation.relation(), value);</span>
+<span class="nc" id="L698">        return sql.build();</span>
+    }
+
+    protected WhereBuilder newWhereBuilder() {
+<span class="nc" id="L702">        return this.newWhereBuilder(true);</span>
+    }
+
+    protected WhereBuilder newWhereBuilder(boolean startWithWhere) {
+<span class="nc" id="L706">        return new WhereBuilder(startWithWhere);</span>
+    }
+
+    protected void wrapOrderBy(StringBuilder select, Query query) {
+<span class="nc" id="L710">        int size = query.orders().size();</span>
+<span class="nc bnc" id="L711" title="All 2 branches missed.">        assert size &gt; 0;</span>
+
+<span class="nc" id="L713">        int i = 0;</span>
+        // Set order-by
+<span class="nc" id="L715">        select.append(&quot; ORDER BY &quot;);</span>
+        for (Map.Entry&lt;HugeKeys, Query.Order&gt; order :
+<span class="nc bnc" id="L717" title="All 2 branches missed.">             query.orders().entrySet()) {</span>
+<span class="nc" id="L718">            String key = formatKey(order.getKey());</span>
+<span class="nc" id="L719">            Query.Order value = order.getValue();</span>
+<span class="nc" id="L720">            select.append(key).append(&quot; &quot;);</span>
+<span class="nc bnc" id="L721" title="All 2 branches missed.">            if (value == Query.Order.ASC) {</span>
+<span class="nc" id="L722">                select.append(&quot;ASC&quot;);</span>
+            } else {
+<span class="nc bnc" id="L724" title="All 2 branches missed.">                assert value == Query.Order.DESC;</span>
+<span class="nc" id="L725">                select.append(&quot;DESC&quot;);</span>
+            }
+<span class="nc bnc" id="L727" title="All 2 branches missed.">            if (++i != size) {</span>
+<span class="nc" id="L728">                select.append(&quot;, &quot;);</span>
+            }
+<span class="nc" id="L730">        }</span>
+<span class="nc" id="L731">    }</span>
+
+    protected void wrapPage(StringBuilder select, Query query, boolean scan) {
+<span class="nc" id="L734">        String page = query.page();</span>
+        // It's the first time if page is empty
+<span class="nc bnc" id="L736" title="All 2 branches missed.">        if (!page.isEmpty()) {</span>
+<span class="nc" id="L737">            byte[] position = PageState.fromString(page).position();</span>
+<span class="nc" id="L738">            Map&lt;HugeKeys, Object&gt; columns = MysqlEntryIterator.PagePosition.fromBytes(position)</span>
+<span class="nc" id="L739">                                                        .columns();</span>
+
+<span class="nc" id="L741">            List&lt;HugeKeys&gt; idColumnNames = this.idColumnName();</span>
+<span class="nc" id="L742">            List&lt;Object&gt; values = new ArrayList&lt;&gt;(idColumnNames.size());</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">            for (HugeKeys key : idColumnNames) {</span>
+<span class="nc" id="L744">                values.add(columns.get(key));</span>
+<span class="nc" id="L745">            }</span>
+
+            // Need add `where` to `select` when query is IdQuery
+<span class="nc bnc" id="L748" title="All 4 branches missed.">            boolean expectWhere = scan || query.conditionsSize() == 0;</span>
+<span class="nc" id="L749">            WhereBuilder where = this.newWhereBuilder(expectWhere);</span>
+<span class="nc bnc" id="L750" title="All 2 branches missed.">            if (!expectWhere) {</span>
+<span class="nc" id="L751">                where.and();</span>
+            }
+<span class="nc" id="L753">            where.gte(formatKeys(idColumnNames), values);</span>
+<span class="nc" id="L754">            select.append(where.build());</span>
+        }
+<span class="nc" id="L756">    }</span>
+
+    private void wrapLimit(StringBuilder select, Query query) {
+<span class="nc" id="L759">        select.append(this.orderByKeys());</span>
+<span class="nc bnc" id="L760" title="All 2 branches missed.">        if (!query.noLimit()) {</span>
+            // Fetch `limit + 1` rows for judging whether reached the last page
+<span class="nc" id="L762">            select.append(&quot; limit &quot;);</span>
+<span class="nc" id="L763">            select.append(query.limit() + 1);</span>
+        }
+<span class="nc" id="L765">        select.append(&quot;;&quot;);</span>
+<span class="nc" id="L766">    }</span>
+
+    protected String orderByKeys() {
+<span class="nc" id="L769">        return Strings.EMPTY;</span>
+    }
+
+    protected void wrapOffset(StringBuilder select, Query query) {
+<span class="nc bnc" id="L773" title="All 2 branches missed.">        assert query.limit() &gt;= 0;</span>
+<span class="nc bnc" id="L774" title="All 2 branches missed.">        assert query.offset() &gt;= 0;</span>
+        // Set limit and offset
+<span class="nc" id="L776">        select.append(&quot; limit &quot;);</span>
+<span class="nc" id="L777">        select.append(query.limit());</span>
+<span class="nc" id="L778">        select.append(&quot; offset &quot;);</span>
+<span class="nc" id="L779">        select.append(query.offset());</span>
+<span class="nc" id="L780">        select.append(&quot;;&quot;);</span>
+
+<span class="nc" id="L782">        query.goOffset(query.offset());</span>
+<span class="nc" id="L783">    }</span>
+
+    protected Iterator&lt;BackendEntry&gt; results2Entries(Query query,
+                                                     ResultSetWrapper results) {
+<span class="nc" id="L787">        return new MysqlEntryIterator(results, query, this::mergeEntries);</span>
+    }
+
+    protected BackendEntry mergeEntries(BackendEntry e1, BackendEntry e2) {
+        // Return the next entry (not merged)
+<span class="nc" id="L792">        return e2;</span>
+    }
+
+    public static String formatKey(HugeKeys key) {
+<span class="nc" id="L796">        return key.name();</span>
+    }
+
+    public static HugeKeys parseKey(String name) {
+<span class="nc" id="L800">        return HugeKeys.valueOf(name.toUpperCase());</span>
+    }
+
+    public static List&lt;String&gt; formatKeys(List&lt;HugeKeys&gt; keys) {
+<span class="nc" id="L804">        List&lt;String&gt; names = new ArrayList&lt;&gt;(keys.size());</span>
+<span class="nc bnc" id="L805" title="All 2 branches missed.">        for (HugeKeys key : keys) {</span>
+<span class="nc" id="L806">            names.add(formatKey(key));</span>
+<span class="nc" id="L807">        }</span>
+<span class="nc" id="L808">        return names;</span>
+    }
+
+    private static class MysqlShardSplitter extends ShardSplitter&lt;MysqlSessions.Session&gt; {
+
+        private static final String BASE64 =
+                &quot;0123456789=?ABCDEFGHIJKLMNOPQRSTUVWXYZ&quot; +
+                &quot;abcdefghijklmnopqrstuvwxyz&quot;;
+        private static final int COUNT = 64;
+
+        public MysqlShardSplitter(String table) {
+<span class="nc" id="L819">            super(table);</span>
+<span class="nc" id="L820">        }</span>
+
+        @Override
+        public List&lt;Shard&gt; getSplits(MysqlSessions.Session session, long splitSize) {
+<span class="nc bnc" id="L824" title="All 2 branches missed.">            E.checkArgument(splitSize &gt;= MIN_SHARD_SIZE,</span>
+                            &quot;The split-size must be &gt;= %s bytes, but got %s&quot;,
+<span class="nc" id="L826">                            MIN_SHARD_SIZE, splitSize);</span>
+<span class="nc" id="L827">            List&lt;Shard&gt; splits = new ArrayList&lt;&gt;(COUNT);</span>
+<span class="nc" id="L828">            splits.add(new Shard(START, BASE64.substring(0, 1), 0));</span>
+<span class="nc bnc" id="L829" title="All 2 branches missed.">            for (int i = 0; i &lt; COUNT - 1; i++) {</span>
+<span class="nc" id="L830">                splits.add(new Shard(BASE64.substring(i, i + 1),</span>
+<span class="nc" id="L831">                                     BASE64.substring(i + 1, i + 2), 0));</span>
+            }
+<span class="nc" id="L833">            splits.add(new Shard(BASE64.substring(COUNT - 1, COUNT), END, 0));</span>
+<span class="nc" id="L834">            return splits;</span>
+        }
+
+        @Override
+        protected long estimateDataSize(MysqlSessions.Session session) {
+<span class="nc" id="L839">            return 0L;</span>
+        }
+
+        @Override
+        protected long estimateNumKeys(MysqlSessions.Session session) {
+<span class="nc" id="L844">            return 0L;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

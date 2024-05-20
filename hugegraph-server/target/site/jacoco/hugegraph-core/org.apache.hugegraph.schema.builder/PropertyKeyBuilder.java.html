@@ -1,0 +1,467 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PropertyKeyBuilder.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.schema.builder</a> &gt; <span class="el_source">PropertyKeyBuilder.java</span></div><h1>PropertyKeyBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.schema.builder;
+
+import java.util.Map;
+import java.util.concurrent.TimeoutException;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.Userdata;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.exception.ExistedException;
+import org.apache.hugegraph.exception.NotAllowException;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Action;
+import org.apache.hugegraph.type.define.AggregateType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.WriteType;
+import org.apache.hugegraph.util.E;
+
+<span class="nc" id="L44">public class PropertyKeyBuilder extends AbstractBuilder</span>
+                                implements PropertyKey.Builder {
+
+    private Id id;
+    private String name;
+    private DataType dataType;
+    private Cardinality cardinality;
+    private AggregateType aggregateType;
+    private WriteType writeType;
+    private boolean checkExist;
+    private Userdata userdata;
+
+    public PropertyKeyBuilder(SchemaTransaction transaction,
+                              HugeGraph graph, String name) {
+<span class="nc" id="L58">        super(transaction, graph);</span>
+<span class="nc" id="L59">        E.checkNotNull(name, &quot;name&quot;);</span>
+<span class="nc" id="L60">        this.id = null;</span>
+<span class="nc" id="L61">        this.name = name;</span>
+<span class="nc" id="L62">        this.dataType = DataType.TEXT;</span>
+<span class="nc" id="L63">        this.cardinality = Cardinality.SINGLE;</span>
+<span class="nc" id="L64">        this.aggregateType = AggregateType.NONE;</span>
+<span class="nc" id="L65">        this.writeType = WriteType.OLTP;</span>
+<span class="nc" id="L66">        this.userdata = new Userdata();</span>
+<span class="nc" id="L67">        this.checkExist = true;</span>
+<span class="nc" id="L68">    }</span>
+
+    public PropertyKeyBuilder(SchemaTransaction transaction,
+                              HugeGraph graph, PropertyKey copy) {
+<span class="nc" id="L72">        super(transaction, graph);</span>
+<span class="nc" id="L73">        E.checkNotNull(copy, &quot;copy&quot;);</span>
+<span class="nc" id="L74">        this.id = null;</span>
+<span class="nc" id="L75">        this.name = copy.name();</span>
+<span class="nc" id="L76">        this.dataType = copy.dataType();</span>
+<span class="nc" id="L77">        this.cardinality = copy.cardinality();</span>
+<span class="nc" id="L78">        this.aggregateType = copy.aggregateType();</span>
+<span class="nc" id="L79">        this.writeType = copy.writeType();</span>
+<span class="nc" id="L80">        this.userdata = new Userdata(copy.userdata());</span>
+<span class="nc" id="L81">        this.checkExist = false;</span>
+<span class="nc" id="L82">    }</span>
+
+    @Override
+    public PropertyKey build() {
+<span class="nc" id="L86">        Id id = this.validOrGenerateId(HugeType.PROPERTY_KEY,</span>
+                                       this.id, this.name);
+<span class="nc" id="L88">        PropertyKey propertyKey = new PropertyKey(this.graph(), id, this.name);</span>
+<span class="nc" id="L89">        propertyKey.dataType(this.dataType);</span>
+<span class="nc" id="L90">        propertyKey.cardinality(this.cardinality);</span>
+<span class="nc" id="L91">        propertyKey.aggregateType(this.aggregateType);</span>
+<span class="nc" id="L92">        propertyKey.writeType(this.writeType);</span>
+<span class="nc" id="L93">        propertyKey.userdata(this.userdata);</span>
+<span class="nc" id="L94">        return propertyKey;</span>
+    }
+
+    /**
+     * Check whether this has same properties with propertyKey.
+     * Only dataType, cardinality, aggregateType are checked.
+     * The id, checkExist, userdata are not checked.
+     * @param propertyKey to be compared with
+     * @return true if this has same properties with propertyKey
+     */
+    private boolean hasSameProperties(PropertyKey propertyKey) {
+        // dataType is enum
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        if (this.dataType != propertyKey.dataType()) {</span>
+<span class="nc" id="L107">            return false;</span>
+        }
+
+        // cardinality is enum
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (this.cardinality != propertyKey.cardinality()) {</span>
+<span class="nc" id="L112">            return false;</span>
+        }
+
+        // aggregateType is enum
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (this.aggregateType != propertyKey.aggregateType()) {</span>
+<span class="nc" id="L117">            return false;</span>
+        }
+
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (this.writeType != propertyKey.writeType()) {</span>
+<span class="nc" id="L121">            return false;</span>
+        }
+
+        // all properties are same, return true.
+<span class="nc" id="L125">        return true;</span>
+    }
+
+    @Override
+    public SchemaElement.TaskWithSchema createWithTask() {
+<span class="nc" id="L130">        HugeType type = HugeType.PROPERTY_KEY;</span>
+<span class="nc" id="L131">        this.checkSchemaName(this.name);</span>
+
+<span class="nc" id="L133">        return this.lockCheckAndCreateSchema(type, this.name, name -&gt; {</span>
+<span class="nc" id="L134">            PropertyKey propertyKey = this.propertyKeyOrNull(name);</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            if (propertyKey != null) {</span>
+<span class="nc bnc" id="L136" title="All 4 branches missed.">                if (this.checkExist || !hasSameProperties(propertyKey)) {</span>
+<span class="nc" id="L137">                    throw new ExistedException(type, name);</span>
+                }
+<span class="nc" id="L139">                return new SchemaElement.TaskWithSchema(propertyKey,</span>
+                                                        IdGenerator.ZERO);
+            }
+<span class="nc" id="L142">            this.checkSchemaIdIfRestoringMode(type, this.id);</span>
+
+<span class="nc" id="L144">            Userdata.check(this.userdata, Action.INSERT);</span>
+<span class="nc" id="L145">            this.checkAggregateType();</span>
+<span class="nc" id="L146">            this.checkOlap();</span>
+
+<span class="nc" id="L148">            propertyKey = this.build();</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            assert propertyKey.name().equals(name);</span>
+<span class="nc" id="L150">            Id id = this.graph().addPropertyKey(propertyKey);</span>
+<span class="nc" id="L151">            return new SchemaElement.TaskWithSchema(propertyKey, id);</span>
+        });
+    }
+
+    @Override
+    public PropertyKey create() {
+        // Create index label async
+<span class="nc" id="L158">        SchemaElement.TaskWithSchema propertyKeyWithTask =</span>
+<span class="nc" id="L159">                                     this.createWithTask();</span>
+
+<span class="nc" id="L161">        Id task = propertyKeyWithTask.task();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (task == IdGenerator.ZERO) {</span>
+            /*
+             * Task id will be IdGenerator.ZERO if creating property key
+             * already exists or creating property key is oltp
+             */
+<span class="nc" id="L167">            return propertyKeyWithTask.propertyKey();</span>
+        }
+
+        // Wait task completed (change to sync mode)
+<span class="nc" id="L171">        HugeGraph graph = this.graph();</span>
+<span class="nc" id="L172">        long timeout = graph.option(CoreOptions.TASK_WAIT_TIMEOUT);</span>
+        try {
+<span class="nc" id="L174">            graph.taskScheduler().waitUntilTaskCompleted(task, timeout);</span>
+<span class="nc" id="L175">        } catch (TimeoutException e) {</span>
+<span class="nc" id="L176">            throw new HugeException(</span>
+                      &quot;Failed to wait property key create task completed&quot;, e);
+<span class="nc" id="L178">        }</span>
+
+        // Return property key without task-info
+<span class="nc" id="L181">        return propertyKeyWithTask.propertyKey();</span>
+    }
+
+    @Override
+    public PropertyKey append() {
+<span class="nc" id="L186">        PropertyKey propertyKey = this.propertyKeyOrNull(this.name);</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        if (propertyKey == null) {</span>
+<span class="nc" id="L188">            throw new NotFoundException(&quot;Can't update property key '%s' &quot; +</span>
+                                        &quot;since it doesn't exist&quot;, this.name);
+        }
+<span class="nc" id="L191">        this.checkStableVars();</span>
+<span class="nc" id="L192">        Userdata.check(this.userdata, Action.APPEND);</span>
+
+<span class="nc" id="L194">        propertyKey.userdata(this.userdata);</span>
+<span class="nc" id="L195">        this.graph().updatePropertyKey(propertyKey);</span>
+<span class="nc" id="L196">        return propertyKey;</span>
+    }
+
+    @Override
+    public PropertyKey eliminate() {
+<span class="nc" id="L201">        PropertyKey propertyKey = this.propertyKeyOrNull(this.name);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (propertyKey == null) {</span>
+<span class="nc" id="L203">            throw new NotFoundException(&quot;Can't update property key '%s' &quot; +</span>
+                                        &quot;since it doesn't exist&quot;, this.name);
+        }
+<span class="nc" id="L206">        this.checkStableVars();</span>
+<span class="nc" id="L207">        Userdata.check(this.userdata, Action.ELIMINATE);</span>
+
+<span class="nc" id="L209">        propertyKey.removeUserdata(this.userdata);</span>
+<span class="nc" id="L210">        this.graph().updatePropertyKey(propertyKey);</span>
+<span class="nc" id="L211">        return propertyKey;</span>
+    }
+
+    @Override
+    public Id remove() {
+<span class="nc" id="L216">        PropertyKey propertyKey = this.propertyKeyOrNull(this.name);</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (propertyKey == null) {</span>
+<span class="nc" id="L218">            return IdGenerator.ZERO;</span>
+        }
+<span class="nc" id="L220">        return this.graph().removePropertyKey(propertyKey.id());</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder id(long id) {
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        E.checkArgument(id != 0L,</span>
+                        &quot;Not allowed to assign 0 as property key id&quot;);
+<span class="nc" id="L227">        this.id = IdGenerator.of(id);</span>
+<span class="nc" id="L228">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asText() {
+<span class="nc" id="L233">        this.dataType = DataType.TEXT;</span>
+<span class="nc" id="L234">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asInt() {
+<span class="nc" id="L239">        this.dataType = DataType.INT;</span>
+<span class="nc" id="L240">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asDate() {
+<span class="nc" id="L245">        this.dataType = DataType.DATE;</span>
+<span class="nc" id="L246">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asUUID() {
+<span class="nc" id="L251">        this.dataType = DataType.UUID;</span>
+<span class="nc" id="L252">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asBoolean() {
+<span class="nc" id="L257">        this.dataType = DataType.BOOLEAN;</span>
+<span class="nc" id="L258">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asByte() {
+<span class="nc" id="L263">        this.dataType = DataType.BYTE;</span>
+<span class="nc" id="L264">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asBlob() {
+<span class="nc" id="L269">        this.dataType = DataType.BLOB;</span>
+<span class="nc" id="L270">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asDouble() {
+<span class="nc" id="L275">        this.dataType = DataType.DOUBLE;</span>
+<span class="nc" id="L276">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asFloat() {
+<span class="nc" id="L281">        this.dataType = DataType.FLOAT;</span>
+<span class="nc" id="L282">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder asLong() {
+<span class="nc" id="L287">        this.dataType = DataType.LONG;</span>
+<span class="nc" id="L288">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder valueSingle() {
+<span class="nc" id="L293">        this.cardinality = Cardinality.SINGLE;</span>
+<span class="nc" id="L294">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder valueList() {
+<span class="nc" id="L299">        this.cardinality = Cardinality.LIST;</span>
+<span class="nc" id="L300">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder valueSet() {
+<span class="nc" id="L305">        this.cardinality = Cardinality.SET;</span>
+<span class="nc" id="L306">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder calcMax() {
+<span class="nc" id="L311">        this.aggregateType = AggregateType.MAX;</span>
+<span class="nc" id="L312">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder calcMin() {
+<span class="nc" id="L317">        this.aggregateType = AggregateType.MIN;</span>
+<span class="nc" id="L318">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder calcSum() {
+<span class="nc" id="L323">        this.aggregateType = AggregateType.SUM;</span>
+<span class="nc" id="L324">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder calcOld() {
+<span class="nc" id="L329">        this.aggregateType = AggregateType.OLD;</span>
+<span class="nc" id="L330">        return this;</span>
+    }
+
+    @Override
+    public PropertyKey.Builder calcSet() {
+<span class="nc" id="L335">        this.aggregateType = AggregateType.SET;</span>
+<span class="nc" id="L336">        return this;</span>
+    }
+
+    @Override
+    public PropertyKey.Builder calcList() {
+<span class="nc" id="L341">        this.aggregateType = AggregateType.LIST;</span>
+<span class="nc" id="L342">        return this;</span>
+    }
+
+    @Override
+    public PropertyKey.Builder writeType(WriteType writeType) {
+<span class="nc" id="L347">        this.writeType = writeType;</span>
+<span class="nc" id="L348">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder userdata(String key, Object value) {
+<span class="nc" id="L353">        this.userdata.put(key, value);</span>
+<span class="nc" id="L354">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder cardinality(Cardinality cardinality) {
+<span class="nc" id="L359">        this.cardinality = cardinality;</span>
+<span class="nc" id="L360">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder dataType(DataType dataType) {
+<span class="nc" id="L365">        this.dataType = dataType;</span>
+<span class="nc" id="L366">        return this;</span>
+    }
+
+    @Override
+    public PropertyKey.Builder aggregateType(AggregateType aggregateType) {
+<span class="nc" id="L371">        this.aggregateType = aggregateType;</span>
+<span class="nc" id="L372">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder userdata(Map&lt;String, Object&gt; userdata) {
+<span class="nc" id="L377">        this.userdata.putAll(userdata);</span>
+<span class="nc" id="L378">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder ifNotExist() {
+<span class="nc" id="L383">        this.checkExist = false;</span>
+<span class="nc" id="L384">        return this;</span>
+    }
+
+    @Override
+    public PropertyKeyBuilder checkExist(boolean checkExist) {
+<span class="nc" id="L389">        this.checkExist = checkExist;</span>
+<span class="nc" id="L390">        return this;</span>
+    }
+
+    private void checkStableVars() {
+<span class="nc bnc" id="L394" title="All 2 branches missed.">        if (this.dataType != DataType.TEXT) {</span>
+<span class="nc" id="L395">            throw new NotAllowException(&quot;Not allowed to update data type &quot; +</span>
+                                        &quot;for property key '%s'&quot;, this.name);
+        }
+<span class="nc bnc" id="L398" title="All 2 branches missed.">        if (this.cardinality != Cardinality.SINGLE) {</span>
+<span class="nc" id="L399">            throw new NotAllowException(&quot;Not allowed to update cardinality &quot; +</span>
+                                        &quot;for property key '%s'&quot;, this.name);
+        }
+<span class="nc" id="L402">    }</span>
+
+    private void checkAggregateType() {
+<span class="nc bnc" id="L405" title="All 2 branches missed.">        if (this.aggregateType.isNone()) {</span>
+<span class="nc" id="L406">            return;</span>
+        }
+
+<span class="nc bnc" id="L409" title="All 4 branches missed.">        if (this.aggregateType.isSet() &amp;&amp;</span>
+            this.cardinality == Cardinality.SET ||
+<span class="nc bnc" id="L411" title="All 4 branches missed.">            this.aggregateType.isList() &amp;&amp;</span>
+            this.cardinality == Cardinality.LIST) {
+<span class="nc" id="L413">            return;</span>
+        }
+
+<span class="nc bnc" id="L416" title="All 2 branches missed.">        if (this.cardinality != Cardinality.SINGLE ||</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">            this.aggregateType.isUnion()) {</span>
+<span class="nc" id="L418">            throw new NotAllowException(&quot;Not allowed to set aggregate type &quot; +</span>
+                                        &quot;'%s' for property key '%s' with &quot; +
+                                        &quot;cardinality '%s'&quot;,
+                                        this.aggregateType, this.name,
+                                        this.cardinality);
+        }
+
+<span class="nc bnc" id="L425" title="All 4 branches missed.">        if (this.aggregateType.isSum() &amp;&amp; this.dataType.isDate()) {</span>
+<span class="nc" id="L426">            throw new NotAllowException(</span>
+                      &quot;Not allowed to set aggregate type '%s' for &quot; +
+                      &quot;property key '%s' with data type '%s'&quot;,
+                      this.aggregateType, this.name, this.dataType);
+        }
+
+<span class="nc bnc" id="L432" title="All 2 branches missed.">        if (this.aggregateType.isNumber() &amp;&amp;</span>
+<span class="nc bnc" id="L433" title="All 4 branches missed.">            !this.dataType.isNumber() &amp;&amp; !this.dataType.isDate()) {</span>
+<span class="nc" id="L434">            throw new NotAllowException(</span>
+                      &quot;Not allowed to set aggregate type '%s' for &quot; +
+                      &quot;property key '%s' with data type '%s'&quot;,
+                      this.aggregateType, this.name, this.dataType);
+        }
+<span class="nc" id="L439">    }</span>
+
+    private void checkOlap() {
+<span class="nc bnc" id="L442" title="All 2 branches missed.">        if (this.writeType == WriteType.OLTP) {</span>
+<span class="nc" id="L443">            return;</span>
+        }
+
+<span class="nc bnc" id="L446" title="All 2 branches missed.">        if (!this.graph().backendStoreFeatures().supportsOlapProperties()) {</span>
+<span class="nc" id="L447">            throw new NotSupportException(</span>
+                      &quot;olap property key '%s' for backend '%s'&quot;,
+<span class="nc" id="L449">                      this.name, this.graph().backend());</span>
+        }
+
+<span class="nc bnc" id="L452" title="All 2 branches missed.">        if (!this.aggregateType.isNone()) {</span>
+<span class="nc" id="L453">            throw new NotAllowException(</span>
+                      &quot;Not allowed to set aggregate type '%s' for olap &quot; +
+                      &quot;property key '%s'&quot;, this.aggregateType, this.name);
+        }
+
+<span class="nc bnc" id="L458" title="All 2 branches missed.">        if (this.writeType == WriteType.OLAP_RANGE &amp;&amp;</span>
+<span class="nc bnc" id="L459" title="All 4 branches missed.">            !this.dataType.isNumber() &amp;&amp; !this.dataType.isDate()) {</span>
+<span class="nc" id="L460">            throw new NotAllowException(</span>
+                      &quot;Not allowed to set write type to OLAP_RANGE for &quot; +
+                      &quot;property key '%s' with data type '%s'&quot;,
+                      this.name, this.dataType);
+        }
+<span class="nc" id="L465">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

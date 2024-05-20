@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeGraphGremlinPlugin.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.plugin</a> &gt; <span class="el_source">HugeGraphGremlinPlugin.java</span></div><h1>HugeGraphGremlinPlugin.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.plugin;
+
+import java.io.IOException;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Set;
+
+import org.apache.tinkerpop.gremlin.jsr223.AbstractGremlinPlugin;
+import org.apache.tinkerpop.gremlin.jsr223.DefaultImportCustomizer;
+import org.apache.tinkerpop.gremlin.jsr223.ImportCustomizer;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeFactory;
+import org.apache.hugegraph.util.ReflectionUtil;
+import com.google.common.reflect.ClassPath;
+
+public class HugeGraphGremlinPlugin extends AbstractGremlinPlugin {
+
+    private static final String PACKAGE = &quot;org.apache.hugegraph.type.define&quot;;
+    private static final String NAME = &quot;HugeGraph&quot;;
+
+    private static final HugeGraphGremlinPlugin INSTANCE;
+    private static final ImportCustomizer IMPORTS;
+
+    static {
+<span class="nc" id="L43">        INSTANCE = new HugeGraphGremlinPlugin();</span>
+
+        Iterator&lt;ClassPath.ClassInfo&gt; classInfos;
+        try {
+<span class="nc" id="L47">            classInfos = ReflectionUtil.classes(PACKAGE);</span>
+<span class="nc" id="L48">        } catch (IOException e) {</span>
+<span class="nc" id="L49">            throw new HugeException(&quot;Failed to scan classes under package %s&quot;,</span>
+                                    e, PACKAGE);
+<span class="nc" id="L51">        }</span>
+
+        @SuppressWarnings(&quot;rawtypes&quot;)
+<span class="nc" id="L54">        Set&lt;Class&gt; classes = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L55">        classInfos.forEachRemaining(classInfo -&gt; classes.add(classInfo.load()));</span>
+        // Add entrance class: graph = HugeFactory.open(&quot;hugegraph.properties&quot;)
+<span class="nc" id="L57">        classes.add(HugeFactory.class);</span>
+
+<span class="nc" id="L59">        IMPORTS = DefaultImportCustomizer.build()</span>
+<span class="nc" id="L60">                                         .addClassImports(classes)</span>
+<span class="nc" id="L61">                                         .create();</span>
+<span class="nc" id="L62">    }</span>
+
+    public HugeGraphGremlinPlugin() {
+<span class="nc" id="L65">        super(NAME, IMPORTS);</span>
+<span class="nc" id="L66">    }</span>
+
+    public static HugeGraphGremlinPlugin instance() {
+<span class="nc" id="L69">        return INSTANCE;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

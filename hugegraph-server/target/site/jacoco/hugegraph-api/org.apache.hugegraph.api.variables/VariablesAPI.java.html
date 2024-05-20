@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>VariablesAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.variables</a> &gt; <span class="el_source">VariablesAPI.java</span></div><h1>VariablesAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.variables;
+
+import java.util.Map;
+import java.util.Optional;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
+
+import org.apache.hugegraph.core.GraphManager;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.google.common.collect.ImmutableMap;
+
+@Path(&quot;graphs/{graph}/variables&quot;)
+@Singleton
+@Tag(name = &quot;VariablesAPI&quot;)
+<span class="nc" id="L48">public class VariablesAPI extends API {</span>
+
+<span class="nc" id="L50">    private static final Logger LOG = Log.logger(VariablesAPI.class);</span>
+
+    @PUT
+    @Timed
+    @Path(&quot;{key}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public Map&lt;String, Object&gt; update(@Context GraphManager manager,
+                                      @PathParam(&quot;graph&quot;) String graph,
+                                      @PathParam(&quot;key&quot;) String key,
+                                      JsonVariableValue value) {
+<span class="nc bnc" id="L61" title="All 4 branches missed.">        E.checkArgument(value != null &amp;&amp; value.data != null,</span>
+                        &quot;The variable value can't be empty&quot;);
+<span class="nc" id="L63">        LOG.debug(&quot;Graph [{}] set variable for {}: {}&quot;, graph, key, value);</span>
+
+<span class="nc" id="L65">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L66">        commit(g, () -&gt; g.variables().set(key, value.data));</span>
+<span class="nc" id="L67">        return ImmutableMap.of(key, value.data);</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public Map&lt;String, Object&gt; list(@Context GraphManager manager,
+                                    @PathParam(&quot;graph&quot;) String graph) {
+<span class="nc" id="L75">        LOG.debug(&quot;Graph [{}] get variables&quot;, graph);</span>
+
+<span class="nc" id="L77">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L78">        return g.variables().asMap();</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{key}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public Map&lt;String, Object&gt; get(@Context GraphManager manager,
+                                   @PathParam(&quot;graph&quot;) String graph,
+                                   @PathParam(&quot;key&quot;) String key) {
+<span class="nc" id="L88">        LOG.debug(&quot;Graph [{}] get variable by key '{}'&quot;, graph, key);</span>
+
+<span class="nc" id="L90">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L91">        Optional&lt;?&gt; object = g.variables().get(key);</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">        if (!object.isPresent()) {</span>
+<span class="nc" id="L93">            throw new NotFoundException(String.format(</span>
+                      &quot;Variable '%s' does not exist&quot;, key));
+        }
+<span class="nc" id="L96">        return ImmutableMap.of(key, object.get());</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{key}&quot;)
+    @Consumes(APPLICATION_JSON)
+    public void delete(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @PathParam(&quot;key&quot;) String key) {
+<span class="nc" id="L106">        LOG.debug(&quot;Graph [{}] remove variable by key '{}'&quot;, graph, key);</span>
+
+<span class="nc" id="L108">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L109">        commit(g, () -&gt; g.variables().remove(key));</span>
+<span class="nc" id="L110">    }</span>
+
+    private static class JsonVariableValue {
+
+        public Object data;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L118">            return String.format(&quot;JsonVariableValue{data=%s}&quot;, this.data);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

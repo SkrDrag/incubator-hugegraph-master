@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IdQuery.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.query</a> &gt; <span class="el_source">IdQuery.java</span></div><h1>IdQuery.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.query;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+
+public class IdQuery extends Query {
+
+<span class="nc" id="L35">    private static final List&lt;Id&gt; EMPTY_IDS = ImmutableList.of();</span>
+
+    // The id(s) will be concated with `or`
+<span class="nc" id="L38">    private List&lt;Id&gt; ids = EMPTY_IDS;</span>
+<span class="nc" id="L39">    private boolean mustSortByInput = true;</span>
+
+    public IdQuery(HugeType resultType) {
+<span class="nc" id="L42">        super(resultType);</span>
+<span class="nc" id="L43">    }</span>
+
+    public IdQuery(HugeType resultType, Query originQuery) {
+<span class="nc" id="L46">        super(resultType, originQuery);</span>
+<span class="nc" id="L47">    }</span>
+
+    public IdQuery(HugeType resultType, Set&lt;Id&gt; ids) {
+<span class="nc" id="L50">        this(resultType);</span>
+<span class="nc" id="L51">        this.query(ids);</span>
+<span class="nc" id="L52">    }</span>
+
+    public IdQuery(HugeType resultType, Id id) {
+<span class="nc" id="L55">        this(resultType);</span>
+<span class="nc" id="L56">        this.query(id);</span>
+<span class="nc" id="L57">    }</span>
+
+    public IdQuery(Query originQuery, Id id) {
+<span class="nc" id="L60">        this(originQuery.resultType(), originQuery);</span>
+<span class="nc" id="L61">        this.query(id);</span>
+<span class="nc" id="L62">    }</span>
+
+    public IdQuery(Query originQuery, Set&lt;Id&gt; ids) {
+<span class="nc" id="L65">        this(originQuery.resultType(), originQuery);</span>
+<span class="nc" id="L66">        this.query(ids);</span>
+<span class="nc" id="L67">    }</span>
+
+    public boolean mustSortByInput() {
+<span class="nc" id="L70">        return this.mustSortByInput;</span>
+    }
+
+    public void mustSortByInput(boolean mustSortedByInput) {
+<span class="nc" id="L74">        this.mustSortByInput = mustSortedByInput;</span>
+<span class="nc" id="L75">    }</span>
+
+    @Override
+    public int idsSize() {
+<span class="nc" id="L79">        return this.ids.size();</span>
+    }
+
+    @Override
+    public Collection&lt;Id&gt; ids() {
+<span class="nc" id="L84">        return Collections.unmodifiableList(this.ids);</span>
+    }
+
+    public void resetIds() {
+<span class="nc" id="L88">        this.ids = EMPTY_IDS;</span>
+<span class="nc" id="L89">    }</span>
+
+    public IdQuery query(Id id) {
+<span class="nc" id="L92">        E.checkArgumentNotNull(id, &quot;Query id can't be null&quot;);</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (this.ids == EMPTY_IDS) {</span>
+<span class="nc" id="L94">            this.ids = InsertionOrderUtil.newList();</span>
+        }
+
+<span class="nc" id="L97">        int last = this.ids.size() - 1;</span>
+<span class="nc bnc" id="L98" title="All 4 branches missed.">        if (last &gt;= 0 &amp;&amp; id.equals(this.ids.get(last))) {</span>
+            // The same id as the previous one, just ignore it
+<span class="nc" id="L100">            return this;</span>
+        }
+
+<span class="nc" id="L103">        this.ids.add(id);</span>
+<span class="nc" id="L104">        this.checkCapacity(this.ids.size());</span>
+<span class="nc" id="L105">        return this;</span>
+    }
+
+    public IdQuery query(Set&lt;Id&gt; ids) {
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L110">            this.query(id);</span>
+<span class="nc" id="L111">        }</span>
+<span class="nc" id="L112">        return this;</span>
+    }
+
+    @Override
+    public boolean test(HugeElement element) {
+<span class="nc" id="L117">        return this.ids.contains(element.id());</span>
+    }
+
+    @Override
+    public IdQuery copy() {
+<span class="nc" id="L122">        IdQuery query = (IdQuery) super.copy();</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        query.ids = this.ids == EMPTY_IDS ? EMPTY_IDS :</span>
+<span class="nc" id="L124">                    InsertionOrderUtil.newList(this.ids);</span>
+<span class="nc" id="L125">        return query;</span>
+    }
+
+<span class="nc" id="L128">    public static final class OneIdQuery extends IdQuery {</span>
+
+        private Id id;
+
+        public OneIdQuery(HugeType resultType, Id id) {
+<span class="nc" id="L133">            super(resultType);</span>
+<span class="nc" id="L134">            super.mustSortByInput = false;</span>
+<span class="nc" id="L135">            this.id = id;</span>
+<span class="nc" id="L136">        }</span>
+
+        public OneIdQuery(Query originQuery, Id id) {
+<span class="nc" id="L139">            super(originQuery.resultType(), originQuery);</span>
+<span class="nc" id="L140">            super.mustSortByInput = false;</span>
+<span class="nc" id="L141">            this.id = id;</span>
+<span class="nc" id="L142">        }</span>
+
+        public Id id() {
+<span class="nc" id="L145">            return this.id;</span>
+        }
+
+        public void resetId(Id id) {
+<span class="nc" id="L149">            this.id = id;</span>
+<span class="nc" id="L150">        }</span>
+
+        @Override
+        public int idsSize() {
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            return this.id == null ? 0 : 1;</span>
+        }
+
+        @Override
+        public Set&lt;Id&gt; ids() {
+<span class="nc bnc" id="L159" title="All 2 branches missed.">            return this.id == null ? ImmutableSet.of() :</span>
+<span class="nc" id="L160">                                     ImmutableSet.of(this.id);</span>
+        }
+
+        @Override
+        public void resetIds() {
+<span class="nc" id="L165">            this.id = null;</span>
+<span class="nc" id="L166">        }</span>
+
+        @Override
+        public IdQuery query(Id id) {
+<span class="nc" id="L170">            E.checkArgumentNotNull(id, &quot;Query id can't be null&quot;);</span>
+<span class="nc" id="L171">            this.id = id;</span>
+<span class="nc" id="L172">            return this;</span>
+        }
+
+        @Override
+        public boolean test(HugeElement element) {
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            if (this.id == null) {</span>
+<span class="nc" id="L178">                return true;</span>
+            }
+<span class="nc" id="L180">            return this.id.equals(element.id());</span>
+        }
+
+        @Override
+        public IdQuery copy() {
+<span class="nc" id="L185">            OneIdQuery query = (OneIdQuery) super.copy();</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            assert this.id.equals(query.id);</span>
+<span class="nc" id="L187">            return query;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

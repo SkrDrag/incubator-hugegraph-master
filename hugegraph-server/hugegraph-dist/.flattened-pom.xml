@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Licensed to the Apache Software Foundation (ASF) under one or more
+  contributor license agreements.  See the NOTICE file distributed with
+  this work for additional information regarding copyright ownership.
+  The ASF licenses this file to You under the Apache License, Version 2.0
+  (the "License"); you may not use this file except in compliance with
+  the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+  -->
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.apache.hugegraph</groupId>
+    <artifactId>hugegraph-server</artifactId>
+    <version>1.2.0</version>
+  </parent>
+  <groupId>org.apache.hugegraph</groupId>
+  <artifactId>hugegraph-dist</artifactId>
+  <version>1.2.0</version>
+  <name>hugegraph-dist</name>
+  <licenses>
+    <license>
+      <name>The Apache Software License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+  <properties>
+    <assembly.dir>${project.basedir}/src/assembly</assembly.dir>
+    <assembly.static.dir>${assembly.dir}/static</assembly.static.dir>
+    <assembly.descriptor.dir>${assembly.dir}/descriptor</assembly.descriptor.dir>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.hugegraph</groupId>
+      <artifactId>hugegraph-core</artifactId>
+      <version>${revision}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>io.dropwizard.metrics</groupId>
+          <artifactId>metrics-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hugegraph</groupId>
+      <artifactId>hugegraph-api</artifactId>
+      <version>${revision}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>com.codahale.metrics</groupId>
+          <artifactId>metrics-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hugegraph</groupId>
+      <artifactId>hugegraph-cassandra</artifactId>
+      <version>${revision}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>io.dropwizard.metrics</groupId>
+          <artifactId>metrics-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hugegraph</groupId>
+      <artifactId>hugegraph-scylladb</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hugegraph</groupId>
+      <artifactId>hugegraph-rocksdb</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hugegraph</groupId>
+      <artifactId>hugegraph-mysql</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hugegraph</groupId>
+      <artifactId>hugegraph-palo</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hugegraph</groupId>
+      <artifactId>hugegraph-hbase</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hugegraph</groupId>
+      <artifactId>hugegraph-postgresql</artifactId>
+      <version>${revision}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.tinkerpop</groupId>
+      <artifactId>gremlin-console</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>com.github.jeremyh</groupId>
+          <artifactId>jBCrypt</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+  </dependencies>
+  <build>
+    <resources>
+      <resource>
+        <filtering>true</filtering>
+        <directory>${basedir}/src/assembly/static</directory>
+      </resource>
+      <resource>
+        <filtering>false</filtering>
+        <directory>${basedir}/src/main/resources</directory>
+      </resource>
+    </resources>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <artifactId>maven-assembly-plugin</artifactId>
+          <version>2.4</version>
+          <executions>
+            <execution>
+              <id>assembly-hugegraph</id>
+              <phase>package</phase>
+              <goals>
+                <goal>single</goal>
+              </goals>
+              <configuration>
+                <attach>false</attach>
+                <appendAssemblyId>false</appendAssemblyId>
+                <outputDirectory>${top.level.dir}</outputDirectory>
+                <descriptor>${assembly.descriptor.dir}/assembly.xml</descriptor>
+                <finalName>${final.name}</finalName>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
+        <plugin>
+          <artifactId>maven-antrun-plugin</artifactId>
+          <version>1.8</version>
+          <executions>
+            <execution>
+              <id>download-swagger-ui</id>
+              <phase>prepare-package</phase>
+              <goals>
+                <goal>run</goal>
+              </goals>
+              <configuration>
+                <target>
+                  <exec failonerror="false" dir="${project.basedir}" executable="${shell-executable}">
+                    <arg line="./download_swagger_ui.sh" />
+                  </exec>
+                </target>
+              </configuration>
+            </execution>
+            <execution>
+              <id>install-swagger-ui</id>
+              <phase>package</phase>
+              <goals>
+                <goal>run</goal>
+              </goals>
+              <configuration>
+                <target>
+                  <exec failonerror="false" dir="${project.basedir}" executable="cmd">
+                    <arg value="-r" />
+                    <arg value="/c" />
+                    <arg value="copy" />
+                    <arg value="swagger-ui/dist" />
+                    <arg value="../${final.name}/swagger-ui" />
+                  </exec>
+                  <exec failonerror="false" dir="${project.basedir}" executable="cmd">
+                    <arg value="-rf" />
+                    <arg value="/c" />
+                    <arg value="rmdir /s /q" />
+                    <arg value="swagger-ui" />
+                  </exec>
+                </target>
+              </configuration>
+            </execution>
+            <execution>
+              <id>download-keystore</id>
+              <phase>prepare-package</phase>
+              <goals>
+                <goal>run</goal>
+              </goals>
+              <configuration>
+                <target>
+                  <exec failonerror="false" dir="${project.basedir}" executable="${shell-executable}">
+                    <arg line="./download_keystore.sh" />
+                  </exec>
+                </target>
+              </configuration>
+            </execution>
+            <execution>
+              <id>cp-keystore</id>
+              <phase>package</phase>
+              <goals>
+                <goal>run</goal>
+              </goals>
+              <configuration>
+                <target>
+                  <exec failonerror="false" dir="${project.basedir}" executable="cmd">
+                    <arg value="hugegraph-server.keystore" />
+                    <arg value="../${final.name}/conf/hugegraph-server.keystore" />
+                  </exec>
+                  <exec failonerror="false" dir="${project.basedir}" executable="cmd">
+                    <arg value="-rf" />
+                    <arg value="/c" />
+                    <arg value="rmdir /s /q" />
+                    <arg value="hugegraph-server.keystore" />
+                  </exec>
+                </target>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+    <plugins>
+      <plugin>
+        <artifactId>maven-clean-plugin</artifactId>
+        <configuration>
+          <filesets>
+            <fileset>
+              <directory>${top.level.dir}</directory>
+              <includes>
+                <include>*.tar.gz</include>
+                <include>.flattened-pom.xml</include>
+              </includes>
+              <followSymlinks>false</followSymlinks>
+            </fileset>
+            <fileset>
+              <directory>${final.name}</directory>
+            </fileset>
+          </filesets>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+  <profiles>
+    <profile>
+      <id>assembly-hugegraph</id>
+      <activation>
+        <property>
+          <name>!skip-assembly-hugegraph</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-assembly-plugin</artifactId>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>unix-package</id>
+      <activation>
+        <os>
+          <name>Linux</name>
+          <family>unix</family>
+        </os>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>mac-package</id>
+      <activation>
+        <os>
+          <family>mac</family>
+        </os>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>tar-package</id>
+      <activation>
+        <property>
+          <name>!skip-tar-package</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <version>1.8</version>
+            <executions>
+              <execution>
+                <id>tar-package</id>
+                <phase>package</phase>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+                <configuration>
+                  <target>
+                    <tar destfile="${final.destfile}" compression="gzip">
+                      <tarfileset filemode="755" dir="${top.level.dir}/">
+                        <include name="${final.name}/**" />
+                      </tarfileset>
+                    </tar>
+                  </target>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

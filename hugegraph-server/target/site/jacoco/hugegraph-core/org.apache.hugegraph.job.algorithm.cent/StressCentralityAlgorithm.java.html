@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StressCentralityAlgorithm.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.cent</a> &gt; <span class="el_source">StressCentralityAlgorithm.java</span></div><h1>StressCentralityAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.cent;
+
+import java.util.Map;
+
+import org.apache.tinkerpop.gremlin.process.traversal.P;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.__;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.ParameterUtil;
+
+<span class="nc" id="L31">public class StressCentralityAlgorithm extends AbstractCentAlgorithm {</span>
+
+    public static final String KEY_WITH_BOUNDARY = &quot;with_boundary&quot;;
+
+    @Override
+    public String name() {
+<span class="nc" id="L37">        return &quot;stress_centrality&quot;;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L42">        super.checkParameters(parameters);</span>
+<span class="nc" id="L43">        withBoundary(parameters);</span>
+<span class="nc" id="L44">    }</span>
+
+    @Override
+    public Object call(UserJob&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L48">        try (Traverser traverser = new Traverser(job)) {</span>
+<span class="nc" id="L49">            return traverser.stressCentrality(direction(parameters),</span>
+<span class="nc" id="L50">                                              edgeLabel(parameters),</span>
+<span class="nc" id="L51">                                              depth(parameters),</span>
+<span class="nc" id="L52">                                              degree(parameters),</span>
+<span class="nc" id="L53">                                              sample(parameters),</span>
+<span class="nc" id="L54">                                              withBoundary(parameters),</span>
+<span class="nc" id="L55">                                              sourceLabel(parameters),</span>
+<span class="nc" id="L56">                                              sourceSample(parameters),</span>
+<span class="nc" id="L57">                                              sourceCLabel(parameters),</span>
+<span class="nc" id="L58">                                              top(parameters));</span>
+        }
+    }
+
+    protected static boolean withBoundary(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_WITH_BOUNDARY)) {</span>
+<span class="nc" id="L64">            return false;</span>
+        }
+<span class="nc" id="L66">        return ParameterUtil.parameterBoolean(parameters, KEY_WITH_BOUNDARY);</span>
+    }
+
+<span class="nc" id="L69">    private static class Traverser extends AbstractCentAlgorithm.Traverser {</span>
+
+        public Traverser(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L72">            super(job);</span>
+<span class="nc" id="L73">        }</span>
+
+        public Object stressCentrality(Directions direction,
+                                       String label,
+                                       int depth,
+                                       long degree,
+                                       long sample,
+                                       boolean withBoundary,
+                                       String sourceLabel,
+                                       long sourceSample,
+                                       String sourceCLabel,
+                                       long topN) {
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            assert depth &gt; 0;</span>
+<span class="nc bnc" id="L86" title="All 4 branches missed.">            assert degree &gt; 0L || degree == NO_LIMIT;</span>
+<span class="nc bnc" id="L87" title="All 4 branches missed.">            assert topN &gt;= 0L || topN == NO_LIMIT;</span>
+
+<span class="nc" id="L89">            GraphTraversal&lt;Vertex, Vertex&gt; t = constructSource(sourceLabel,</span>
+                                                               sourceSample,
+                                                               sourceCLabel);
+<span class="nc" id="L92">            t = constructPath(t, direction, label, degree, sample,</span>
+                              sourceLabel, sourceCLabel);
+<span class="nc" id="L94">            t = t.emit().until(__.loops().is(P.gte(depth)));</span>
+<span class="nc" id="L95">            t = filterNonShortestPath(t, false);</span>
+
+<span class="nc" id="L97">            GraphTraversal&lt;Vertex, ?&gt; tg = this.substractPath(t, withBoundary)</span>
+<span class="nc" id="L98">                                               .groupCount();</span>
+<span class="nc" id="L99">            GraphTraversal&lt;Vertex, ?&gt; tLimit = topN(tg, topN);</span>
+
+<span class="nc" id="L101">            return this.execute(tLimit, tLimit::next);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

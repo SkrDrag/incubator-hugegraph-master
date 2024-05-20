@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TraverserAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">TraverserAPI.java</span></div><h1>TraverserAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.traversal.algorithm.steps.EdgeStep;
+import org.apache.hugegraph.traversal.algorithm.steps.Steps;
+import org.apache.hugegraph.type.define.Directions;
+
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+<span class="nc" id="L35">public class TraverserAPI extends API {</span>
+
+    protected static EdgeStep step(HugeGraph graph, Step step) {
+<span class="nc" id="L38">        return new EdgeStep(graph, step.direction, step.labels, step.properties,</span>
+                            step.maxDegree, step.skipDegree);
+    }
+
+    protected static Steps steps(HugeGraph graph, VESteps steps) {
+<span class="nc" id="L43">        Map&lt;String, Map&lt;String, Object&gt;&gt; vSteps = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L44" title="All 2 branches missed.">        if (steps.vSteps != null) {</span>
+<span class="nc bnc" id="L45" title="All 2 branches missed.">            for (VEStepEntity vStep : steps.vSteps) {</span>
+<span class="nc" id="L46">                vSteps.put(vStep.label, vStep.properties);</span>
+<span class="nc" id="L47">            }</span>
+        }
+
+<span class="nc" id="L50">        Map&lt;String, Map&lt;String, Object&gt;&gt; eSteps = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L51" title="All 2 branches missed.">        if (steps.eSteps != null) {</span>
+<span class="nc bnc" id="L52" title="All 2 branches missed.">            for (VEStepEntity eStep : steps.eSteps) {</span>
+<span class="nc" id="L53">                eSteps.put(eStep.label, eStep.properties);</span>
+<span class="nc" id="L54">            }</span>
+        }
+
+<span class="nc" id="L57">        return new Steps(graph, steps.direction, vSteps, eSteps,</span>
+                         steps.maxDegree, steps.skipDegree);
+    }
+
+<span class="nc" id="L61">    protected static class Step {</span>
+
+        @JsonProperty(&quot;direction&quot;)
+        public Directions direction;
+        @JsonProperty(&quot;labels&quot;)
+        public List&lt;String&gt; labels;
+        @JsonProperty(&quot;properties&quot;)
+        public Map&lt;String, Object&gt; properties;
+<span class="nc" id="L69">        @JsonAlias(&quot;degree&quot;)</span>
+        @JsonProperty(&quot;max_degree&quot;)
+<span class="nc" id="L71">        public long maxDegree = Long.parseLong(DEFAULT_MAX_DEGREE);</span>
+<span class="nc" id="L72">        @JsonProperty(&quot;skip_degree&quot;)</span>
+        public long skipDegree = 0L;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L77">            return String.format(&quot;Step{direction=%s,labels=%s,properties=%s,&quot; +</span>
+                                 &quot;maxDegree=%s,skipDegree=%s}&quot;,
+                                 this.direction, this.labels, this.properties,
+<span class="nc" id="L80">                                 this.maxDegree, this.skipDegree);</span>
+        }
+    }
+
+<span class="nc" id="L84">    protected static class VEStepEntity {</span>
+
+        @JsonProperty(&quot;label&quot;)
+        public String label;
+
+        @JsonProperty(&quot;properties&quot;)
+        public Map&lt;String, Object&gt; properties;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L94">            return String.format(&quot;VEStepEntity{label=%s,properties=%s}&quot;,</span>
+                                 this.label, this.properties);
+        }
+    }
+
+<span class="nc" id="L99">    protected static class VESteps {</span>
+
+        @JsonProperty(&quot;direction&quot;)
+        public Directions direction;
+<span class="nc" id="L103">        @JsonAlias(&quot;degree&quot;)</span>
+        @JsonProperty(&quot;max_degree&quot;)
+<span class="nc" id="L105">        public long maxDegree = Long.parseLong(DEFAULT_MAX_DEGREE);</span>
+<span class="nc" id="L106">        @JsonProperty(&quot;skip_degree&quot;)</span>
+        public long skipDegree = 0L;
+        @JsonProperty(&quot;vertex_steps&quot;)
+        public List&lt;VEStepEntity&gt; vSteps;
+        @JsonProperty(&quot;edge_steps&quot;)
+        public List&lt;VEStepEntity&gt; eSteps;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L115">            return String.format(&quot;Steps{direction=%s,maxDegree=%s,&quot; +</span>
+                                 &quot;skipDegree=%s,vSteps=%s,eSteps=%s}&quot;,
+<span class="nc" id="L117">                                 this.direction, this.maxDegree,</span>
+<span class="nc" id="L118">                                 this.skipDegree, this.vSteps, this.eSteps);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

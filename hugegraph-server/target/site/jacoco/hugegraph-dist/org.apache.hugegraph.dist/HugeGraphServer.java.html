@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeGraphServer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-dist</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.dist</a> &gt; <span class="el_source">HugeGraphServer.java</span></div><h1>HugeGraphServer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.dist;
+
+import java.util.concurrent.CompletableFuture;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeFactory;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.server.RestServer;
+import org.apache.hugegraph.util.ConfigUtil;
+import org.apache.hugegraph.util.Log;
+import org.apache.logging.log4j.LogManager;
+import org.apache.tinkerpop.gremlin.server.GremlinServer;
+import org.slf4j.Logger;
+
+public class HugeGraphServer {
+
+<span class="nc" id="L36">    private static final Logger LOG = Log.logger(HugeGraphServer.class);</span>
+
+    private final RestServer restServer;
+    private final GremlinServer gremlinServer;
+
+    public static void register() {
+<span class="nc" id="L42">        RegisterUtil.registerBackends();</span>
+<span class="nc" id="L43">        RegisterUtil.registerPlugins();</span>
+<span class="nc" id="L44">        RegisterUtil.registerServer();</span>
+<span class="nc" id="L45">    }</span>
+
+    public HugeGraphServer(String gremlinServerConf, String restServerConf)
+<span class="nc" id="L48">                           throws Exception {</span>
+        // Only switch on security manager after HugeGremlinServer started
+<span class="nc" id="L50">        SecurityManager securityManager = System.getSecurityManager();</span>
+<span class="nc" id="L51">        System.setSecurityManager(null);</span>
+
+<span class="nc" id="L53">        ConfigUtil.checkGremlinConfig(gremlinServerConf);</span>
+<span class="nc" id="L54">        HugeConfig restServerConfig = new HugeConfig(restServerConf);</span>
+<span class="nc" id="L55">        String graphsDir = restServerConfig.get(ServerOptions.GRAPHS);</span>
+<span class="nc" id="L56">        EventHub hub = new EventHub(&quot;gremlin=&gt;hub&lt;=rest&quot;);</span>
+
+        try {
+            // Start HugeRestServer
+<span class="nc" id="L60">            this.restServer = HugeRestServer.start(restServerConf, hub);</span>
+<span class="nc" id="L61">        } catch (Throwable e) {</span>
+<span class="nc" id="L62">            LOG.error(&quot;HugeRestServer start error: &quot;, e);</span>
+<span class="nc" id="L63">            throw e;</span>
+<span class="nc" id="L64">        }</span>
+
+        try {
+            // Start GremlinServer
+<span class="nc" id="L68">            this.gremlinServer = HugeGremlinServer.start(gremlinServerConf,</span>
+                                                         graphsDir, hub);
+<span class="nc" id="L70">        } catch (Throwable e) {</span>
+<span class="nc" id="L71">            LOG.error(&quot;HugeGremlinServer start error: &quot;, e);</span>
+            try {
+<span class="nc" id="L73">                this.restServer.shutdown().get();</span>
+<span class="nc" id="L74">            } catch (Throwable t) {</span>
+<span class="nc" id="L75">                LOG.error(&quot;HugeRestServer stop error: &quot;, t);</span>
+<span class="nc" id="L76">            }</span>
+<span class="nc" id="L77">            throw e;</span>
+        } finally {
+<span class="nc" id="L79">            System.setSecurityManager(securityManager);</span>
+        }
+<span class="nc" id="L81">    }</span>
+
+    public void stop() {
+        try {
+<span class="nc" id="L85">            this.gremlinServer.stop().get();</span>
+<span class="nc" id="L86">            LOG.info(&quot;HugeGremlinServer stopped&quot;);</span>
+<span class="nc" id="L87">        } catch (Throwable e) {</span>
+<span class="nc" id="L88">            LOG.error(&quot;HugeGremlinServer stop error: &quot;, e);</span>
+<span class="nc" id="L89">        }</span>
+
+        try {
+<span class="nc" id="L92">            this.restServer.shutdown().get();</span>
+<span class="nc" id="L93">            LOG.info(&quot;HugeRestServer stopped&quot;);</span>
+<span class="nc" id="L94">        } catch (Throwable e) {</span>
+<span class="nc" id="L95">            LOG.error(&quot;HugeRestServer stop error: &quot;, e);</span>
+<span class="nc" id="L96">        }</span>
+
+        try {
+<span class="nc" id="L99">            HugeFactory.shutdown(30L);</span>
+<span class="nc" id="L100">            LOG.info(&quot;HugeGraph stopped&quot;);</span>
+<span class="nc" id="L101">        } catch (Throwable e) {</span>
+<span class="nc" id="L102">            LOG.error(&quot;Failed to stop HugeGraph: &quot;, e);</span>
+<span class="nc" id="L103">        }</span>
+<span class="nc" id="L104">    }</span>
+
+    public static void main(String[] args) throws Exception {
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (args.length != 2) {</span>
+<span class="nc" id="L108">            String msg = &quot;Start HugeGraphServer need to pass 2 parameters, &quot; +</span>
+                         &quot;they are the config files of GremlinServer and &quot; +
+                         &quot;RestServer, for example: conf/gremlin-server.yaml &quot; +
+                         &quot;conf/rest-server.properties&quot;;
+<span class="nc" id="L112">            LOG.error(msg);</span>
+<span class="nc" id="L113">            throw new HugeException(msg);</span>
+        }
+
+<span class="nc" id="L116">        HugeGraphServer.register();</span>
+
+        HugeGraphServer server;
+        try {
+<span class="nc" id="L120">            server = new HugeGraphServer(args[0], args[1]);</span>
+<span class="nc" id="L121">        } catch (Throwable e) {</span>
+<span class="nc" id="L122">            HugeFactory.shutdown(30L, true);</span>
+<span class="nc" id="L123">            throw e;</span>
+<span class="nc" id="L124">        }</span>
+
+        /*
+         * Remove HugeFactory.shutdown and let HugeGraphServer.stop() do it.
+         * NOTE: HugeFactory.shutdown hook may be invoked before server stop,
+         * causes event-hub can't execute notification events for another
+         * shutdown executor such as gremlin-stop-shutdown
+         */
+<span class="nc" id="L132">        HugeFactory.removeShutdownHook();</span>
+
+<span class="nc" id="L134">        CompletableFuture&lt;?&gt; serverStopped = new CompletableFuture&lt;&gt;();</span>
+<span class="nc" id="L135">        Runtime.getRuntime().addShutdownHook(new Thread(() -&gt; {</span>
+<span class="nc" id="L136">            LOG.info(&quot;HugeGraphServer stopping&quot;);</span>
+<span class="nc" id="L137">            server.stop();</span>
+<span class="nc" id="L138">            LOG.info(&quot;HugeGraphServer stopped&quot;);</span>
+
+<span class="nc" id="L140">            LogManager.shutdown();</span>
+<span class="nc" id="L141">            serverStopped.complete(null);</span>
+<span class="nc" id="L142">        }, &quot;hugegraph-server-shutdown&quot;));</span>
+        // Wait for server-shutdown and server-stopped
+<span class="nc" id="L144">        serverStopped.get();</span>
+<span class="nc" id="L145">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

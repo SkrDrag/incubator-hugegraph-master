@@ -1,0 +1,499 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>InMemoryDBStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.memory</a> &gt; <span class="el_source">InMemoryDBStore.java</span></div><h1>InMemoryDBStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.memory;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.LocalCounter;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.serializer.TextBackendEntry;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Action;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.store.AbstractBackendStore;
+import org.apache.hugegraph.backend.store.BackendAction;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendSession;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.util.Log;
+
+/**
+ * NOTE:
+ * InMemoryDBStore support:
+ * 1.query by id (include query edges by id)
+ * 2.query by condition (include query edges by condition)
+ * 3.remove by id
+ * 4.range query
+ * 5.append/subtract index data(element-id) and vertex-property
+ * 6.query edge by edge-label
+ * InMemoryDBStore not support currently:
+ * 1.remove by id + condition
+ * 2.append/subtract edge-property
+ */
+public abstract class InMemoryDBStore
+                extends AbstractBackendStore&lt;BackendSession&gt; {
+
+<span class="nc" id="L60">    private static final Logger LOG = Log.logger(InMemoryDBStore.class);</span>
+
+    private final BackendStoreProvider provider;
+
+    private final String store;
+    private final String database;
+
+    private final Map&lt;HugeType, InMemoryDBTable&gt; tables;
+
+    public InMemoryDBStore(final BackendStoreProvider provider,
+<span class="nc" id="L70">                           final String database, final String store) {</span>
+<span class="nc" id="L71">        this.provider = provider;</span>
+<span class="nc" id="L72">        this.database = database;</span>
+<span class="nc" id="L73">        this.store = store;</span>
+<span class="nc" id="L74">        this.tables = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L76">        this.registerMetaHandlers();</span>
+<span class="nc" id="L77">        LOG.debug(&quot;Store loaded: {}&quot;, store);</span>
+<span class="nc" id="L78">    }</span>
+
+    private void registerMetaHandlers() {
+<span class="nc" id="L81">        this.registerMetaHandler(&quot;metrics&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc" id="L82">            InMemoryMetrics metrics = new InMemoryMetrics();</span>
+<span class="nc" id="L83">            return metrics.metrics();</span>
+        });
+<span class="nc" id="L85">    }</span>
+
+    protected void registerTableManager(HugeType type, InMemoryDBTable table) {
+<span class="nc" id="L88">        this.tables.put(type, table);</span>
+<span class="nc" id="L89">    }</span>
+
+    protected Collection&lt;InMemoryDBTable&gt; tables() {
+<span class="nc" id="L92">        return this.tables.values();</span>
+    }
+
+    @Override
+    protected final InMemoryDBTable table(HugeType type) {
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        assert type != null;</span>
+<span class="nc" id="L98">        InMemoryDBTable table = this.tables.get(type);</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        if (table == null) {</span>
+<span class="nc" id="L100">            throw new BackendException(&quot;Unsupported table type: %s&quot;, type);</span>
+        }
+<span class="nc" id="L102">        return table;</span>
+    }
+
+    @Override
+    protected BackendSession session(HugeType type) {
+<span class="nc" id="L107">        return null;</span>
+    }
+
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(Query query) {
+<span class="nc" id="L112">        InMemoryDBTable table = this.table(InMemoryDBTable.tableType(query));</span>
+<span class="nc" id="L113">        Iterator&lt;BackendEntry&gt; rs = table.query(null, query);</span>
+<span class="nc" id="L114">        LOG.debug(&quot;[store {}] has result({}) for query: {}&quot;,</span>
+<span class="nc" id="L115">                  this.store, rs.hasNext(), query);</span>
+<span class="nc" id="L116">        return rs;</span>
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+<span class="nc" id="L121">        InMemoryDBTable table = this.table(InMemoryDBTable.tableType(query));</span>
+<span class="nc" id="L122">        Number result = table.queryNumber(null, query);</span>
+<span class="nc" id="L123">        LOG.debug(&quot;[store {}] get result({}) for number query: {}&quot;,</span>
+                  this.store, result, query);
+<span class="nc" id="L125">        return result;</span>
+    }
+
+    @Override
+    public void mutate(BackendMutation mutation) {
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        for (Iterator&lt;BackendAction&gt; it = mutation.mutation(); it.hasNext();) {</span>
+<span class="nc" id="L131">            this.mutate(it.next());</span>
+        }
+<span class="nc" id="L133">    }</span>
+
+    protected void mutate(BackendAction item) {
+<span class="nc" id="L136">        BackendEntry e = item.entry();</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        assert e instanceof TextBackendEntry;</span>
+<span class="nc" id="L138">        TextBackendEntry entry = (TextBackendEntry) e;</span>
+<span class="nc" id="L139">        InMemoryDBTable table = this.table(entry.type());</span>
+<span class="nc bnc" id="L140" title="All 7 branches missed.">        switch (item.action()) {</span>
+            case INSERT:
+<span class="nc" id="L142">                LOG.debug(&quot;[store {}] add entry: {}&quot;, this.store, entry);</span>
+<span class="nc" id="L143">                table.insert(null, entry);</span>
+<span class="nc" id="L144">                break;</span>
+            case DELETE:
+<span class="nc" id="L146">                LOG.debug(&quot;[store {}] remove id: {}&quot;, this.store, entry.id());</span>
+<span class="nc" id="L147">                table.delete(null, entry);</span>
+<span class="nc" id="L148">                break;</span>
+            case APPEND:
+<span class="nc" id="L150">                LOG.debug(&quot;[store {}] append entry: {}&quot;, this.store, entry);</span>
+<span class="nc" id="L151">                table.append(null, entry);</span>
+<span class="nc" id="L152">                break;</span>
+            case ELIMINATE:
+<span class="nc" id="L154">                LOG.debug(&quot;[store {}] eliminate entry: {}&quot;, this.store, entry);</span>
+<span class="nc" id="L155">                table.eliminate(null, entry);</span>
+<span class="nc" id="L156">                break;</span>
+            case UPDATE_IF_PRESENT:
+<span class="nc" id="L158">                table.updateIfPresent(null, entry);</span>
+<span class="nc" id="L159">                break;</span>
+            case UPDATE_IF_ABSENT:
+<span class="nc" id="L161">                table.updateIfAbsent(null, entry);</span>
+<span class="nc" id="L162">                break;</span>
+            default:
+<span class="nc" id="L164">                throw new BackendException(&quot;Unsupported mutate type: %s&quot;,</span>
+<span class="nc" id="L165">                                           item.action());</span>
+        }
+<span class="nc" id="L167">    }</span>
+
+    @Override
+    public String store() {
+<span class="nc" id="L171">        return this.store;</span>
+    }
+
+    @Override
+    public String database() {
+<span class="nc" id="L176">        return this.database;</span>
+    }
+
+    @Override
+    public BackendStoreProvider provider() {
+<span class="nc" id="L181">        return this.provider;</span>
+    }
+
+    @Override
+    public void open(HugeConfig config) {
+<span class="nc" id="L186">        LOG.debug(&quot;Store opened: {}&quot;, this.store);</span>
+<span class="nc" id="L187">    }</span>
+
+    @Override
+    public void close() throws BackendException {
+<span class="nc" id="L191">        LOG.debug(&quot;Store closed: {}&quot;, this.store);</span>
+<span class="nc" id="L192">    }</span>
+
+    @Override
+    public void init() {
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        for (InMemoryDBTable table : this.tables()) {</span>
+<span class="nc" id="L197">            table.init(null);</span>
+<span class="nc" id="L198">        }</span>
+
+<span class="nc" id="L200">        LOG.debug(&quot;Store initialized: {}&quot;, this.store);</span>
+<span class="nc" id="L201">    }</span>
+
+    @Override
+    public void clear(boolean clearSpace) {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        for (InMemoryDBTable table : this.tables()) {</span>
+<span class="nc" id="L206">            table.clear(null);</span>
+<span class="nc" id="L207">        }</span>
+
+<span class="nc" id="L209">        LOG.debug(&quot;Store cleared: {}&quot;, this.store);</span>
+<span class="nc" id="L210">    }</span>
+
+    @Override
+    public void truncate() {
+<span class="nc bnc" id="L214" title="All 2 branches missed.">        for (InMemoryDBTable table : this.tables()) {</span>
+<span class="nc" id="L215">            table.clear(null);</span>
+<span class="nc" id="L216">        }</span>
+
+<span class="nc" id="L218">        LOG.debug(&quot;Store truncated: {}&quot;, this.store);</span>
+<span class="nc" id="L219">    }</span>
+
+    @Override
+    public void beginTx() {
+        // pass
+<span class="nc" id="L224">    }</span>
+
+    @Override
+    public void commitTx() {
+        // pass
+<span class="nc" id="L229">    }</span>
+
+    @Override
+    public void rollbackTx() {
+<span class="nc" id="L233">        throw new UnsupportedOperationException(</span>
+                  &quot;Unsupported rollback operation by InMemoryDBStore&quot;);
+    }
+
+    @Override
+    public BackendFeatures features() {
+<span class="nc" id="L239">        return FEATURES;</span>
+    }
+
+    @Override
+    public boolean opened() {
+<span class="nc" id="L244">        return true;</span>
+    }
+
+    @Override
+    public boolean initialized() {
+<span class="nc" id="L249">        return true;</span>
+    }
+
+    /***************************** Store defines *****************************/
+
+    public static class InMemorySchemaStore extends InMemoryDBStore {
+
+<span class="nc" id="L256">        private final LocalCounter counter = new LocalCounter();</span>
+
+        public InMemorySchemaStore(BackendStoreProvider provider,
+                                   String database, String store) {
+<span class="nc" id="L260">            super(provider, database, store);</span>
+
+<span class="nc" id="L262">            registerTableManager(HugeType.VERTEX_LABEL,</span>
+                                 new InMemoryDBTable(HugeType.VERTEX_LABEL));
+<span class="nc" id="L264">            registerTableManager(HugeType.EDGE_LABEL,</span>
+                                 new InMemoryDBTable(HugeType.EDGE_LABEL));
+<span class="nc" id="L266">            registerTableManager(HugeType.PROPERTY_KEY,</span>
+                                 new InMemoryDBTable(HugeType.PROPERTY_KEY));
+<span class="nc" id="L268">            registerTableManager(HugeType.INDEX_LABEL,</span>
+                                 new InMemoryDBTable(HugeType.INDEX_LABEL));
+<span class="nc" id="L270">            registerTableManager(HugeType.SECONDARY_INDEX,</span>
+                                 new InMemoryDBTables.SecondaryIndex());
+<span class="nc" id="L272">        }</span>
+
+        @Override
+        public Id nextId(HugeType type) {
+<span class="nc" id="L276">            return this.counter.nextId(type);</span>
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L281">            this.counter.increaseCounter(type, increment);</span>
+<span class="nc" id="L282">        }</span>
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L286">            return this.counter.getCounter(type);</span>
+        }
+
+        @Override
+        public void clear(boolean clearSpace) {
+<span class="nc" id="L291">            this.counter.reset();</span>
+<span class="nc" id="L292">            super.clear(clearSpace);</span>
+<span class="nc" id="L293">        }</span>
+
+        @Override
+        public void truncate() {
+<span class="nc" id="L297">            this.counter.reset();</span>
+<span class="nc" id="L298">            super.truncate();</span>
+<span class="nc" id="L299">        }</span>
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L303">            return true;</span>
+        }
+    }
+
+    public static class InMemoryGraphStore extends InMemoryDBStore {
+
+        public InMemoryGraphStore(BackendStoreProvider provider,
+                                  String database, String store) {
+<span class="nc" id="L311">            super(provider, database, store);</span>
+
+<span class="nc" id="L313">            registerTableManager(HugeType.VERTEX,</span>
+                                 new InMemoryDBTables.Vertex());
+<span class="nc" id="L315">            registerTableManager(HugeType.EDGE_OUT,</span>
+                                 new InMemoryDBTables.Edge(HugeType.EDGE_OUT));
+<span class="nc" id="L317">            registerTableManager(HugeType.EDGE_IN,</span>
+                                 new InMemoryDBTables.Edge(HugeType.EDGE_IN));
+<span class="nc" id="L319">            registerTableManager(HugeType.SECONDARY_INDEX,</span>
+                                 new InMemoryDBTables.SecondaryIndex());
+<span class="nc" id="L321">            registerTableManager(HugeType.RANGE_INT_INDEX,</span>
+<span class="nc" id="L322">                                 InMemoryDBTables.RangeIndex.rangeInt());</span>
+<span class="nc" id="L323">            registerTableManager(HugeType.RANGE_FLOAT_INDEX,</span>
+<span class="nc" id="L324">                                 InMemoryDBTables.RangeIndex.rangeFloat());</span>
+<span class="nc" id="L325">            registerTableManager(HugeType.RANGE_LONG_INDEX,</span>
+<span class="nc" id="L326">                                 InMemoryDBTables.RangeIndex.rangeLong());</span>
+<span class="nc" id="L327">            registerTableManager(HugeType.RANGE_DOUBLE_INDEX,</span>
+<span class="nc" id="L328">                                 InMemoryDBTables.RangeIndex.rangeDouble());</span>
+<span class="nc" id="L329">            registerTableManager(HugeType.SEARCH_INDEX,</span>
+                                 new InMemoryDBTables.SearchIndex());
+<span class="nc" id="L331">            registerTableManager(HugeType.SHARD_INDEX,</span>
+                                 new InMemoryDBTables.ShardIndex());
+<span class="nc" id="L333">            registerTableManager(HugeType.UNIQUE_INDEX,</span>
+                                 new InMemoryDBTables.UniqueIndex());
+<span class="nc" id="L335">        }</span>
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L339">            return false;</span>
+        }
+
+        @Override
+        public Id nextId(HugeType type) {
+<span class="nc" id="L344">            throw new UnsupportedOperationException(</span>
+                      &quot;InMemoryGraphStore.nextId()&quot;);
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long num) {
+<span class="nc" id="L350">            throw new UnsupportedOperationException(</span>
+                      &quot;InMemoryGraphStore.increaseCounter()&quot;);
+        }
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L356">            throw new UnsupportedOperationException(</span>
+                      &quot;InMemoryGraphStore.getCounter()&quot;);
+        }
+    }
+
+    public static class InMemorySystemStore extends InMemoryGraphStore {
+
+        public InMemorySystemStore(BackendStoreProvider provider,
+                                   String database, String store) {
+<span class="nc" id="L365">            super(provider, database, store);</span>
+<span class="nc" id="L366">        }</span>
+
+        @Override
+        public String storedVersion() {
+<span class="nc" id="L370">            return this.provider().driverVersion();</span>
+        }
+    }
+
+    /**
+     * InMemoryDBStore features
+     */
+<span class="nc" id="L377">    private static final BackendFeatures FEATURES = new BackendFeatures() {</span>
+
+        @Override
+        public boolean supportsPersistence() {
+<span class="nc" id="L381">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsSharedStorage() {
+<span class="nc" id="L386">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsScanToken() {
+<span class="nc" id="L391">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsScanKeyPrefix() {
+<span class="nc" id="L396">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsScanKeyRange() {
+<span class="nc" id="L401">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsQuerySchemaByName() {
+            // Traversal all data in memory
+<span class="nc" id="L407">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsQueryByLabel() {
+            // Traversal all data in memory
+<span class="nc" id="L413">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsQueryWithInCondition() {
+<span class="nc" id="L418">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsQueryWithRangeCondition() {
+<span class="nc" id="L423">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsQueryWithOrderBy() {
+<span class="nc" id="L428">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsQueryWithContains() {
+            // NOTE: hasValue tests will skip
+<span class="nc" id="L434">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsQueryWithContainsKey() {
+            // NOTE: hasKey tests will skip
+<span class="nc" id="L440">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsQueryByPage() {
+<span class="nc" id="L445">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsQuerySortByInputIds() {
+<span class="nc" id="L450">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsDeleteEdgeByLabel() {
+<span class="nc" id="L455">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsUpdateVertexProperty() {
+<span class="nc" id="L460">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsMergeVertexProperty() {
+<span class="nc" id="L465">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsUpdateEdgeProperty() {
+<span class="nc" id="L470">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsTransaction() {
+<span class="nc" id="L475">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsNumberType() {
+<span class="nc" id="L480">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsAggregateProperty() {
+<span class="nc" id="L485">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsTtl() {
+<span class="nc" id="L490">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsOlapProperties() {
+<span class="nc" id="L495">            return false;</span>
+        }
+    };
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WeakConnectedComponent.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.comm</a> &gt; <span class="el_source">WeakConnectedComponent.java</span></div><h1>WeakConnectedComponent.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.comm;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.Log;
+import com.google.common.collect.ImmutableMap;
+
+<span class="nc" id="L40">public class WeakConnectedComponent extends AbstractCommAlgorithm {</span>
+
+<span class="nc" id="L42">    protected static final Logger LOG = Log.logger(WeakConnectedComponent.class);</span>
+
+    @Override
+    public String name() {
+<span class="nc" id="L46">        return &quot;weak_connected_component&quot;;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L51">        times(parameters);</span>
+<span class="nc" id="L52">        directionOutIn(parameters);</span>
+<span class="nc" id="L53">        degree(parameters);</span>
+<span class="nc" id="L54">    }</span>
+
+    @Override
+    public Object call(UserJob&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L58">        try (Traverser traverser = new Traverser(job)) {</span>
+<span class="nc" id="L59">            return traverser.connectedComponent(times(parameters),</span>
+<span class="nc" id="L60">                                                directionOutIn(parameters),</span>
+<span class="nc" id="L61">                                                degree(parameters));</span>
+<span class="nc" id="L62">        } catch (Throwable e) {</span>
+<span class="nc" id="L63">            job.graph().tx().rollback();</span>
+<span class="nc" id="L64">            throw e;</span>
+        }
+    }
+
+    protected static class Traverser extends AlgoTraverser {
+
+<span class="nc" id="L70">        private final Map&lt;Id, Id&gt; vertexComponentMap = new HashMap&lt;&gt;();</span>
+
+        public Traverser(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L73">            super(job);</span>
+<span class="nc" id="L74">        }</span>
+
+        public Object connectedComponent(int maxTimes,
+                                         Directions direction,
+                                         long degree) {
+<span class="nc" id="L79">            this.initSchema();</span>
+<span class="nc" id="L80">            this.initVertexComponentMap();</span>
+            int times;
+
+<span class="nc bnc" id="L83" title="All 2 branches missed.">            for (times = 0; times &lt; maxTimes; times++) {</span>
+<span class="nc" id="L84">                long changeCount = 0;</span>
+<span class="nc" id="L85">                Id currentSourceVertexId = null;</span>
+                // the edges are ordered by ownerVertex
+<span class="nc" id="L87">                Iterator&lt;Edge&gt; edges = this.edges(direction);</span>
+<span class="nc" id="L88">                List&lt;Id&gt; adjacentVertices = new ArrayList&lt;&gt;();</span>
+
+<span class="nc bnc" id="L90" title="All 2 branches missed.">                while (edges.hasNext()) {</span>
+<span class="nc" id="L91">                    HugeEdge edge = (HugeEdge) edges.next();</span>
+<span class="nc" id="L92">                    Id sourceVertexId = edge.ownerVertex().id();</span>
+<span class="nc" id="L93">                    Id targetVertexId = edge.otherVertex().id();</span>
+
+<span class="nc bnc" id="L95" title="All 2 branches missed.">                    if (currentSourceVertexId == null) {</span>
+<span class="nc" id="L96">                        currentSourceVertexId = sourceVertexId;</span>
+<span class="nc" id="L97">                        adjacentVertices.add(targetVertexId);</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">                    } else if (currentSourceVertexId.equals(sourceVertexId)) {</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">                        if (adjacentVertices.size() &lt; degree) {</span>
+<span class="nc" id="L100">                            adjacentVertices.add(targetVertexId);</span>
+                        }
+                    } else {
+<span class="nc" id="L103">                        changeCount += this.findAndSetMinComponent(</span>
+                                       currentSourceVertexId,
+                                       adjacentVertices);
+<span class="nc" id="L106">                        adjacentVertices = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L107">                        currentSourceVertexId = sourceVertexId;</span>
+<span class="nc" id="L108">                        adjacentVertices.add(targetVertexId);</span>
+                    }
+<span class="nc" id="L110">                }</span>
+<span class="nc" id="L111">                changeCount += this.findAndSetMinComponent(</span>
+                               currentSourceVertexId,
+                               adjacentVertices);
+<span class="nc" id="L114">                LOG.debug(&quot;iterationTimes:{}, changeCount:{}&quot;,</span>
+<span class="nc" id="L115">                          times, changeCount);</span>
+
+<span class="nc bnc" id="L117" title="All 2 branches missed.">                if (changeCount == 0L) {</span>
+<span class="nc" id="L118">                    break;</span>
+                }
+            }
+
+<span class="nc" id="L122">            int compCount = writeBackValue();</span>
+<span class="nc" id="L123">            return ImmutableMap.of(&quot;components&quot;, compCount,</span>
+<span class="nc" id="L124">                                   &quot;iteration_times&quot;, times,</span>
+<span class="nc" id="L125">                                   &quot;times&quot;, maxTimes);</span>
+        }
+
+        private void initSchema() {
+<span class="nc" id="L129">            String cl = C_LABEL;</span>
+<span class="nc" id="L130">            SchemaManager schema = this.graph().schema();</span>
+<span class="nc" id="L131">            schema.propertyKey(cl).asText().ifNotExist().create();</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">            for (VertexLabel vl : schema.getVertexLabels()) {</span>
+<span class="nc" id="L133">                schema.vertexLabel(vl.name()).properties(cl)</span>
+<span class="nc" id="L134">                      .nullableKeys(cl).append();</span>
+<span class="nc" id="L135">            }</span>
+<span class="nc" id="L136">        }</span>
+
+        private void initVertexComponentMap() {
+<span class="nc" id="L139">            Iterator&lt;Vertex&gt; vertices = this.vertices();</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">            while (vertices.hasNext()) {</span>
+<span class="nc" id="L141">                Id id = ((HugeVertex) vertices.next()).id();</span>
+<span class="nc" id="L142">                this.vertexComponentMap.put(id, id);</span>
+<span class="nc" id="L143">            }</span>
+<span class="nc" id="L144">        }</span>
+
+        /**
+         * process for a vertex and its adjacentVertices
+         * @param sourceVertexId the source vertex
+         * @param adjacentVertices the adjacent vertices attached to source
+         *                         vertex
+         * @return the count of vertex that changed Component
+         */
+        private long findAndSetMinComponent(Id sourceVertexId,
+                                            List&lt;Id&gt; adjacentVertices) {
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            if (!this.vertexComponentMap.containsKey(sourceVertexId)) {</span>
+<span class="nc" id="L156">                return 0L;</span>
+            }
+<span class="nc" id="L158">            Id min = this.findMinComponent(sourceVertexId, adjacentVertices);</span>
+<span class="nc" id="L159">            return this.updateComponentIfNeeded(min,</span>
+                                                sourceVertexId,
+                                                adjacentVertices);
+        }
+
+        private Id findMinComponent(Id sourceVertexId,
+                                    List&lt;Id&gt; adjacentVertices) {
+<span class="nc" id="L166">            Id min = this.vertexComponentMap.get(sourceVertexId);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            for (Id vertex : adjacentVertices) {</span>
+<span class="nc" id="L168">                Id comp = this.vertexComponentMap.get(vertex);</span>
+<span class="nc bnc" id="L169" title="All 4 branches missed.">                if (comp != null &amp;&amp; comp.compareTo(min) &lt; 0) {</span>
+<span class="nc" id="L170">                    min = comp;</span>
+                }
+<span class="nc" id="L172">            }</span>
+<span class="nc" id="L173">            return min;</span>
+        }
+
+        private long updateComponentIfNeeded(Id min,
+                                             Id sourceVertexId,
+                                             List&lt;Id&gt; adjacentVertices) {
+<span class="nc" id="L179">            long changedCount = 0;</span>
+<span class="nc" id="L180">            Id comp = this.vertexComponentMap.get(sourceVertexId);</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">            if (comp.compareTo(min) &gt; 0) {</span>
+<span class="nc" id="L182">                this.vertexComponentMap.put(sourceVertexId, min);</span>
+<span class="nc" id="L183">                changedCount++;</span>
+            }
+<span class="nc bnc" id="L185" title="All 2 branches missed.">            for (Id vertex : adjacentVertices) {</span>
+<span class="nc" id="L186">                comp = this.vertexComponentMap.get(vertex);</span>
+<span class="nc bnc" id="L187" title="All 4 branches missed.">                if (comp != null &amp;&amp; comp.compareTo(min) &gt; 0) {</span>
+<span class="nc" id="L188">                    this.vertexComponentMap.put(vertex, min);</span>
+<span class="nc" id="L189">                    changedCount++;</span>
+                }
+<span class="nc" id="L191">            }</span>
+<span class="nc" id="L192">            return changedCount;</span>
+        }
+
+        /**
+         * @return the count of components
+         */
+        private int writeBackValue() {
+<span class="nc" id="L199">            Map&lt;Id, Integer&gt; componentIndexMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L200">            int index = 0;</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            for (Map.Entry&lt;Id, Id&gt; entry : this.vertexComponentMap.entrySet()) {</span>
+<span class="nc" id="L202">                Id comp = entry.getValue();</span>
+<span class="nc" id="L203">                Integer componentIndex = componentIndexMap.get(comp);</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">                if (componentIndex == null) {</span>
+<span class="nc" id="L205">                    componentIndex = index;</span>
+<span class="nc" id="L206">                    componentIndexMap.put(comp, componentIndex);</span>
+<span class="nc" id="L207">                    index++;</span>
+                }
+<span class="nc" id="L209">                Vertex vertex = this.vertex(entry.getKey());</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">                if (vertex != null) {</span>
+<span class="nc" id="L211">                    vertex.property(C_LABEL, String.valueOf(componentIndex));</span>
+<span class="nc" id="L212">                    this.commitIfNeeded();</span>
+                }
+<span class="nc" id="L214">            }</span>
+<span class="nc" id="L215">            this.graph().tx().commit();</span>
+<span class="nc" id="L216">            return index;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

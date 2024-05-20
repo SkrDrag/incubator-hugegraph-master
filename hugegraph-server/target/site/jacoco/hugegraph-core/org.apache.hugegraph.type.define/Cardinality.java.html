@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Cardinality.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.type.define</a> &gt; <span class="el_source">Cardinality.java</span></div><h1>Cardinality.java</h1><pre class="source lang-java linenums">// Copyright 2017 JanusGraph Authors
+//
+// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package org.apache.hugegraph.type.define;
+
+import org.apache.tinkerpop.gremlin.structure.VertexProperty;
+
+/**
+ * The cardinality of the values associated with given key for a particular element.
+ *
+ * @author Matthias Broecheler (me@matthiasb.com)
+ */
+<span class="nc" id="L24">public enum Cardinality implements SerialEnum {</span>
+
+    /**
+     * Only a single value may be associated with the given key.
+     */
+<span class="nc" id="L29">    SINGLE(1, &quot;single&quot;),</span>
+
+    /**
+     * Multiple values and duplicate values may be associated with the given
+     * key.
+     */
+<span class="nc" id="L35">    LIST(2, &quot;list&quot;),</span>
+
+    /**
+     * Multiple but distinct values may be associated with the given key.
+     */
+<span class="nc" id="L40">    SET(3, &quot;set&quot;);</span>
+
+    private final byte code;
+    private final String name;
+
+    static {
+<span class="nc" id="L46">        SerialEnum.register(Cardinality.class);</span>
+<span class="nc" id="L47">    }</span>
+
+<span class="nc" id="L49">    Cardinality(int code, String name) {</span>
+<span class="nc bnc" id="L50" title="All 2 branches missed.">        assert code &lt; 256;</span>
+<span class="nc" id="L51">        this.code = (byte) code;</span>
+<span class="nc" id="L52">        this.name = name;</span>
+<span class="nc" id="L53">    }</span>
+
+    @Override
+    public byte code() {
+<span class="nc" id="L57">        return this.code;</span>
+    }
+
+    public String string() {
+<span class="nc" id="L61">        return this.name;</span>
+    }
+
+    public boolean single() {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        return this == SINGLE;</span>
+    }
+
+    public boolean multiple() {
+<span class="nc bnc" id="L69" title="All 4 branches missed.">        return this == LIST || this == SET;</span>
+    }
+
+    public static Cardinality convert(VertexProperty.Cardinality cardinality) {
+<span class="nc bnc" id="L73" title="All 4 branches missed.">        switch (cardinality) {</span>
+            case single:
+<span class="nc" id="L75">                return SINGLE;</span>
+            case list:
+<span class="nc" id="L77">                return LIST;</span>
+            case set:
+<span class="nc" id="L79">                return SET;</span>
+            default:
+<span class="nc" id="L81">                throw new AssertionError(String.format(&quot;Unrecognized cardinality: '%s'&quot;,</span>
+                                                       cardinality));
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

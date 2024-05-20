@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EphemeralJobQueue.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.task</a> &gt; <span class="el_source">EphemeralJobQueue.java</span></div><h1>EphemeralJobQueue.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.task;
+
+import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.atomic.AtomicReference;
+
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.job.EphemeralJob;
+import org.apache.hugegraph.job.EphemeralJobBuilder;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+public class EphemeralJobQueue {
+
+<span class="nc" id="L37">    private static final Logger LOG = Log.logger(EphemeralJobQueue.class);</span>
+
+    private static final long CAPACITY = 100 * Query.COMMIT_BATCH;
+
+    private final BlockingQueue&lt;EphemeralJob&lt;?&gt;&gt; pendingQueue;
+
+    private final AtomicReference&lt;State&gt; state;
+
+    private final HugeGraphParams graph;
+
+<span class="nc" id="L47">    private enum State {</span>
+<span class="nc" id="L48">        INIT,</span>
+<span class="nc" id="L49">        EXECUTE,</span>
+    }
+
+<span class="nc" id="L52">    public EphemeralJobQueue(HugeGraphParams graph) {</span>
+<span class="nc" id="L53">        this.state = new AtomicReference&lt;&gt;(State.INIT);</span>
+<span class="nc" id="L54">        this.graph = graph;</span>
+<span class="nc" id="L55">        this.pendingQueue = new ArrayBlockingQueue&lt;&gt;((int) CAPACITY);</span>
+<span class="nc" id="L56">    }</span>
+
+    public boolean add(EphemeralJob&lt;?&gt; job) {
+<span class="nc bnc" id="L59" title="All 2 branches missed.">        if (job == null) {</span>
+<span class="nc" id="L60">            return false;</span>
+        }
+
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (!this.pendingQueue.offer(job)) {</span>
+<span class="nc" id="L64">            LOG.warn(&quot;The pending queue of EphemeralJobQueue is full, {} job &quot; +</span>
+<span class="nc" id="L65">                     &quot;will be ignored&quot;, job.type());</span>
+<span class="nc" id="L66">            return false;</span>
+        }
+
+<span class="nc" id="L69">        this.reScheduleIfNeeded();</span>
+<span class="nc" id="L70">        return true;</span>
+    }
+
+    protected HugeGraphParams params() {
+<span class="nc" id="L74">        return this.graph;</span>
+    }
+
+    protected void clear() {
+<span class="nc" id="L78">        this.pendingQueue.clear();</span>
+<span class="nc" id="L79">    }</span>
+
+    protected EphemeralJob&lt;?&gt; poll() {
+<span class="nc" id="L82">        return this.pendingQueue.poll();</span>
+    }
+
+    public void consumeComplete() {
+<span class="nc" id="L86">        this.state.compareAndSet(State.EXECUTE, State.INIT);</span>
+<span class="nc" id="L87">    }</span>
+
+    public void reScheduleIfNeeded() {
+<span class="nc bnc" id="L90" title="All 2 branches missed.">        if (this.state.compareAndSet(State.INIT, State.EXECUTE)) {</span>
+            try {
+<span class="nc" id="L92">                BatchEphemeralJob job = new BatchEphemeralJob(this);</span>
+<span class="nc" id="L93">                EphemeralJobBuilder.of(this.graph.graph())</span>
+<span class="nc" id="L94">                                   .name(&quot;batch-ephemeral-job&quot;)</span>
+<span class="nc" id="L95">                                   .job(job)</span>
+<span class="nc" id="L96">                                   .schedule();</span>
+<span class="nc" id="L97">            } catch (Throwable e) {</span>
+                // Maybe if it fails, consider clearing all the data in the pendingQueue,
+                // or start a scheduled retry task to retry until success.
+<span class="nc" id="L100">                LOG.warn(&quot;Failed to schedule BatchEphemeralJob&quot;, e);</span>
+<span class="nc" id="L101">                this.pendingQueue.clear();</span>
+<span class="nc" id="L102">                this.state.compareAndSet(State.EXECUTE, State.INIT);</span>
+<span class="nc" id="L103">            }</span>
+        }
+<span class="nc" id="L105">    }</span>
+
+    public boolean isEmpty() {
+<span class="nc" id="L108">        return this.pendingQueue.isEmpty();</span>
+    }
+
+    public static class BatchEphemeralJob extends EphemeralJob&lt;Object&gt; {
+
+        private static final long PAGE_SIZE = Query.COMMIT_BATCH;
+        private static final String BATCH_EPHEMERAL_JOB = &quot;batch-ephemeral-job&quot;;
+        private static final long MAX_CONSUME_COUNT = 2 * PAGE_SIZE;
+
+        private WeakReference&lt;EphemeralJobQueue&gt; queueWeakReference;
+
+<span class="nc" id="L119">        public BatchEphemeralJob(EphemeralJobQueue queue) {</span>
+<span class="nc" id="L120">            this.queueWeakReference = new WeakReference&lt;&gt;(queue);</span>
+<span class="nc" id="L121">        }</span>
+
+        @Override
+        public String type() {
+<span class="nc" id="L125">            return BATCH_EPHEMERAL_JOB;</span>
+        }
+
+        @Override
+        public Object execute() throws Exception {
+<span class="nc" id="L130">            boolean stop = false;</span>
+<span class="nc" id="L131">            Object result = null;</span>
+<span class="nc" id="L132">            int consumeCount = 0;</span>
+<span class="nc" id="L133">            InterruptedException interruptedException = null;</span>
+            EphemeralJobQueue queue;
+<span class="nc" id="L135">            List&lt;EphemeralJob&lt;?&gt;&gt; batchJobs = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">            while (!stop) {</span>
+<span class="nc bnc" id="L137" title="All 4 branches missed.">                if (interruptedException == null &amp;&amp; Thread.currentThread().isInterrupted()) {</span>
+<span class="nc" id="L138">                    interruptedException = new InterruptedException();</span>
+                }
+
+<span class="nc" id="L141">                queue = this.queueWeakReference.get();</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                if (queue == null) {</span>
+<span class="nc" id="L143">                    stop = true;</span>
+<span class="nc" id="L144">                    continue;</span>
+                }
+
+<span class="nc bnc" id="L147" title="All 6 branches missed.">                if (queue.isEmpty() || consumeCount &gt; MAX_CONSUME_COUNT ||</span>
+                    interruptedException != null) {
+<span class="nc" id="L149">                    queue.consumeComplete();</span>
+<span class="nc" id="L150">                    stop = true;</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">                    if (!queue.isEmpty()) {</span>
+<span class="nc" id="L152">                        queue.reScheduleIfNeeded();</span>
+                    }
+                    continue;
+                }
+
+                try {
+<span class="nc bnc" id="L158" title="All 4 branches missed.">                    while (!queue.isEmpty() &amp;&amp; batchJobs.size() &lt; PAGE_SIZE) {</span>
+<span class="nc" id="L159">                        EphemeralJob&lt;?&gt; job = queue.poll();</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">                        if (job == null) {</span>
+<span class="nc" id="L161">                            continue;</span>
+                        }
+<span class="nc" id="L163">                        batchJobs.add(job);</span>
+<span class="nc" id="L164">                    }</span>
+
+<span class="nc bnc" id="L166" title="All 2 branches missed.">                    if (batchJobs.isEmpty()) {</span>
+                        continue;
+                    }
+
+<span class="nc" id="L170">                    consumeCount += batchJobs.size();</span>
+<span class="nc" id="L171">                    result = this.executeBatchJob(batchJobs, result);</span>
+
+<span class="nc" id="L173">                } catch (InterruptedException e) {</span>
+<span class="nc" id="L174">                    interruptedException = e;</span>
+                } finally {
+<span class="nc" id="L176">                    batchJobs.clear();</span>
+<span class="nc" id="L177">                }</span>
+            }
+
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            if (interruptedException != null) {</span>
+<span class="nc" id="L181">                Thread.currentThread().interrupt();</span>
+<span class="nc" id="L182">                throw interruptedException;</span>
+            }
+
+<span class="nc" id="L185">            return result;</span>
+        }
+
+        private Object executeBatchJob(List&lt;EphemeralJob&lt;?&gt;&gt; jobs, Object prevResult) throws Exception {
+<span class="nc" id="L189">            GraphTransaction graphTx = this.params().systemTransaction();</span>
+<span class="nc" id="L190">            GraphTransaction systemTx = this.params().graphTransaction();</span>
+<span class="nc" id="L191">            Object result = prevResult;</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">            for (EphemeralJob&lt;?&gt; job : jobs) {</span>
+<span class="nc" id="L193">                this.initJob(job);</span>
+<span class="nc" id="L194">                Object obj = job.call();</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">                if (job instanceof Reduce) {</span>
+<span class="nc" id="L196">                    result = ((Reduce) job).reduce(result, obj);</span>
+                }
+<span class="nc" id="L198">            }</span>
+
+<span class="nc" id="L200">            graphTx.commit();</span>
+<span class="nc" id="L201">            systemTx.commit();</span>
+
+<span class="nc" id="L203">            return result;</span>
+        }
+
+        private void initJob(EphemeralJob&lt;?&gt; job) {
+<span class="nc" id="L207">            job.graph(this.graph());</span>
+<span class="nc" id="L208">            job.params(this.params());</span>
+<span class="nc" id="L209">        }</span>
+
+        @Override
+        public Object call() throws Exception {
+            try {
+<span class="nc" id="L214">                return super.call();</span>
+<span class="nc" id="L215">            } catch (Throwable e) {</span>
+<span class="nc" id="L216">                LOG.warn(&quot;Failed to execute BatchEphemeralJob&quot;, e);</span>
+<span class="nc" id="L217">                EphemeralJobQueue queue = this.queueWeakReference.get();</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">                if (e instanceof InterruptedException) {</span>
+<span class="nc" id="L219">                    Thread.currentThread().interrupt();</span>
+<span class="nc bnc" id="L220" title="All 2 branches missed.">                    if (queue != null) {</span>
+<span class="nc" id="L221">                        queue.clear();</span>
+<span class="nc" id="L222">                        queue.consumeComplete();</span>
+                    }
+<span class="nc" id="L224">                    throw e;</span>
+                }
+
+<span class="nc bnc" id="L227" title="All 2 branches missed.">                if (queue != null) {</span>
+<span class="nc" id="L228">                    queue.consumeComplete();</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">                    if (!queue.isEmpty()) {</span>
+<span class="nc" id="L230">                        queue.reScheduleIfNeeded();</span>
+                    }
+                }
+<span class="nc" id="L233">                throw e;</span>
+            }
+        }
+    }
+
+    public interface Reduce&lt;T&gt; {
+        T reduce(T t1,  T t2);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

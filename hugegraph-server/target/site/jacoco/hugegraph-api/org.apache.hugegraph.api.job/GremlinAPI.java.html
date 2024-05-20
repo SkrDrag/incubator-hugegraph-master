@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GremlinAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.job</a> &gt; <span class="el_source">GremlinAPI.java</span></div><h1>GremlinAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.job;
+
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.RedirectFilter;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.apache.hugegraph.job.GremlinJob;
+import org.apache.hugegraph.job.JobBuilder;
+import org.apache.hugegraph.metrics.MetricsUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.ImmutableMap;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/jobs/gremlin&quot;)
+@Singleton
+@Tag(name = &quot;GremlinAPI&quot;)
+<span class="nc" id="L62">public class GremlinAPI extends API {</span>
+
+<span class="nc" id="L64">    private static final Logger LOG = Log.logger(GremlinAPI.class);</span>
+
+    private static final int MAX_NAME_LENGTH = 256;
+
+<span class="nc" id="L68">    private static final Histogram GREMLIN_JOB_INPUT_HISTOGRAM =</span>
+<span class="nc" id="L69">            MetricsUtil.registerHistogram(GremlinAPI.class, &quot;gremlin-input&quot;);</span>
+
+    @POST
+    @Timed
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=gremlin_execute&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public Map&lt;String, Id&gt; post(@Context GraphManager manager,
+                                @PathParam(&quot;graph&quot;) String graph,
+                                GremlinRequest request) {
+<span class="nc" id="L81">        LOG.debug(&quot;Graph [{}] schedule gremlin job: {}&quot;, graph, request);</span>
+<span class="nc" id="L82">        checkCreatingBody(request);</span>
+<span class="nc" id="L83">        GREMLIN_JOB_INPUT_HISTOGRAM.update(request.gremlin.length());</span>
+
+<span class="nc" id="L85">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L86">        request.aliase(graph, &quot;graph&quot;);</span>
+<span class="nc" id="L87">        JobBuilder&lt;Object&gt; builder = JobBuilder.of(g);</span>
+<span class="nc" id="L88">        builder.name(request.name())</span>
+<span class="nc" id="L89">               .input(request.toJson())</span>
+<span class="nc" id="L90">               .job(new GremlinJob());</span>
+<span class="nc" id="L91">        return ImmutableMap.of(&quot;task_id&quot;, builder.schedule().id());</span>
+    }
+
+<span class="nc" id="L94">    public static class GremlinRequest implements Checkable {</span>
+
+        // See org.apache.tinkerpop.gremlin.server.channel.HttpChannelizer
+        @JsonProperty
+        private String gremlin;
+<span class="nc" id="L99">        @JsonProperty</span>
+        private Map&lt;String, Object&gt; bindings = new HashMap&lt;&gt;();
+<span class="nc" id="L101">        @JsonProperty</span>
+        private String language = &quot;gremlin-groovy&quot;;
+<span class="nc" id="L103">        @JsonProperty</span>
+        private Map&lt;String, String&gt; aliases = new HashMap&lt;&gt;();
+
+        public String gremlin() {
+<span class="nc" id="L107">            return this.gremlin;</span>
+        }
+
+        public void gremlin(String gremlin) {
+<span class="nc" id="L111">            this.gremlin = gremlin;</span>
+<span class="nc" id="L112">        }</span>
+
+        public Map&lt;String, Object&gt; bindings() {
+<span class="nc" id="L115">            return this.bindings;</span>
+        }
+
+        public void bindings(Map&lt;String, Object&gt; bindings) {
+<span class="nc" id="L119">            this.bindings = bindings;</span>
+<span class="nc" id="L120">        }</span>
+
+        public void binding(String name, Object value) {
+<span class="nc" id="L123">            this.bindings.put(name, value);</span>
+<span class="nc" id="L124">        }</span>
+
+        public String language() {
+<span class="nc" id="L127">            return this.language;</span>
+        }
+
+        public void language(String language) {
+<span class="nc" id="L131">            this.language = language;</span>
+<span class="nc" id="L132">        }</span>
+
+        public Map&lt;String, String&gt; aliases() {
+<span class="nc" id="L135">            return this.aliases;</span>
+        }
+
+        public void aliases(Map&lt;String, String&gt; aliases) {
+<span class="nc" id="L139">            this.aliases = aliases;</span>
+<span class="nc" id="L140">        }</span>
+
+        public void aliase(String key, String value) {
+<span class="nc" id="L143">            this.aliases.put(key, value);</span>
+<span class="nc" id="L144">        }</span>
+
+        public String name() {
+            // Get the first line of script as the name
+<span class="nc" id="L148">            String firstLine = this.gremlin.split(&quot;\r\n|\r|\n&quot;, 2)[0];</span>
+<span class="nc" id="L149">            final Charset charset = Charset.forName(CHARSET);</span>
+<span class="nc" id="L150">            final byte[] bytes = firstLine.getBytes(charset);</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">            if (bytes.length &lt;= MAX_NAME_LENGTH) {</span>
+<span class="nc" id="L152">                return firstLine;</span>
+            }
+
+<span class="nc" id="L155">            CharsetDecoder decoder = charset.newDecoder();</span>
+<span class="nc" id="L156">            decoder.onMalformedInput(CodingErrorAction.IGNORE);</span>
+<span class="nc" id="L157">            decoder.reset();</span>
+
+<span class="nc" id="L159">            ByteBuffer buffer = ByteBuffer.wrap(bytes, 0, MAX_NAME_LENGTH);</span>
+            try {
+<span class="nc" id="L161">                return decoder.decode(buffer).toString();</span>
+<span class="nc" id="L162">            } catch (CharacterCodingException e) {</span>
+<span class="nc" id="L163">                throw new HugeException(&quot;Failed to decode truncated bytes of &quot; +</span>
+                                        &quot;gremlin first line&quot;, e);
+            }
+        }
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L170">            E.checkArgumentNotNull(this.gremlin,</span>
+                                   &quot;The gremlin parameter can't be null&quot;);
+<span class="nc" id="L172">            E.checkArgumentNotNull(this.language,</span>
+                                   &quot;The language parameter can't be null&quot;);
+<span class="nc bnc" id="L174" title="All 4 branches missed.">            E.checkArgument(this.aliases == null || this.aliases.isEmpty(),</span>
+                            &quot;There is no need to pass gremlin aliases&quot;);
+<span class="nc" id="L176">        }</span>
+
+        public String toJson() {
+<span class="nc" id="L179">            Map&lt;String, Object&gt; map = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L180">            map.put(&quot;gremlin&quot;, this.gremlin);</span>
+<span class="nc" id="L181">            map.put(&quot;bindings&quot;, this.bindings);</span>
+<span class="nc" id="L182">            map.put(&quot;language&quot;, this.language);</span>
+<span class="nc" id="L183">            map.put(&quot;aliases&quot;, this.aliases);</span>
+<span class="nc" id="L184">            return JsonUtil.toJson(map);</span>
+        }
+
+        public static GremlinRequest fromJson(String json) {
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L189">            Map&lt;String, Object&gt; map = JsonUtil.fromJson(json, Map.class);</span>
+<span class="nc" id="L190">            String gremlin = (String) map.get(&quot;gremlin&quot;);</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L192">            Map&lt;String, Object&gt; bindings = (Map&lt;String, Object&gt;)</span>
+<span class="nc" id="L193">                                           map.get(&quot;bindings&quot;);</span>
+<span class="nc" id="L194">            String language = (String) map.get(&quot;language&quot;);</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L196">            Map&lt;String, String&gt; aliases = (Map&lt;String, String&gt;)</span>
+<span class="nc" id="L197">                                          map.get(&quot;aliases&quot;);</span>
+
+<span class="nc" id="L199">            GremlinRequest request = new GremlinRequest();</span>
+<span class="nc" id="L200">            request.gremlin(gremlin);</span>
+<span class="nc" id="L201">            request.bindings(bindings);</span>
+<span class="nc" id="L202">            request.language(language);</span>
+<span class="nc" id="L203">            request.aliases(aliases);</span>
+<span class="nc" id="L204">            return request;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

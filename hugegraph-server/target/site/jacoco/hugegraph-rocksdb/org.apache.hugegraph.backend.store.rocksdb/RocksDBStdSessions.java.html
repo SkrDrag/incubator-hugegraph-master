@@ -1,0 +1,1300 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RocksDBStdSessions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-rocksdb</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.rocksdb</a> &gt; <span class="el_source">RocksDBStdSessions.java</span></div><h1>RocksDBStdSessions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.rocksdb;
+
+import java.io.File;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.serializer.BinarySerializer;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumn;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumnIterator;
+import org.apache.hugegraph.backend.store.BackendEntryIterator;
+import org.apache.hugegraph.backend.store.rocksdb.RocksDBIteratorPool.ReusedRocksIterator;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.StringEncoding;
+import org.rocksdb.BlockBasedTableConfig;
+import org.rocksdb.BloomFilter;
+import org.rocksdb.ColumnFamilyDescriptor;
+import org.rocksdb.ColumnFamilyHandle;
+import org.rocksdb.ColumnFamilyOptions;
+import org.rocksdb.ColumnFamilyOptionsInterface;
+import org.rocksdb.CompressionType;
+import org.rocksdb.DBOptions;
+import org.rocksdb.DBOptionsInterface;
+import org.rocksdb.Env;
+import org.rocksdb.IndexType;
+import org.rocksdb.InfoLogLevel;
+import org.rocksdb.LRUCache;
+import org.rocksdb.MutableColumnFamilyOptionsInterface;
+import org.rocksdb.MutableDBOptionsInterface;
+import org.rocksdb.Options;
+import org.rocksdb.RocksDB;
+import org.rocksdb.RocksDBException;
+import org.rocksdb.RocksIterator;
+import org.rocksdb.SstFileManager;
+import org.rocksdb.TableFormatConfig;
+import org.rocksdb.WriteBatch;
+import org.rocksdb.WriteOptions;
+import org.slf4j.Logger;
+
+import com.google.common.collect.ImmutableList;
+
+public class RocksDBStdSessions extends RocksDBSessions {
+
+<span class="nc" id="L76">    private static final Logger LOG = Log.logger(RocksDBStdSessions.class);</span>
+
+    private final HugeConfig config;
+    private final String dataPath;
+    private final String walPath;
+
+    private volatile OpenedRocksDB rocksdb;
+    private final AtomicInteger refCount;
+
+    public RocksDBStdSessions(HugeConfig config, String database, String store,
+                              String dataPath, String walPath) throws RocksDBException {
+<span class="nc" id="L87">        super(config, database, store);</span>
+<span class="nc" id="L88">        this.config = config;</span>
+<span class="nc" id="L89">        this.dataPath = dataPath;</span>
+<span class="nc" id="L90">        this.walPath = walPath;</span>
+<span class="nc" id="L91">        this.rocksdb = RocksDBStdSessions.openRocksDB(config, dataPath, walPath);</span>
+<span class="nc" id="L92">        this.refCount = new AtomicInteger(1);</span>
+<span class="nc" id="L93">    }</span>
+
+    public RocksDBStdSessions(HugeConfig config, String database, String store,
+                              String dataPath, String walPath,
+                              List&lt;String&gt; cfNames) throws RocksDBException {
+<span class="nc" id="L98">        super(config, database, store);</span>
+<span class="nc" id="L99">        this.config = config;</span>
+<span class="nc" id="L100">        this.dataPath = dataPath;</span>
+<span class="nc" id="L101">        this.walPath = walPath;</span>
+<span class="nc" id="L102">        this.rocksdb = RocksDBStdSessions.openRocksDB(config, cfNames, dataPath, walPath);</span>
+<span class="nc" id="L103">        this.refCount = new AtomicInteger(1);</span>
+
+<span class="nc" id="L105">        this.ingestExternalFile();</span>
+<span class="nc" id="L106">    }</span>
+
+    private RocksDBStdSessions(HugeConfig config, String database, String store,
+                               RocksDBStdSessions origin) {
+<span class="nc" id="L110">        super(config, database, store);</span>
+<span class="nc" id="L111">        this.config = config;</span>
+<span class="nc" id="L112">        this.dataPath = origin.dataPath;</span>
+<span class="nc" id="L113">        this.walPath = origin.walPath;</span>
+<span class="nc" id="L114">        this.rocksdb = origin.rocksdb;</span>
+<span class="nc" id="L115">        this.refCount = origin.refCount;</span>
+<span class="nc" id="L116">        this.refCount.incrementAndGet();</span>
+<span class="nc" id="L117">    }</span>
+
+    @Override
+    public void open() throws Exception {
+        // pass
+<span class="nc" id="L122">    }</span>
+
+    @Override
+    protected boolean opened() {
+<span class="nc bnc" id="L126" title="All 4 branches missed.">        return this.rocksdb != null &amp;&amp; this.rocksdb.isOwningHandle();</span>
+    }
+
+    @Override
+    public Set&lt;String&gt; openedTables() {
+<span class="nc" id="L131">        return this.rocksdb.cfs();</span>
+    }
+
+    @Override
+    public synchronized void createTable(String... tables)
+                                         throws RocksDBException {
+<span class="nc" id="L137">        this.checkValid();</span>
+
+<span class="nc" id="L139">        List&lt;ColumnFamilyDescriptor&gt; cfds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        for (String table : tables) {</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            if (this.rocksdb.existCf(table)) {</span>
+<span class="nc" id="L142">                continue;</span>
+            }
+<span class="nc" id="L144">            ColumnFamilyDescriptor cfd = new ColumnFamilyDescriptor(</span>
+<span class="nc" id="L145">                                         encode(table));</span>
+<span class="nc" id="L146">            ColumnFamilyOptions options = cfd.getOptions();</span>
+<span class="nc" id="L147">            initOptions(this.config(), null, null, options, options);</span>
+<span class="nc" id="L148">            cfds.add(cfd);</span>
+        }
+
+        /*
+         * To speed up the creation of tables, like truncate() for tinkerpop
+         * test, we call createColumnFamilies instead of createColumnFamily.
+         */
+<span class="nc" id="L155">        List&lt;ColumnFamilyHandle&gt; cfhs = this.rocksdb().createColumnFamilies(cfds);</span>
+
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        for (ColumnFamilyHandle cfh : cfhs) {</span>
+<span class="nc" id="L158">            String table = decode(cfh.getName());</span>
+<span class="nc" id="L159">            this.rocksdb.addCf(table, new OpenedRocksDB.CFHandle(this.rocksdb(), cfh));</span>
+<span class="nc" id="L160">        }</span>
+
+<span class="nc" id="L162">        this.ingestExternalFile();</span>
+<span class="nc" id="L163">    }</span>
+
+    @Override
+    public synchronized void dropTable(String... tables) throws RocksDBException {
+<span class="nc" id="L167">        this.checkValid();</span>
+
+        /*
+         * May cause bug to drop CF when someone is reading or writing this CF,
+         * use CFHandle to wait for others and then do drop:
+         * https://github.com/apache/hugegraph/issues/697
+         */
+<span class="nc" id="L174">        List&lt;ColumnFamilyHandle&gt; cfhs = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        for (String table : tables) {</span>
+<span class="nc" id="L176">            OpenedRocksDB.CFHandle cfh = this.rocksdb.cf(table);</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            if (cfh == null) {</span>
+<span class="nc" id="L178">                continue;</span>
+            }
+<span class="nc" id="L180">            cfhs.add(cfh.waitForDrop());</span>
+        }
+
+        /*
+         * To speed up the creation of tables, like truncate() for tinkerpop
+         * test, we call dropColumnFamilies instead of dropColumnFamily.
+         */
+<span class="nc" id="L187">        this.rocksdb().dropColumnFamilies(cfhs);</span>
+
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        for (String table : tables) {</span>
+<span class="nc" id="L190">            OpenedRocksDB.CFHandle cfh = this.rocksdb.cf(table);</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">            if (cfh == null) {</span>
+<span class="nc" id="L192">                continue;</span>
+            }
+<span class="nc" id="L194">            cfh.destroy();</span>
+<span class="nc" id="L195">            this.rocksdb.removeCf(table);</span>
+        }
+<span class="nc" id="L197">    }</span>
+
+    @Override
+    public boolean existsTable(String table) {
+<span class="nc" id="L201">        return this.rocksdb.existCf(table);</span>
+    }
+
+    @Override
+    public void reloadRocksDB() throws RocksDBException {
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        if (this.rocksdb.isOwningHandle()) {</span>
+<span class="nc" id="L207">            this.rocksdb.close();</span>
+        }
+<span class="nc" id="L209">        this.rocksdb = RocksDBStdSessions.openRocksDB(this.config, ImmutableList.of(),</span>
+                                                      this.dataPath, this.walPath);
+<span class="nc" id="L211">    }</span>
+
+    @Override
+    public void forceCloseRocksDB() {
+<span class="nc" id="L215">        this.rocksdb().close();</span>
+<span class="nc" id="L216">    }</span>
+
+    @Override
+    public List&lt;String&gt; property(String property) {
+        try {
+<span class="nc bnc" id="L221" title="All 2 branches missed.">            if (property.equals(RocksDBMetrics.KEY_DISK_USAGE)) {</span>
+<span class="nc" id="L222">                long size = this.rocksdb.totalSize();</span>
+<span class="nc" id="L223">                return ImmutableList.of(String.valueOf(size));</span>
+            }
+<span class="nc" id="L225">            List&lt;String&gt; values = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            for (String cf : this.openedTables()) {</span>
+<span class="nc" id="L227">                try (OpenedRocksDB.CFHandle cfh = this.cf(cf)) {</span>
+<span class="nc" id="L228">                    values.add(this.rocksdb().getProperty(cfh.get(), property));</span>
+                }
+<span class="nc" id="L230">            }</span>
+<span class="nc" id="L231">            return values;</span>
+<span class="nc" id="L232">        } catch (RocksDBException | UnsupportedOperationException e) {</span>
+<span class="nc" id="L233">            throw new BackendException(e);</span>
+        }
+    }
+
+    @Override
+    public void compactRange() {
+        try {
+            // Waits while compaction is performed on the background threads
+            // rocksdb().flush(new FlushOptions())
+<span class="nc" id="L242">            rocksdb().compactRange();</span>
+<span class="nc" id="L243">        } catch (RocksDBException e) {</span>
+<span class="nc" id="L244">            throw new BackendException(e);</span>
+<span class="nc" id="L245">        }</span>
+<span class="nc" id="L246">    }</span>
+
+    @Override
+    public RocksDBSessions copy(HugeConfig config, String database, String store) {
+<span class="nc" id="L250">        return new RocksDBStdSessions(config, database, store, this);</span>
+    }
+
+    @Override
+    public void createSnapshot(String snapshotPath) {
+<span class="nc" id="L255">        this.rocksdb.createCheckpoint(snapshotPath);</span>
+<span class="nc" id="L256">    }</span>
+
+    @Override
+    public void resumeSnapshot(String snapshotPath) {
+<span class="nc" id="L260">        File originDataDir = new File(this.dataPath);</span>
+<span class="nc" id="L261">        File snapshotDir = new File(snapshotPath);</span>
+        try {
+            /*
+             * Close current instance first
+             * NOTE: must close rocksdb instance before deleting file directory,
+             * if close after copying the snapshot directory to origin position,
+             * it may produce dirty data.
+             */
+<span class="nc" id="L269">            this.forceCloseRocksDB();</span>
+            // Delete origin data directory
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            if (originDataDir.exists()) {</span>
+<span class="nc" id="L272">                LOG.info(&quot;Delete origin data directory {}&quot;, originDataDir);</span>
+<span class="nc" id="L273">                FileUtils.deleteDirectory(originDataDir);</span>
+            }
+            // Move snapshot directory to origin data directory
+<span class="nc" id="L276">            FileUtils.moveDirectory(snapshotDir, originDataDir);</span>
+<span class="nc" id="L277">            LOG.info(&quot;Move snapshot directory {} to {}&quot;, snapshotDir, originDataDir);</span>
+            // Reload rocksdb instance
+<span class="nc" id="L279">            this.reloadRocksDB();</span>
+<span class="nc" id="L280">        } catch (Exception e) {</span>
+<span class="nc" id="L281">            throw new BackendException(&quot;Failed to resume snapshot '%s' to' %s'&quot;,</span>
+                                       e, snapshotDir, this.dataPath);
+<span class="nc" id="L283">        }</span>
+<span class="nc" id="L284">    }</span>
+
+    @Override
+    public String buildSnapshotPath(String snapshotPrefix) {
+        // Like: parent_path/rocksdb-data/*, * can be g,m,s
+<span class="nc" id="L289">        Path originDataPath = Paths.get(this.dataPath);</span>
+<span class="nc" id="L290">        Path parentParentPath = originDataPath.toAbsolutePath().getParent().getParent();</span>
+        // Like: rocksdb-data/*
+<span class="nc" id="L292">        Path pureDataPath = parentParentPath.relativize(originDataPath.toAbsolutePath());</span>
+        // Like: parent_path/snapshot_rocksdb-data/*
+<span class="nc" id="L294">        Path snapshotPath = parentParentPath.resolve(snapshotPrefix + &quot;_&quot; + pureDataPath);</span>
+<span class="nc" id="L295">        E.checkArgument(snapshotPath.toFile().exists(),</span>
+                        &quot;The snapshot path '%s' doesn't exist&quot;, snapshotPath);
+<span class="nc" id="L297">        return snapshotPath.toString();</span>
+    }
+
+    @Override
+    public String hardLinkSnapshot(String snapshotPath) throws RocksDBException {
+<span class="nc" id="L302">        String snapshotLinkPath = this.dataPath + &quot;_temp&quot;;</span>
+<span class="nc" id="L303">        try (OpenedRocksDB rocksdb = openRocksDB(this.config, ImmutableList.of(),</span>
+                                                 snapshotPath, null)) {
+<span class="nc" id="L305">            rocksdb.createCheckpoint(snapshotLinkPath);</span>
+        }
+<span class="nc" id="L307">        LOG.info(&quot;The snapshot {} has been hard linked to {}&quot;, snapshotPath, snapshotLinkPath);</span>
+<span class="nc" id="L308">        return snapshotLinkPath;</span>
+    }
+
+    @Override
+    public final Session session() {
+<span class="nc" id="L313">        return (Session) super.getOrNewSession();</span>
+    }
+
+    @Override
+    protected final Session newSession() {
+<span class="nc" id="L318">        E.checkState(this.rocksdb.isOwningHandle(), &quot;RocksDB has not been initialized&quot;);</span>
+<span class="nc" id="L319">        return new StdSession(this.config());</span>
+    }
+
+    @Override
+    protected synchronized void doClose() {
+<span class="nc" id="L324">        this.checkValid();</span>
+
+<span class="nc bnc" id="L326" title="All 2 branches missed.">        if (this.refCount.decrementAndGet() &gt; 0) {</span>
+<span class="nc" id="L327">            return;</span>
+        }
+<span class="nc bnc" id="L329" title="All 2 branches missed.">        assert this.refCount.get() == 0;</span>
+<span class="nc" id="L330">        this.rocksdb.close();</span>
+<span class="nc" id="L331">    }</span>
+
+    private void checkValid() {
+<span class="nc" id="L334">        E.checkState(this.rocksdb.isOwningHandle(), &quot;It seems RocksDB has been closed&quot;);</span>
+<span class="nc" id="L335">    }</span>
+
+    private RocksDB rocksdb() {
+<span class="nc" id="L338">        this.checkValid();</span>
+<span class="nc" id="L339">        return this.rocksdb.rocksdb();</span>
+    }
+
+    private OpenedRocksDB.CFHandle cf(String cfName) {
+<span class="nc" id="L343">        OpenedRocksDB.CFHandle cfh = this.rocksdb.cf(cfName);</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">        if (cfh == null) {</span>
+<span class="nc" id="L345">            throw new BackendException(&quot;Table '%s' is not opened&quot;, cfName);</span>
+        }
+<span class="nc" id="L347">        cfh.open();</span>
+<span class="nc" id="L348">        return cfh;</span>
+    }
+
+    private void ingestExternalFile() throws RocksDBException {
+<span class="nc" id="L352">        String directory = this.config().get(RocksDBOptions.SST_PATH);</span>
+<span class="nc bnc" id="L353" title="All 4 branches missed.">        if (directory == null || directory.isEmpty()) {</span>
+<span class="nc" id="L354">            return;</span>
+        }
+<span class="nc" id="L356">        RocksDBIngester ingester = new RocksDBIngester(this.rocksdb());</span>
+        // Ingest all *.sst files in each directory named cf name
+<span class="nc bnc" id="L358" title="All 2 branches missed.">        for (String cf : this.rocksdb.cfs()) {</span>
+<span class="nc" id="L359">            Path path = Paths.get(directory, cf);</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">            if (path.toFile().isDirectory()) {</span>
+<span class="nc" id="L361">                try (OpenedRocksDB.CFHandle cfh = this.cf(cf)) {</span>
+<span class="nc" id="L362">                    ingester.ingest(path, cfh.get());</span>
+                }
+            }
+<span class="nc" id="L365">        }</span>
+<span class="nc" id="L366">    }</span>
+
+    private static OpenedRocksDB openRocksDB(HugeConfig config, String dataPath,
+                                             String walPath) throws RocksDBException {
+        // Init options
+<span class="nc" id="L371">        Options options = new Options();</span>
+<span class="nc" id="L372">        RocksDBStdSessions.initOptions(config, options, options, options, options);</span>
+<span class="nc" id="L373">        options.setWalDir(walPath);</span>
+<span class="nc" id="L374">        SstFileManager sstFileManager = new SstFileManager(Env.getDefault());</span>
+<span class="nc" id="L375">        options.setSstFileManager(sstFileManager);</span>
+        /*
+         * Open RocksDB at the first time
+         * Don't merge old CFs, we expect a clear DB when using this one
+         */
+<span class="nc" id="L380">        RocksDB rocksdb = RocksDB.open(options, dataPath);</span>
+<span class="nc" id="L381">        Map&lt;String, OpenedRocksDB.CFHandle&gt; cfs = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L382">        return new OpenedRocksDB(rocksdb, cfs, sstFileManager);</span>
+    }
+
+    private static OpenedRocksDB openRocksDB(HugeConfig config,
+                                             List&lt;String&gt; cfNames, String dataPath,
+                                             String walPath) throws RocksDBException {
+        // Old CFs should always be opened
+<span class="nc" id="L389">        Set&lt;String&gt; mergedCFs = RocksDBStdSessions.mergeOldCFs(dataPath,</span>
+                                                               cfNames);
+<span class="nc" id="L391">        List&lt;String&gt; cfs = ImmutableList.copyOf(mergedCFs);</span>
+
+        // Init CFs options
+<span class="nc" id="L394">        List&lt;ColumnFamilyDescriptor&gt; cfds = new ArrayList&lt;&gt;(cfs.size());</span>
+<span class="nc bnc" id="L395" title="All 2 branches missed.">        for (String cf : cfs) {</span>
+<span class="nc" id="L396">            ColumnFamilyDescriptor cfd = new ColumnFamilyDescriptor(encode(cf));</span>
+<span class="nc" id="L397">            ColumnFamilyOptions options = cfd.getOptions();</span>
+<span class="nc" id="L398">            RocksDBStdSessions.initOptions(config, null, null, options, options);</span>
+<span class="nc" id="L399">            cfds.add(cfd);</span>
+<span class="nc" id="L400">        }</span>
+
+        // Init DB options
+<span class="nc" id="L403">        DBOptions options = new DBOptions();</span>
+<span class="nc" id="L404">        RocksDBStdSessions.initOptions(config, options, options, null, null);</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">        if (walPath != null) {</span>
+<span class="nc" id="L406">            options.setWalDir(walPath);</span>
+        }
+<span class="nc" id="L408">        SstFileManager sstFileManager = new SstFileManager(Env.getDefault());</span>
+<span class="nc" id="L409">        options.setSstFileManager(sstFileManager);</span>
+
+        // Open RocksDB with CFs
+<span class="nc" id="L412">        List&lt;ColumnFamilyHandle&gt; cfhs = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L413">        RocksDB rocksdb = RocksDB.open(options, dataPath, cfds, cfhs);</span>
+
+<span class="nc bnc" id="L415" title="All 2 branches missed.">        E.checkState(cfhs.size() == cfs.size(),</span>
+                     &quot;Expect same size of cf-handles and cf-names&quot;);
+        // Collect CF Handles
+<span class="nc" id="L418">        Map&lt;String, OpenedRocksDB.CFHandle&gt; cfHandles = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">        for (int i = 0; i &lt; cfs.size(); i++) {</span>
+<span class="nc" id="L420">            cfHandles.put(cfs.get(i), new OpenedRocksDB.CFHandle(rocksdb, cfhs.get(i)));</span>
+        }
+<span class="nc" id="L422">        return new OpenedRocksDB(rocksdb, cfHandles, sstFileManager);</span>
+    }
+
+    private static Set&lt;String&gt; mergeOldCFs(String path,
+                                           List&lt;String&gt; cfNames) throws RocksDBException {
+<span class="nc" id="L427">        Set&lt;String&gt; cfs = listCFs(path);</span>
+<span class="nc" id="L428">        cfs.addAll(cfNames);</span>
+<span class="nc" id="L429">        return cfs;</span>
+    }
+
+    public static Set&lt;String&gt; listCFs(String path) throws RocksDBException {
+<span class="nc" id="L433">        Set&lt;String&gt; cfs = new HashSet&lt;&gt;();</span>
+
+<span class="nc" id="L435">        List&lt;byte[]&gt; oldCFs = RocksDB.listColumnFamilies(new Options(), path);</span>
+<span class="nc bnc" id="L436" title="All 2 branches missed.">        if (oldCFs.isEmpty()) {</span>
+<span class="nc" id="L437">            cfs.add(&quot;default&quot;);</span>
+        } else {
+<span class="nc bnc" id="L439" title="All 2 branches missed.">            for (byte[] oldCF : oldCFs) {</span>
+<span class="nc" id="L440">                cfs.add(decode(oldCF));</span>
+<span class="nc" id="L441">            }</span>
+        }
+<span class="nc" id="L443">        return cfs;</span>
+    }
+
+    public static void initOptions(HugeConfig conf,
+                                   DBOptionsInterface&lt;?&gt; db,
+                                   MutableDBOptionsInterface&lt;?&gt; mdb,
+                                   ColumnFamilyOptionsInterface&lt;?&gt; cf,
+                                   MutableColumnFamilyOptionsInterface&lt;?&gt; mcf) {
+<span class="nc" id="L451">        final boolean optimize = conf.get(RocksDBOptions.OPTIMIZE_MODE);</span>
+
+<span class="nc bnc" id="L453" title="All 2 branches missed.">        if (db != null) {</span>
+            /*
+             * Set true then the database will be created if it is missing.
+             * should we use options.setCreateMissingColumnFamilies()?
+             */
+<span class="nc" id="L458">            db.setCreateIfMissing(true);</span>
+<span class="nc" id="L459">            db.setWriteDbidToManifest(true);</span>
+<span class="nc" id="L460">            db.setAvoidUnnecessaryBlockingIO(true);</span>
+
+            // Optimize RocksDB
+<span class="nc bnc" id="L463" title="All 2 branches missed.">            if (optimize) {</span>
+<span class="nc" id="L464">                int processors = CoreOptions.CPUS;</span>
+<span class="nc" id="L465">                db.setIncreaseParallelism(Math.max(processors / 2, 1));</span>
+
+<span class="nc" id="L467">                db.setAllowConcurrentMemtableWrite(true);</span>
+<span class="nc" id="L468">                db.setEnableWriteThreadAdaptiveYield(true);</span>
+            }
+<span class="nc" id="L470">            db.setInfoLogLevel(InfoLogLevel.valueOf(</span>
+<span class="nc" id="L471">                conf.get(RocksDBOptions.LOG_LEVEL) + &quot;_LEVEL&quot;));</span>
+
+<span class="nc" id="L473">            db.setMaxSubcompactions(conf.get(RocksDBOptions.MAX_SUB_COMPACTIONS));</span>
+
+<span class="nc" id="L475">            db.setAllowMmapWrites(conf.get(RocksDBOptions.ALLOW_MMAP_WRITES));</span>
+<span class="nc" id="L476">            db.setAllowMmapReads(conf.get(RocksDBOptions.ALLOW_MMAP_READS));</span>
+
+<span class="nc" id="L478">            db.setUseDirectReads(conf.get(RocksDBOptions.USE_DIRECT_READS));</span>
+<span class="nc" id="L479">            db.setUseDirectIoForFlushAndCompaction(</span>
+<span class="nc" id="L480">                conf.get(RocksDBOptions.USE_DIRECT_READS_WRITES_FC));</span>
+
+<span class="nc" id="L482">            db.setUseFsync(conf.get(RocksDBOptions.USE_FSYNC));</span>
+
+<span class="nc" id="L484">            db.setAtomicFlush(conf.get(RocksDBOptions.ATOMIC_FLUSH));</span>
+
+<span class="nc" id="L486">            db.setMaxManifestFileSize(conf.get(RocksDBOptions.MAX_MANIFEST_FILE_SIZE));</span>
+
+<span class="nc" id="L488">            db.setSkipStatsUpdateOnDbOpen(conf.get(RocksDBOptions.SKIP_STATS_UPDATE_ON_DB_OPEN));</span>
+<span class="nc" id="L489">            db.setSkipCheckingSstFileSizesOnDbOpen(</span>
+<span class="nc" id="L490">                conf.get(RocksDBOptions.SKIP_CHECK_SIZE_ON_DB_OPEN));</span>
+
+<span class="nc" id="L492">            db.setMaxFileOpeningThreads(conf.get(RocksDBOptions.MAX_FILE_OPENING_THREADS));</span>
+
+<span class="nc" id="L494">            db.setDbWriteBufferSize(conf.get(RocksDBOptions.DB_MEMTABLE_SIZE));</span>
+
+<span class="nc" id="L496">            db.setLogReadaheadSize(conf.get(RocksDBOptions.LOG_READAHEAD_SIZE));</span>
+
+            // A global cache for table-level rows
+<span class="nc" id="L499">            long cacheCapacity = conf.get(RocksDBOptions.ROW_CACHE_CAPACITY);</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">            if (cacheCapacity &gt; 0) {</span>
+<span class="nc" id="L501">                db.setRowCache(new LRUCache(cacheCapacity));</span>
+            }
+        }
+
+<span class="nc bnc" id="L505" title="All 2 branches missed.">        if (mdb != null) {</span>
+            /*
+             * Migrate to max_background_jobs option
+             * https://github.com/facebook/rocksdb/wiki/Thread-Pool
+             * https://github.com/facebook/rocksdb/pull/2205/files
+             */
+<span class="nc" id="L511">            mdb.setMaxBackgroundJobs(conf.get(RocksDBOptions.MAX_BG_JOBS));</span>
+
+<span class="nc" id="L513">            mdb.setDelayedWriteRate(conf.get(RocksDBOptions.DELAYED_WRITE_RATE));</span>
+
+<span class="nc" id="L515">            mdb.setMaxOpenFiles(conf.get(RocksDBOptions.MAX_OPEN_FILES));</span>
+
+<span class="nc" id="L517">            mdb.setMaxTotalWalSize(conf.get(RocksDBOptions.MAX_TOTAL_WAL_SIZE));</span>
+
+<span class="nc" id="L519">            mdb.setBytesPerSync(conf.get(RocksDBOptions.BYTES_PER_SYNC));</span>
+<span class="nc" id="L520">            mdb.setWalBytesPerSync(conf.get(RocksDBOptions.WAL_BYTES_PER_SYNC));</span>
+<span class="nc" id="L521">            mdb.setStrictBytesPerSync(conf.get(RocksDBOptions.STRICT_BYTES_PER_SYNC));</span>
+
+<span class="nc" id="L523">            mdb.setCompactionReadaheadSize(conf.get(RocksDBOptions.COMPACTION_READAHEAD_SIZE));</span>
+
+<span class="nc" id="L525">            mdb.setDeleteObsoleteFilesPeriodMicros(</span>
+<span class="nc" id="L526">                1000000 * conf.get(RocksDBOptions.DELETE_OBSOLETE_FILE_PERIOD));</span>
+        }
+
+<span class="nc bnc" id="L529" title="All 2 branches missed.">        if (cf != null) {</span>
+<span class="nc bnc" id="L530" title="All 2 branches missed.">            if (optimize) {</span>
+                // Optimize RocksDB
+<span class="nc" id="L532">                cf.optimizeLevelStyleCompaction();</span>
+<span class="nc" id="L533">                cf.optimizeUniversalStyleCompaction();</span>
+            }
+
+<span class="nc" id="L536">            int numLevels = conf.get(RocksDBOptions.NUM_LEVELS);</span>
+<span class="nc" id="L537">            List&lt;CompressionType&gt; compressions = conf.get(RocksDBOptions.LEVELS_COMPRESSIONS);</span>
+<span class="nc bnc" id="L538" title="All 4 branches missed.">            E.checkArgument(compressions.isEmpty() || compressions.size() == numLevels,</span>
+                            &quot;Elements number of '%s' must be 0 or &quot; +
+                            &quot;be the same as '%s', but got %s != %s&quot;,
+<span class="nc" id="L541">                            RocksDBOptions.LEVELS_COMPRESSIONS.name(),</span>
+<span class="nc" id="L542">                            RocksDBOptions.NUM_LEVELS.name(), compressions.size(), numLevels);</span>
+
+<span class="nc" id="L544">            cf.setNumLevels(numLevels);</span>
+<span class="nc" id="L545">            cf.setCompactionStyle(conf.get(RocksDBOptions.COMPACTION_STYLE));</span>
+
+<span class="nc" id="L547">            cf.setBottommostCompressionType(conf.get(RocksDBOptions.BOTTOMMOST_COMPRESSION));</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">            if (!compressions.isEmpty()) {</span>
+<span class="nc" id="L549">                cf.setCompressionPerLevel(compressions);</span>
+            }
+
+<span class="nc" id="L552">            cf.setMinWriteBufferNumberToMerge(conf.get(RocksDBOptions.MIN_MEMTABLES_TO_MERGE));</span>
+<span class="nc" id="L553">            cf.setMaxWriteBufferNumberToMaintain(</span>
+<span class="nc" id="L554">                conf.get(RocksDBOptions.MAX_MEMTABLES_TO_MAINTAIN));</span>
+
+<span class="nc" id="L556">            cf.setInplaceUpdateSupport(conf.get(RocksDBOptions.MEMTABLE_INPLACE_UPDATE_SUPPORT));</span>
+
+<span class="nc" id="L558">            cf.setLevelCompactionDynamicLevelBytes(conf.get(RocksDBOptions.DYNAMIC_LEVEL_BYTES));</span>
+
+<span class="nc" id="L560">            cf.setOptimizeFiltersForHits(conf.get(RocksDBOptions.BLOOM_FILTERS_SKIP_LAST_LEVEL));</span>
+
+<span class="nc" id="L562">            cf.setTableFormatConfig(initTableConfig(conf));</span>
+
+            // CappedPrefixExtractor uses the first N bytes
+<span class="nc" id="L565">            int prefixLength = conf.get(RocksDBOptions.PREFIX_EXTRACTOR_CAPPED);</span>
+<span class="nc bnc" id="L566" title="All 2 branches missed.">            if (prefixLength &gt; 0) {</span>
+<span class="nc" id="L567">                cf.useCappedPrefixExtractor(prefixLength);</span>
+            }
+
+            // https://github.com/facebook/rocksdb/tree/master/utilities/merge_operators
+<span class="nc" id="L571">            cf.setMergeOperatorName(&quot;uint64add&quot;); // uint64add/stringappend</span>
+        }
+
+<span class="nc bnc" id="L574" title="All 2 branches missed.">        if (mcf != null) {</span>
+<span class="nc" id="L575">            mcf.setCompressionType(conf.get(RocksDBOptions.COMPRESSION));</span>
+
+<span class="nc" id="L577">            mcf.setWriteBufferSize(conf.get(RocksDBOptions.MEMTABLE_SIZE));</span>
+<span class="nc" id="L578">            mcf.setMaxWriteBufferNumber(conf.get(RocksDBOptions.MAX_MEMTABLES));</span>
+
+<span class="nc" id="L580">            mcf.setMaxBytesForLevelBase(conf.get(RocksDBOptions.MAX_LEVEL1_BYTES));</span>
+<span class="nc" id="L581">            mcf.setMaxBytesForLevelMultiplier(conf.get(RocksDBOptions.MAX_LEVEL_BYTES_MULTIPLIER));</span>
+
+<span class="nc" id="L583">            mcf.setTargetFileSizeBase(conf.get(RocksDBOptions.TARGET_FILE_SIZE_BASE));</span>
+<span class="nc" id="L584">            mcf.setTargetFileSizeMultiplier(conf.get(RocksDBOptions.TARGET_FILE_SIZE_MULTIPLIER));</span>
+
+<span class="nc" id="L586">            mcf.setLevel0FileNumCompactionTrigger(</span>
+<span class="nc" id="L587">                conf.get(RocksDBOptions.LEVEL0_COMPACTION_TRIGGER));</span>
+<span class="nc" id="L588">            mcf.setLevel0SlowdownWritesTrigger(</span>
+<span class="nc" id="L589">                conf.get(RocksDBOptions.LEVEL0_SLOWDOWN_WRITES_TRIGGER));</span>
+<span class="nc" id="L590">            mcf.setLevel0StopWritesTrigger(conf.get(RocksDBOptions.LEVEL0_STOP_WRITES_TRIGGER));</span>
+
+<span class="nc" id="L592">            mcf.setSoftPendingCompactionBytesLimit(</span>
+<span class="nc" id="L593">                conf.get(RocksDBOptions.SOFT_PENDING_COMPACTION_LIMIT));</span>
+<span class="nc" id="L594">            mcf.setHardPendingCompactionBytesLimit(</span>
+<span class="nc" id="L595">                conf.get(RocksDBOptions.HARD_PENDING_COMPACTION_LIMIT));</span>
+
+            /*
+             * TODO: also set memtable options:
+             * memtable_insert_with_hint_prefix_extractor
+             * The reason why use option name `memtable_bloom_size_ratio`:
+             * https://github.com/facebook/rocksdb/pull/9453/files
+             * #diff-cde52d1fcbcce2bc6aae27838f1d3e7e9e469ccad8aaf8f2695f939e279d7501R369
+             */
+<span class="nc" id="L604">            mcf.setMemtablePrefixBloomSizeRatio(</span>
+<span class="nc" id="L605">                conf.get(RocksDBOptions.MEMTABLE_BLOOM_SIZE_RATIO));</span>
+<span class="nc" id="L606">            mcf.setMemtableWholeKeyFiltering(</span>
+<span class="nc" id="L607">                conf.get(RocksDBOptions.MEMTABLE_BLOOM_WHOLE_KEY_FILTERING));</span>
+<span class="nc" id="L608">            mcf.setMemtableHugePageSize(conf.get(RocksDBOptions.MEMTABL_BLOOM_HUGE_PAGE_SIZE));</span>
+
+<span class="nc" id="L610">            boolean bulkload = conf.get(RocksDBOptions.BULKLOAD_MODE);</span>
+<span class="nc bnc" id="L611" title="All 2 branches missed.">            if (bulkload) {</span>
+                // Disable automatic compaction
+<span class="nc" id="L613">                mcf.setDisableAutoCompactions(true);</span>
+
+<span class="nc" id="L615">                int trigger = Integer.MAX_VALUE;</span>
+<span class="nc" id="L616">                mcf.setLevel0FileNumCompactionTrigger(trigger);</span>
+<span class="nc" id="L617">                mcf.setLevel0SlowdownWritesTrigger(trigger);</span>
+<span class="nc" id="L618">                mcf.setLevel0StopWritesTrigger(trigger);</span>
+
+<span class="nc" id="L620">                long limit = Long.MAX_VALUE;</span>
+<span class="nc" id="L621">                mcf.setSoftPendingCompactionBytesLimit(limit);</span>
+<span class="nc" id="L622">                mcf.setHardPendingCompactionBytesLimit(limit);</span>
+
+                //cf.setMemTableConfig(new VectorMemTableConfig());
+            }
+        }
+<span class="nc" id="L627">    }</span>
+
+    public static TableFormatConfig initTableConfig(HugeConfig conf) {
+<span class="nc" id="L630">        BlockBasedTableConfig tableConfig = new BlockBasedTableConfig();</span>
+
+<span class="nc" id="L632">        tableConfig.setFormatVersion(conf.get(RocksDBOptions.TABLE_FORMAT_VERSION));</span>
+
+        /*
+         * The index type used to lookup between data blocks:
+         * https://github.com/facebook/rocksdb/wiki/Index-Block-Format
+         *
+         * TODO: support more index options:
+         * tableConfig.setIndexShortening(IndexShorteningMode.kShortenSeparators);
+         * tableConfig.setEnableIndexCompression(true);
+         * tableConfig.setIndexBlockRestartInterval(1);
+         */
+<span class="nc" id="L643">        tableConfig.setIndexType(conf.get(RocksDBOptions.INDEX_TYPE));</span>
+
+        /*
+         * The search type of point lookup can be BinarySearch or HashSearch:
+         * https://github.com/facebook/rocksdb/wiki/Data-Block-Hash-Index
+         */
+<span class="nc" id="L649">        tableConfig.setDataBlockIndexType(conf.get(RocksDBOptions.DATA_BLOCK_SEARCH_TYPE));</span>
+<span class="nc" id="L650">        tableConfig.setDataBlockHashTableUtilRatio(</span>
+<span class="nc" id="L651">            conf.get(RocksDBOptions.DATA_BLOCK_HASH_TABLE_RATIO));</span>
+
+<span class="nc" id="L653">        long blockSize = conf.get(RocksDBOptions.BLOCK_SIZE);</span>
+<span class="nc" id="L654">        tableConfig.setBlockSize(blockSize);</span>
+<span class="nc" id="L655">        tableConfig.setBlockSizeDeviation(conf.get(RocksDBOptions.BLOCK_SIZE_DEVIATION));</span>
+<span class="nc" id="L656">        tableConfig.setBlockRestartInterval(conf.get(RocksDBOptions.BLOCK_RESTART_INTERVAL));</span>
+
+        // https://github.com/facebook/rocksdb/wiki/Block-Cache
+<span class="nc" id="L659">        long cacheCapacity = conf.get(RocksDBOptions.BLOCK_CACHE_CAPACITY);</span>
+<span class="nc bnc" id="L660" title="All 2 branches missed.">        if (cacheCapacity &lt;= 0L) {</span>
+            // Bypassing bug https://github.com/facebook/rocksdb/pull/5465
+<span class="nc" id="L662">            tableConfig.setNoBlockCache(true);</span>
+        } else {
+<span class="nc" id="L664">            tableConfig.setBlockCache(new LRUCache(cacheCapacity));</span>
+        }
+
+        // https://github.com/facebook/rocksdb/wiki/RocksDB-Bloom-Filter
+<span class="nc" id="L668">        int bitsPerKey = conf.get(RocksDBOptions.BLOOM_FILTER_BITS_PER_KEY);</span>
+<span class="nc bnc" id="L669" title="All 2 branches missed.">        if (bitsPerKey &gt;= 0) {</span>
+            // TODO: use space-saving RibbonFilterPolicy
+<span class="nc" id="L671">            boolean blockBased = conf.get(RocksDBOptions.BLOOM_FILTER_MODE);</span>
+<span class="nc" id="L672">            tableConfig.setFilterPolicy(new BloomFilter(bitsPerKey, blockBased));</span>
+
+<span class="nc" id="L674">            tableConfig.setWholeKeyFiltering(conf.get(RocksDBOptions.BLOOM_FILTER_WHOLE_KEY));</span>
+
+<span class="nc" id="L676">            tableConfig.setCacheIndexAndFilterBlocks(</span>
+<span class="nc" id="L677">                conf.get(RocksDBOptions.CACHE_FILTER_AND_INDEX));</span>
+<span class="nc" id="L678">            tableConfig.setPinL0FilterAndIndexBlocksInCache(</span>
+<span class="nc" id="L679">                conf.get(RocksDBOptions.PIN_L0_INDEX_AND_FILTER));</span>
+
+            // https://github.com/facebook/rocksdb/wiki/Partitioned-Index-Filters
+<span class="nc bnc" id="L682" title="All 2 branches missed.">            if (conf.get(RocksDBOptions.PARTITION_FILTERS_INDEXES)) {</span>
+                // Enable partitioned indexes and partitioned filters
+<span class="nc" id="L684">                tableConfig.setPartitionFilters(true)</span>
+<span class="nc" id="L685">                           .setIndexType(IndexType.kTwoLevelIndexSearch)</span>
+<span class="nc" id="L686">                           .setMetadataBlockSize(blockSize)</span>
+<span class="nc" id="L687">                           .setCacheIndexAndFilterBlocksWithHighPriority(true);</span>
+<span class="nc" id="L688">                tableConfig.setPinTopLevelIndexAndFilter(</span>
+<span class="nc" id="L689">                    conf.get(RocksDBOptions.PIN_TOP_INDEX_AND_FILTER));</span>
+            }
+        }
+
+<span class="nc" id="L693">        return tableConfig;</span>
+    }
+
+    public static byte[] encode(String string) {
+<span class="nc" id="L697">        return StringEncoding.encode(string);</span>
+    }
+
+    public static String decode(byte[] bytes) {
+<span class="nc" id="L701">        return StringEncoding.decode(bytes);</span>
+    }
+
+    /**
+     * StdSession implement for RocksDB
+     */
+<span class="nc" id="L707">    private final class StdSession extends RocksDBSessions.Session {</span>
+
+        private WriteBatch batch;
+        private final WriteOptions writeOptions;
+
+<span class="nc" id="L712">        public StdSession(HugeConfig conf) {</span>
+<span class="nc" id="L713">            this.batch = new WriteBatch();</span>
+<span class="nc" id="L714">            this.writeOptions = new WriteOptions();</span>
+            /*
+             * When work under raft mode. if store crashed, the state-machine
+             * can restore by snapshot + raft log, doesn't need wal and sync
+             */
+<span class="nc" id="L719">            boolean raftMode = conf.get(CoreOptions.RAFT_MODE);</span>
+<span class="nc bnc" id="L720" title="All 2 branches missed.">            if (raftMode) {</span>
+<span class="nc" id="L721">                this.writeOptions.setDisableWAL(true);</span>
+<span class="nc" id="L722">                this.writeOptions.setSync(false);</span>
+            }
+<span class="nc" id="L724">        }</span>
+
+        @Override
+        public void open() {
+<span class="nc" id="L728">            this.opened = true;</span>
+<span class="nc" id="L729">        }</span>
+
+        @Override
+        public void close() {
+<span class="nc bnc" id="L733" title="All 2 branches missed.">            assert this.closeable();</span>
+<span class="nc" id="L734">            this.opened = false;</span>
+<span class="nc" id="L735">        }</span>
+
+        @Override
+        public boolean closed() {
+<span class="nc bnc" id="L739" title="All 4 branches missed.">            return !this.opened || !RocksDBStdSessions.this.opened();</span>
+        }
+
+        @Override
+        public void reset() {
+<span class="nc" id="L744">            this.batch = new WriteBatch();</span>
+<span class="nc" id="L745">        }</span>
+
+        /**
+         * Any change in the session
+         */
+        @Override
+        public boolean hasChanges() {
+<span class="nc bnc" id="L752" title="All 2 branches missed.">            return this.batch.count() &gt; 0;</span>
+        }
+
+        @Override
+        public String dataPath() {
+<span class="nc" id="L757">            return RocksDBStdSessions.this.dataPath;</span>
+        }
+
+        @Override
+        public String walPath() {
+<span class="nc" id="L762">            return RocksDBStdSessions.this.walPath;</span>
+        }
+
+        /**
+         * Get property value by name from specified table
+         */
+        @Override
+        public String property(String table, String property) {
+<span class="nc" id="L770">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L771">                return rocksdb().getProperty(cf.get(), property);</span>
+<span class="nc" id="L772">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L773">                throw new BackendException(e);</span>
+            }
+        }
+
+        @Override
+        public Pair&lt;byte[], byte[]&gt; keyRange(String table) {
+            byte[] startKey;
+            byte[] endKey;
+<span class="nc" id="L781">            try (OpenedRocksDB.CFHandle cf = cf(table);</span>
+<span class="nc" id="L782">                 RocksIterator iter = rocksdb().newIterator(cf.get())) {</span>
+<span class="nc" id="L783">                iter.seekToFirst();</span>
+<span class="nc bnc" id="L784" title="All 2 branches missed.">                if (!iter.isValid()) {</span>
+<span class="nc" id="L785">                    return null;</span>
+                }
+<span class="nc" id="L787">                startKey = iter.key();</span>
+<span class="nc" id="L788">                iter.seekToLast();</span>
+<span class="nc bnc" id="L789" title="All 2 branches missed.">                if (!iter.isValid()) {</span>
+<span class="nc" id="L790">                    return Pair.of(startKey, null);</span>
+                }
+<span class="nc" id="L792">                endKey = iter.key();</span>
+<span class="nc bnc" id="L793" title="All 8 branches missed.">            }</span>
+<span class="nc" id="L794">            return Pair.of(startKey, endKey);</span>
+        }
+
+        @Override
+        public void compactRange(String table) {
+<span class="nc" id="L799">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+                // Waits while compaction is performed on the background threads
+<span class="nc" id="L801">                rocksdb().compactRange(cf.get());</span>
+<span class="nc" id="L802">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L803">                throw new BackendException(e);</span>
+<span class="nc" id="L804">            }</span>
+<span class="nc" id="L805">        }</span>
+
+        /**
+         * Commit all updates(put/delete) to DB
+         */
+        @Override
+        public Integer commit() {
+<span class="nc" id="L812">            int count = this.batch.count();</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">            if (count &lt;= 0) {</span>
+<span class="nc" id="L814">                return 0;</span>
+            }
+
+            try {
+<span class="nc" id="L818">                rocksdb().write(this.writeOptions, this.batch);</span>
+<span class="nc" id="L819">            } catch (RocksDBException e) {</span>
+                //this.batch.rollbackToSavePoint();
+<span class="nc" id="L821">                throw new BackendException(e);</span>
+<span class="nc" id="L822">            }</span>
+
+            // Clear batch if write() successfully (retained if failed)
+<span class="nc" id="L825">            this.batch.clear();</span>
+
+<span class="nc" id="L827">            return count;</span>
+        }
+
+        /**
+         * Rollback all updates(put/delete) not committed
+         */
+        @Override
+        public void rollback() {
+<span class="nc" id="L835">            this.batch.clear();</span>
+<span class="nc" id="L836">        }</span>
+
+        /**
+         * Add a KV record to a table
+         */
+        @Override
+        public void put(String table, byte[] key, byte[] value) {
+<span class="nc" id="L843">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L844">                this.batch.put(cf.get(), key, value);</span>
+<span class="nc" id="L845">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L846">                throw new BackendException(e);</span>
+<span class="nc" id="L847">            }</span>
+<span class="nc" id="L848">        }</span>
+
+        /**
+         * Merge a record to an existing key to a table
+         * For more details about merge-operator:
+         *  &lt;a href=&quot;https://github.com/facebook/rocksdb/wiki/merge-operator&quot;&gt;...&lt;/a&gt;
+         */
+        @Override
+        public void merge(String table, byte[] key, byte[] value) {
+<span class="nc" id="L857">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L858">                this.batch.merge(cf.get(), key, value);</span>
+<span class="nc" id="L859">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L860">                throw new BackendException(e);</span>
+<span class="nc" id="L861">            }</span>
+<span class="nc" id="L862">        }</span>
+
+        /**
+         * Merge a record to an existing key to a table and commit immediately
+         */
+        @Override
+        public void increase(String table, byte[] key, byte[] value) {
+<span class="nc" id="L869">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L870">                rocksdb().merge(cf.get(), key, value);</span>
+<span class="nc" id="L871">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L872">                throw new BackendException(e);</span>
+<span class="nc" id="L873">            }</span>
+<span class="nc" id="L874">        }</span>
+
+        /**
+         * Delete a record by key from a table
+         */
+        @Override
+        public void delete(String table, byte[] key) {
+<span class="nc" id="L881">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L882">                this.batch.delete(cf.get(), key);</span>
+<span class="nc" id="L883">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L884">                throw new BackendException(e);</span>
+<span class="nc" id="L885">            }</span>
+<span class="nc" id="L886">        }</span>
+
+        /**
+         * Delete the only one version of a record by key from a table
+         * NOTE: requires that the key exists and was not overwritten.
+         */
+        @Override
+        public void deleteSingle(String table, byte[] key) {
+<span class="nc" id="L894">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L895">                this.batch.singleDelete(cf.get(), key);</span>
+<span class="nc" id="L896">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L897">                throw new BackendException(e);</span>
+<span class="nc" id="L898">            }</span>
+<span class="nc" id="L899">        }</span>
+
+        /**
+         * Delete a record by key(or prefix with key) from a table
+         */
+        @Override
+        public void deletePrefix(String table, byte[] keyFrom) {
+<span class="nc" id="L906">            byte[] keyTo = Arrays.copyOf(keyFrom, keyFrom.length);</span>
+<span class="nc" id="L907">            BinarySerializer.increaseOne(keyTo);</span>
+<span class="nc" id="L908">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L909">                this.batch.deleteRange(cf.get(), keyFrom, keyTo);</span>
+<span class="nc" id="L910">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L911">                throw new BackendException(e);</span>
+<span class="nc" id="L912">            }</span>
+<span class="nc" id="L913">        }</span>
+
+        /**
+         * Delete a range of keys from a table
+         */
+        @Override
+        public void deleteRange(String table, byte[] keyFrom, byte[] keyTo) {
+<span class="nc" id="L920">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L921">                this.batch.deleteRange(cf.get(), keyFrom, keyTo);</span>
+<span class="nc" id="L922">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L923">                throw new BackendException(e);</span>
+<span class="nc" id="L924">            }</span>
+<span class="nc" id="L925">        }</span>
+
+        /**
+         * Get a record by key from a table
+         */
+        @Override
+        public byte[] get(String table, byte[] key) {
+<span class="nc bnc" id="L932" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+
+<span class="nc" id="L934">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L935">                return rocksdb().get(cf.get(), key);</span>
+<span class="nc" id="L936">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L937">                throw new BackendException(e);</span>
+            }
+        }
+
+        /**
+         * Get records by a list of keys from a table
+         */
+        @Override
+        public BackendColumnIterator get(String table, List&lt;byte[]&gt; keys) {
+<span class="nc bnc" id="L946" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+
+<span class="nc" id="L948">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+                // Fill ColumnFamilyHandle list
+<span class="nc" id="L950">                List&lt;ColumnFamilyHandle&gt; cfs = new ArrayList&lt;&gt;(keys.size());</span>
+<span class="nc" id="L951">                ColumnFamilyHandle cfh = cf.get();</span>
+<span class="nc bnc" id="L952" title="All 2 branches missed.">                for (int i = 0; i &lt; keys.size(); i++) {</span>
+<span class="nc" id="L953">                    cfs.add(cfh);</span>
+                }
+                /*
+                 * Do multi-get
+                 * NOTE: the multiGetAsList() is just for consistent version,
+                 * the batching version with io_uring support for performance
+                 * is not ready, see #9224
+                 */
+<span class="nc" id="L961">                List&lt;byte[]&gt; values = rocksdb().multiGetAsList(cfs, keys);</span>
+<span class="nc" id="L962">                return new MgetIterator(keys, values);</span>
+<span class="nc" id="L963">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L964">                throw new BackendException(e);</span>
+            }
+        }
+
+        /**
+         * Scan all records from a table
+         */
+        @Override
+        public BackendColumnIterator scan(String table) {
+<span class="nc bnc" id="L973" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+<span class="nc" id="L974">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L975">                ReusedRocksIterator iter = cf.newIterator();</span>
+<span class="nc" id="L976">                return new ScanIterator(table, iter, null, null, SCAN_ANY);</span>
+            }
+        }
+
+        /**
+         * Scan records by key prefix from a table
+         */
+        @Override
+        public BackendColumnIterator scan(String table, byte[] prefix) {
+<span class="nc bnc" id="L985" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+            /*
+             * NOTE: Options.prefix_extractor is a prerequisite for
+             * optimized prefix seek, if Options.prefix_extractor if enabled,
+             * can setPrefixSameAsStart(true) or setAutoPrefixMode(true):
+             *  ReadOptions options = new ReadOptions();
+             *  options.setPrefixSameAsStart(true);
+             * or
+             *  options.setAutoPrefixMode(true);
+             *  options.setIterateUpperBound(prefix + 1);
+             */
+<span class="nc" id="L996">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L997">                ReusedRocksIterator iter = cf.newIterator();</span>
+<span class="nc" id="L998">                return new ScanIterator(table, iter, prefix, null, SCAN_PREFIX_BEGIN);</span>
+            }
+        }
+
+        /**
+         * Scan records by key range from a table
+         */
+        @Override
+        public BackendColumnIterator scan(String table, byte[] keyFrom,
+                                          byte[] keyTo, int scanType) {
+<span class="nc bnc" id="L1008" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+            /*
+             * NOTE: if Options.prefix_extractor if enabled, need to
+             * setTotalOrderSeek(true) or setAutoPrefixMode(true) to make
+             * page-seek or shard-scan return right results:
+             *  ReadOptions options = new ReadOptions();
+             *  options.setTotalOrderSeek(true);
+             * or
+             *  options.setAutoPrefixMode(true);
+             *  options.setIterateUpperBound(keyTo);
+             */
+<span class="nc" id="L1019">            try (OpenedRocksDB.CFHandle cf = cf(table)) {</span>
+<span class="nc" id="L1020">                ReusedRocksIterator iter = cf.newIterator();</span>
+<span class="nc" id="L1021">                return new ScanIterator(table, iter, keyFrom, keyTo, scanType);</span>
+            }
+        }
+    }
+
+    /**
+     * A wrapper for RocksIterator that convert RocksDB results to std Iterator
+     */
+<span class="nc" id="L1029">    private static class ScanIterator implements BackendColumnIterator, Countable {</span>
+
+        private final String table;
+        private final ReusedRocksIterator reusedIter;
+        private final RocksIterator iter;
+        private final byte[] keyBegin;
+        private final byte[] keyEnd;
+        private final int scanType;
+
+        private byte[] position;
+        private boolean matched;
+
+        public ScanIterator(String table, ReusedRocksIterator reusedIter,
+<span class="nc" id="L1042">                            byte[] keyBegin, byte[] keyEnd, int scanType) {</span>
+<span class="nc" id="L1043">            E.checkNotNull(reusedIter, &quot;reusedIter&quot;);</span>
+<span class="nc" id="L1044">            this.table = table;</span>
+
+<span class="nc" id="L1046">            this.reusedIter = reusedIter;</span>
+<span class="nc" id="L1047">            this.iter = reusedIter.iterator();</span>
+<span class="nc" id="L1048">            this.keyBegin = keyBegin;</span>
+<span class="nc" id="L1049">            this.keyEnd = keyEnd;</span>
+<span class="nc" id="L1050">            this.scanType = scanType;</span>
+
+<span class="nc" id="L1052">            this.position = keyBegin;</span>
+<span class="nc" id="L1053">            this.matched = false;</span>
+
+<span class="nc" id="L1055">            this.checkArguments();</span>
+
+            //this.dump();
+
+<span class="nc" id="L1059">            this.seek();</span>
+<span class="nc" id="L1060">        }</span>
+
+        private void checkArguments() {
+<span class="nc bnc" id="L1063" title="All 2 branches missed.">            E.checkArgument(!(this.match(Session.SCAN_PREFIX_BEGIN) &amp;&amp;</span>
+<span class="nc bnc" id="L1064" title="All 2 branches missed.">                              this.match(Session.SCAN_PREFIX_END)),</span>
+                            &quot;Can't set SCAN_PREFIX_WITH_BEGIN and &quot; +
+                            &quot;SCAN_PREFIX_WITH_END at the same time&quot;);
+
+<span class="nc bnc" id="L1068" title="All 2 branches missed.">            E.checkArgument(!(this.match(Session.SCAN_PREFIX_BEGIN) &amp;&amp;</span>
+<span class="nc bnc" id="L1069" title="All 2 branches missed.">                              this.match(Session.SCAN_GT_BEGIN)),</span>
+                            &quot;Can't set SCAN_PREFIX_WITH_BEGIN and &quot; +
+                            &quot;SCAN_GT_BEGIN/SCAN_GTE_BEGIN at the same time&quot;);
+
+<span class="nc bnc" id="L1073" title="All 2 branches missed.">            E.checkArgument(!(this.match(Session.SCAN_PREFIX_END) &amp;&amp;</span>
+<span class="nc bnc" id="L1074" title="All 2 branches missed.">                              this.match(Session.SCAN_LT_END)),</span>
+                            &quot;Can't set SCAN_PREFIX_WITH_END and &quot; +
+                            &quot;SCAN_LT_END/SCAN_LTE_END at the same time&quot;);
+
+<span class="nc bnc" id="L1078" title="All 2 branches missed.">            if (this.match(Session.SCAN_PREFIX_BEGIN)) {</span>
+<span class="nc bnc" id="L1079" title="All 2 branches missed.">                E.checkArgument(this.keyBegin != null,</span>
+                                &quot;Parameter `keyBegin` can't be null &quot; +
+                                &quot;if set SCAN_PREFIX_WITH_BEGIN&quot;);
+<span class="nc bnc" id="L1082" title="All 2 branches missed.">                E.checkArgument(this.keyEnd == null,</span>
+                                &quot;Parameter `keyEnd` must be null &quot; +
+                                &quot;if set SCAN_PREFIX_WITH_BEGIN&quot;);
+            }
+
+<span class="nc bnc" id="L1087" title="All 2 branches missed.">            if (this.match(Session.SCAN_PREFIX_END)) {</span>
+<span class="nc bnc" id="L1088" title="All 2 branches missed.">                E.checkArgument(this.keyEnd != null,</span>
+                                &quot;Parameter `keyEnd` can't be null &quot; +
+                                &quot;if set SCAN_PREFIX_WITH_END&quot;);
+            }
+
+<span class="nc bnc" id="L1093" title="All 2 branches missed.">            if (this.match(Session.SCAN_GT_BEGIN)) {</span>
+<span class="nc bnc" id="L1094" title="All 2 branches missed.">                E.checkArgument(this.keyBegin != null,</span>
+                                &quot;Parameter `keyBegin` can't be null &quot; +
+                                &quot;if set SCAN_GT_BEGIN or SCAN_GTE_BEGIN&quot;);
+            }
+
+<span class="nc bnc" id="L1099" title="All 2 branches missed.">            if (this.match(Session.SCAN_LT_END)) {</span>
+<span class="nc bnc" id="L1100" title="All 2 branches missed.">                E.checkArgument(this.keyEnd != null,</span>
+                                &quot;Parameter `keyEnd` can't be null &quot; +
+                                &quot;if set SCAN_LT_END or SCAN_LTE_END&quot;);
+            }
+<span class="nc" id="L1104">        }</span>
+
+        private boolean match(int expected) {
+<span class="nc" id="L1107">            return Session.matchScanType(expected, this.scanType);</span>
+        }
+
+        /**
+         * Just for debug
+         */
+        @SuppressWarnings(&quot;unused&quot;)
+        private void dump() {
+<span class="nc" id="L1115">            this.seek();</span>
+<span class="nc" id="L1116">            LOG.info(&quot;&gt;&gt;&gt;&gt; scan from {}: {}{}&quot;, this.table,</span>
+<span class="nc bnc" id="L1117" title="All 2 branches missed.">                     this.keyBegin == null ? &quot;*&quot; : StringEncoding.format(this.keyBegin),</span>
+<span class="nc bnc" id="L1118" title="All 2 branches missed.">                     this.iter.isValid() ? &quot;&quot; : &quot; - No data&quot;);</span>
+<span class="nc bnc" id="L1119" title="All 2 branches missed.">            for (; this.iter.isValid(); this.iter.next()) {</span>
+<span class="nc" id="L1120">                LOG.info(&quot;{}={}&quot;, StringEncoding.format(this.iter.key()),</span>
+<span class="nc" id="L1121">                         StringEncoding.format(this.iter.value()));</span>
+            }
+<span class="nc" id="L1123">        }</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="nc" id="L1127">            this.matched = this.iter.isOwningHandle();</span>
+<span class="nc bnc" id="L1128" title="All 2 branches missed.">            if (!this.matched) {</span>
+                // Maybe closed
+<span class="nc" id="L1130">                return this.matched;</span>
+            }
+
+<span class="nc" id="L1133">            this.matched = this.iter.isValid();</span>
+<span class="nc bnc" id="L1134" title="All 2 branches missed.">            if (this.matched) {</span>
+                // Update position for paging
+<span class="nc" id="L1136">                this.position = this.iter.key();</span>
+                // Do filter if not SCAN_ANY
+<span class="nc bnc" id="L1138" title="All 2 branches missed.">                if (!this.match(Session.SCAN_ANY)) {</span>
+<span class="nc" id="L1139">                    this.matched = this.filter(this.position);</span>
+                }
+            }
+<span class="nc bnc" id="L1142" title="All 2 branches missed.">            if (!this.matched) {</span>
+                // The end
+<span class="nc" id="L1144">                this.position = null;</span>
+                // Free the iterator if finished
+<span class="nc" id="L1146">                this.close();</span>
+            }
+<span class="nc" id="L1148">            return this.matched;</span>
+        }
+
+        private void seek() {
+<span class="nc bnc" id="L1152" title="All 4 branches missed.">            if (this.keyBegin == null || this.keyBegin.length == 0) {</span>
+                // Seek to the first if no `keyBegin`
+<span class="nc" id="L1154">                this.iter.seekToFirst();</span>
+            } else {
+                /*
+                 * Seek to `keyBegin`:
+                 * if set SCAN_GT_BEGIN/SCAN_GTE_BEGIN (key &gt; / &gt;= 'xx')
+                 * or if set SCAN_PREFIX_WITH_BEGIN (key prefix with 'xx')
+                 */
+<span class="nc" id="L1161">                this.iter.seek(this.keyBegin);</span>
+
+                // Skip `keyBegin` if set SCAN_GT_BEGIN (key &gt; 'xx')
+<span class="nc bnc" id="L1164" title="All 2 branches missed.">                if (this.match(Session.SCAN_GT_BEGIN) &amp;&amp;</span>
+<span class="nc bnc" id="L1165" title="All 2 branches missed.">                    !this.match(Session.SCAN_GTE_BEGIN)) {</span>
+<span class="nc bnc" id="L1166" title="All 4 branches missed.">                    while (this.iter.isValid() &amp;&amp; Bytes.equals(this.iter.key(), this.keyBegin)) {</span>
+<span class="nc" id="L1167">                        this.iter.next();</span>
+                    }
+                }
+            }
+<span class="nc" id="L1171">        }</span>
+
+        private boolean filter(byte[] key) {
+<span class="nc bnc" id="L1174" title="All 2 branches missed.">            if (this.match(Session.SCAN_PREFIX_BEGIN)) {</span>
+                /*
+                 * Prefix with `keyBegin`?
+                 * TODO: use custom prefix_extractor instead
+                 *       or use ReadOptions.prefix_same_as_start
+                 */
+<span class="nc" id="L1180">                return Bytes.prefixWith(key, this.keyBegin);</span>
+<span class="nc bnc" id="L1181" title="All 2 branches missed.">            } else if (this.match(Session.SCAN_PREFIX_END)) {</span>
+                /*
+                 * Prefix with `keyEnd`?
+                 * like the following query for range index:
+                 *  key &gt; 'age:20' and prefix with 'age'
+                 */
+<span class="nc bnc" id="L1187" title="All 2 branches missed.">                assert this.keyEnd != null;</span>
+<span class="nc" id="L1188">                return Bytes.prefixWith(key, this.keyEnd);</span>
+<span class="nc bnc" id="L1189" title="All 2 branches missed.">            } else if (this.match(Session.SCAN_LT_END)) {</span>
+                /*
+                 * Less (equal) than `keyEnd`?
+                 * NOTE: don't use BytewiseComparator due to signed byte
+                 */
+<span class="nc bnc" id="L1194" title="All 2 branches missed.">                assert this.keyEnd != null;</span>
+<span class="nc bnc" id="L1195" title="All 2 branches missed.">                if (this.match(Session.SCAN_LTE_END)) {</span>
+                    // Just compare the prefix, can be there are excess tail
+<span class="nc" id="L1197">                    key = Arrays.copyOfRange(key, 0, this.keyEnd.length);</span>
+<span class="nc bnc" id="L1198" title="All 2 branches missed.">                    return Bytes.compare(key, this.keyEnd) &lt;= 0;</span>
+                } else {
+<span class="nc bnc" id="L1200" title="All 2 branches missed.">                    return Bytes.compare(key, this.keyEnd) &lt; 0;</span>
+                }
+            } else {
+<span class="nc bnc" id="L1203" title="All 4 branches missed.">                assert this.match(Session.SCAN_ANY) || this.match(Session.SCAN_GT_BEGIN) ||</span>
+<span class="nc bnc" id="L1204" title="All 2 branches missed.">                       this.match(Session.SCAN_GTE_BEGIN) : &quot;Unknown scan type&quot;;</span>
+<span class="nc" id="L1205">                return true;</span>
+            }
+        }
+
+        @Override
+        public BackendColumn next() {
+<span class="nc bnc" id="L1211" title="All 2 branches missed.">            if (!this.matched) {</span>
+<span class="nc bnc" id="L1212" title="All 2 branches missed.">                if (!this.hasNext()) {</span>
+<span class="nc" id="L1213">                    throw new NoSuchElementException();</span>
+                }
+            }
+
+<span class="nc" id="L1217">            BackendColumn col = BackendColumn.of(this.iter.key(), this.iter.value());</span>
+<span class="nc" id="L1218">            this.iter.next();</span>
+<span class="nc" id="L1219">            this.matched = false;</span>
+
+<span class="nc" id="L1221">            return col;</span>
+        }
+
+        @Override
+        public long count() {
+<span class="nc" id="L1226">            long count = 0L;</span>
+<span class="nc bnc" id="L1227" title="All 2 branches missed.">            while (this.hasNext()) {</span>
+<span class="nc" id="L1228">                this.iter.next();</span>
+<span class="nc" id="L1229">                this.matched = false;</span>
+<span class="nc" id="L1230">                count++;</span>
+<span class="nc" id="L1231">                BackendEntryIterator.checkInterrupted();</span>
+            }
+<span class="nc" id="L1233">            return count;</span>
+        }
+
+        @Override
+        public byte[] position() {
+<span class="nc" id="L1238">            return this.position;</span>
+        }
+
+        @Override
+        public void close() {
+<span class="nc" id="L1243">            this.reusedIter.close();</span>
+<span class="nc" id="L1244">        }</span>
+    }
+
+    private static class MgetIterator implements BackendColumnIterator {
+
+        private final List&lt;byte[]&gt; keys;
+        private final List&lt;byte[]&gt; values;
+        private int current;
+        private byte[] currentValue;
+
+<span class="nc" id="L1254">        public MgetIterator(List&lt;byte[]&gt; keys, List&lt;byte[]&gt; values) {</span>
+<span class="nc" id="L1255">            E.checkNotEmpty(keys, &quot;keys&quot;);</span>
+<span class="nc" id="L1256">            E.checkNotEmpty(values, &quot;values&quot;);</span>
+<span class="nc bnc" id="L1257" title="All 2 branches missed.">            E.checkArgument(keys.size() == values.size(),</span>
+                            &quot;Expect the same size between keys and values&quot;);
+<span class="nc" id="L1259">            this.keys = keys;</span>
+<span class="nc" id="L1260">            this.values = values;</span>
+<span class="nc" id="L1261">            this.current = 0;</span>
+<span class="nc" id="L1262">            this.currentValue = null;</span>
+<span class="nc" id="L1263">        }</span>
+
+        @Override
+        public void close() {
+            // pass
+<span class="nc" id="L1268">        }</span>
+
+        @Override
+        public byte[] position() {
+<span class="nc" id="L1272">            return null;</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="nc bnc" id="L1277" title="All 2 branches missed.">            for (; this.current &lt; this.values.size(); this.current++) {</span>
+<span class="nc" id="L1278">                this.currentValue = this.values.get(this.current);</span>
+<span class="nc bnc" id="L1279" title="All 2 branches missed.">                if (this.currentValue != null) {</span>
+<span class="nc" id="L1280">                    return true;</span>
+                }
+            }
+<span class="nc" id="L1283">            return false;</span>
+        }
+
+        @Override
+        public BackendColumn next() {
+<span class="nc bnc" id="L1288" title="All 2 branches missed.">            if (this.currentValue == null) {</span>
+<span class="nc bnc" id="L1289" title="All 2 branches missed.">                if (!this.hasNext()) {</span>
+<span class="nc" id="L1290">                    throw new NoSuchElementException();</span>
+                }
+            }
+<span class="nc" id="L1293">            byte[] key = this.keys.get(this.current++);</span>
+<span class="nc" id="L1294">            byte[] value = this.currentValue;</span>
+<span class="nc" id="L1295">            this.currentValue = null;</span>
+<span class="nc" id="L1296">            return BackendColumn.of(key, value);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

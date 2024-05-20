@@ -1,0 +1,352 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LockUtil.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util</a> &gt; <span class="el_source">LockUtil.java</span></div><h1>LockUtil.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.concurrent.KeyLock;
+import org.apache.hugegraph.concurrent.LockManager;
+import org.apache.hugegraph.concurrent.RowLock;
+import org.apache.hugegraph.type.HugeType;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L43">public final class LockUtil {</span>
+
+<span class="nc" id="L45">    private static final Logger LOG = Log.logger(LockUtil.class);</span>
+
+    public static final String WRITE = &quot;write&quot;;
+    public static final String READ = &quot;read&quot;;
+
+    public static final String INDEX_LABEL_DELETE = &quot;il_delete&quot;;
+    public static final String INDEX_LABEL_REBUILD = &quot;il_rebuild&quot;;
+    public static final String INDEX_LABEL_ADD_UPDATE = &quot;il_update&quot;;
+
+    public static final String VERTEX_LABEL_DELETE = &quot;vl_delete&quot;;
+    public static final String VERTEX_LABEL_ADD_UPDATE = &quot;vl_update&quot;;
+
+    public static final String EDGE_LABEL_DELETE = &quot;el_delete&quot;;
+    public static final String EDGE_LABEL_ADD_UPDATE = &quot;el_update&quot;;
+
+    public static final String PROPERTY_KEY_ADD_UPDATE = &quot;pk_update&quot;;
+    public static final String PROJECT_UPDATE = &quot;project_update&quot;;
+
+    public static final String KEY_LOCK = &quot;key_lock&quot;;
+    public static final String ROW_LOCK = &quot;row_lock&quot;;
+    public static final String REENTRANT_LOCK = &quot;reentrant_lock&quot;;
+
+    public static final String GRAPH_LOCK = &quot;graph_lock&quot;;
+
+    public static final long WRITE_WAIT_TIMEOUT = 30L;
+
+    public static void init(String graph) {
+<span class="nc" id="L72">        LockManager.instance().create(join(graph, INDEX_LABEL_DELETE));</span>
+<span class="nc" id="L73">        LockManager.instance().create(join(graph, EDGE_LABEL_DELETE));</span>
+<span class="nc" id="L74">        LockManager.instance().create(join(graph, VERTEX_LABEL_DELETE));</span>
+<span class="nc" id="L75">        LockManager.instance().create(join(graph, INDEX_LABEL_REBUILD));</span>
+<span class="nc" id="L76">        LockManager.instance().create(join(graph, INDEX_LABEL_ADD_UPDATE));</span>
+<span class="nc" id="L77">        LockManager.instance().create(join(graph, EDGE_LABEL_ADD_UPDATE));</span>
+<span class="nc" id="L78">        LockManager.instance().create(join(graph, VERTEX_LABEL_ADD_UPDATE));</span>
+<span class="nc" id="L79">        LockManager.instance().create(join(graph, PROPERTY_KEY_ADD_UPDATE));</span>
+<span class="nc" id="L80">        LockManager.instance().create(join(graph, KEY_LOCK));</span>
+<span class="nc" id="L81">        LockManager.instance().create(join(graph, ROW_LOCK));</span>
+<span class="nc" id="L82">        LockManager.instance().create(join(graph, REENTRANT_LOCK));</span>
+<span class="nc" id="L83">        LockManager.instance().create(join(graph, PROJECT_UPDATE));</span>
+<span class="nc" id="L84">    }</span>
+
+    public static void destroy(String graph) {
+<span class="nc" id="L87">        LockManager.instance().destroy(join(graph, INDEX_LABEL_DELETE));</span>
+<span class="nc" id="L88">        LockManager.instance().destroy(join(graph, EDGE_LABEL_DELETE));</span>
+<span class="nc" id="L89">        LockManager.instance().destroy(join(graph, VERTEX_LABEL_DELETE));</span>
+<span class="nc" id="L90">        LockManager.instance().destroy(join(graph, INDEX_LABEL_REBUILD));</span>
+<span class="nc" id="L91">        LockManager.instance().destroy(join(graph, INDEX_LABEL_ADD_UPDATE));</span>
+<span class="nc" id="L92">        LockManager.instance().destroy(join(graph, EDGE_LABEL_ADD_UPDATE));</span>
+<span class="nc" id="L93">        LockManager.instance().destroy(join(graph, VERTEX_LABEL_ADD_UPDATE));</span>
+<span class="nc" id="L94">        LockManager.instance().destroy(join(graph, PROPERTY_KEY_ADD_UPDATE));</span>
+<span class="nc" id="L95">        LockManager.instance().destroy(join(graph, KEY_LOCK));</span>
+<span class="nc" id="L96">        LockManager.instance().destroy(join(graph, ROW_LOCK));</span>
+<span class="nc" id="L97">        LockManager.instance().destroy(join(graph, REENTRANT_LOCK));</span>
+<span class="nc" id="L98">        LockManager.instance().destroy(join(graph, PROJECT_UPDATE));</span>
+<span class="nc" id="L99">    }</span>
+
+    private static String join(String graph, String group) {
+<span class="nc" id="L102">        return graph + &quot;_&quot; + group;</span>
+    }
+
+    private static Lock lockRead(String group, String lock) {
+<span class="nc" id="L106">        Lock readLock = LockManager.instance().get(group)</span>
+<span class="nc" id="L107">                                   .readWriteLock(lock).readLock();</span>
+<span class="nc" id="L108">        LOG.debug(&quot;Trying to get the read lock '{}' of LockGroup '{}'&quot;,</span>
+                  lock, group);
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (!readLock.tryLock()) {</span>
+<span class="nc" id="L111">            throw new HugeException(</span>
+                      &quot;Lock [%s:%s] is locked by other operation&quot;,
+                      group, lock);
+        }
+<span class="nc" id="L115">        LOG.debug(&quot;Got the read lock '{}' of LockGroup '{}'&quot;, lock, group);</span>
+<span class="nc" id="L116">        return readLock;</span>
+    }
+
+    private static Lock lockWrite(String group, String lock, long time) {
+<span class="nc" id="L120">        Lock writeLock = LockManager.instance().get(group)</span>
+<span class="nc" id="L121">                                    .readWriteLock(lock).writeLock();</span>
+<span class="nc" id="L122">        LOG.debug(&quot;Trying to get the write lock '{}' of LockGroup '{}'&quot;,</span>
+                  lock, group);
+        while (true) {
+            try {
+<span class="nc bnc" id="L126" title="All 2 branches missed.">                if (!writeLock.tryLock(time, TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L127">                    throw new HugeException(</span>
+                              &quot;Lock [%s:%s] is locked by other operation&quot;,
+                              group, lock);
+                }
+<span class="nc" id="L131">                break;</span>
+<span class="nc" id="L132">            } catch (InterruptedException ignore) {</span>
+<span class="nc" id="L133">                LOG.info(&quot;Trying to lock write of {} is interrupted!&quot;, lock);</span>
+<span class="nc" id="L134">            }</span>
+        }
+<span class="nc" id="L136">        LOG.debug(&quot;Got the write lock '{}' of LockGroup '{}'&quot;, lock, group);</span>
+<span class="nc" id="L137">        return writeLock;</span>
+    }
+
+    private static List&lt;Lock&gt; lockKeys(String graph, String group,
+                                       Collection&lt;?&gt; locks) {
+<span class="nc" id="L142">        KeyLock keyLock = LockManager.instance().get(join(graph, KEY_LOCK))</span>
+<span class="nc" id="L143">                                     .keyLock(group);</span>
+<span class="nc" id="L144">        return keyLock.lockAll(locks.toArray());</span>
+    }
+
+    public static &lt;K extends Comparable&lt;K&gt;&gt; void lockRow(String graph,
+                                                         String group,
+                                                         K row) {
+<span class="nc" id="L150">        lockRows(graph, group, ImmutableSet.of(row));</span>
+<span class="nc" id="L151">    }</span>
+
+    public static &lt;K extends Comparable&lt;K&gt;&gt; void lockRows(String graph,
+                                                          String group,
+                                                          Set&lt;K&gt; rows) {
+<span class="nc" id="L156">        RowLock&lt;K&gt; rowLock = LockManager.instance().get(join(graph, ROW_LOCK))</span>
+<span class="nc" id="L157">                                        .rowLock(group);</span>
+<span class="nc" id="L158">        rowLock.lockAll(rows);</span>
+<span class="nc" id="L159">    }</span>
+
+    public static &lt;K extends Comparable&lt;K&gt;&gt; void unlockRow(String graph,
+                                                           String group,
+                                                           K row) {
+<span class="nc" id="L164">        unlockRows(graph, group, ImmutableSet.of(row));</span>
+<span class="nc" id="L165">    }</span>
+
+    public static &lt;K extends Comparable&lt;K&gt;&gt; void unlockRows(String graph,
+                                                            String group,
+                                                            Set&lt;K&gt; rows) {
+<span class="nc" id="L170">        RowLock&lt;K&gt; rowLock = LockManager.instance().get(join(graph, ROW_LOCK))</span>
+<span class="nc" id="L171">                                        .rowLock(group);</span>
+<span class="nc" id="L172">        rowLock.unlockAll(rows);</span>
+<span class="nc" id="L173">    }</span>
+
+    public static void lock(String graph, String name) {
+<span class="nc" id="L176">        LockManager.instance().get(join(graph, REENTRANT_LOCK))</span>
+<span class="nc" id="L177">                   .lock(name).lock();</span>
+<span class="nc" id="L178">    }</span>
+
+    public static void unlock(String graph, String name) {
+<span class="nc" id="L181">        LockManager.instance().get(join(graph, REENTRANT_LOCK))</span>
+<span class="nc" id="L182">                   .lock(name).unlock();</span>
+<span class="nc" id="L183">    }</span>
+
+    public static List&lt;Lock&gt; lock(String... locks) {
+<span class="nc" id="L186">        List&lt;Lock&gt; lockList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        E.checkArgument(locks.length % 3 == 0,</span>
+                        &quot;Invalid arguments number, expect multiple of 3.&quot;);
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        for (int i = 0; i &lt; locks.length; i += 3) {</span>
+<span class="nc bnc" id="L190" title="All 3 branches missed.">            switch (locks[i]) {</span>
+                case WRITE:
+<span class="nc" id="L192">                    lockList.add(lockWrite(locks[i + 1], locks[i + 2],</span>
+                                           WRITE_WAIT_TIMEOUT));
+<span class="nc" id="L194">                    break;</span>
+                case READ:
+<span class="nc" id="L196">                    lockList.add(lockRead(locks[i + 1], locks[i + 2]));</span>
+<span class="nc" id="L197">                    break;</span>
+                default:
+<span class="nc" id="L199">                    throw new IllegalArgumentException(String.format(</span>
+                              &quot;Invalid args '%s' at position '%s', &quot; +
+<span class="nc" id="L201">                              &quot;expect 'write' or 'read'&quot;, locks[i], i));</span>
+            }
+        }
+<span class="nc" id="L204">        return lockList;</span>
+    }
+
+    public static String hugeType2Group(HugeType type) {
+<span class="nc bnc" id="L208" title="All 5 branches missed.">        switch (type) {</span>
+            case PROPERTY_KEY:
+<span class="nc" id="L210">                return PROPERTY_KEY_ADD_UPDATE;</span>
+            case VERTEX_LABEL:
+<span class="nc" id="L212">                return VERTEX_LABEL_ADD_UPDATE;</span>
+            case EDGE_LABEL:
+<span class="nc" id="L214">                return EDGE_LABEL_ADD_UPDATE;</span>
+            case INDEX_LABEL:
+<span class="nc" id="L216">                return INDEX_LABEL_ADD_UPDATE;</span>
+            default:
+<span class="nc" id="L218">                throw new AssertionError(String.format(</span>
+                          &quot;Invalid HugeType '%s'&quot;, type));
+        }
+    }
+
+    /**
+     * Locks aggregate some locks that will be locked or unlocked together,
+     * which means Locks can only be used in scenario where one Locks object
+     * won't be accessed in different multiple threads.
+     */
+    public static class Locks {
+
+        private final String graph;
+        private final List&lt;Lock&gt; lockList;
+
+<span class="nc" id="L233">        public Locks(String graph) {</span>
+<span class="nc" id="L234">            this.graph = graph;</span>
+<span class="nc" id="L235">            this.lockList = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L236">        }</span>
+
+        // NOTE: when used in multi-threads, should add `synchronized`
+        public void lockReads(String group, Id... locks) {
+<span class="nc bnc" id="L240" title="All 2 branches missed.">            for (Id lock : locks) {</span>
+<span class="nc" id="L241">                this.lockList.add(this.lockRead(group, lock));</span>
+            }
+<span class="nc" id="L243">        }</span>
+
+        // NOTE: when used in multi-threads, should add `synchronized`
+        public void lockReads(String group, Collection&lt;Id&gt; locks) {
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            for (Id lock : locks) {</span>
+<span class="nc" id="L248">                this.lockList.add(this.lockRead(group, lock));</span>
+<span class="nc" id="L249">            }</span>
+<span class="nc" id="L250">        }</span>
+
+        private Lock lockRead(String group, Id lock) {
+<span class="nc" id="L253">            return LockUtil.lockRead(join(this.graph, group), lock.asString());</span>
+        }
+
+        // NOTE: when used in multi-threads, should add `synchronized`
+        public void lockWrites(String group, Id... locks) {
+<span class="nc bnc" id="L258" title="All 2 branches missed.">            for (Id lock : locks) {</span>
+<span class="nc" id="L259">                this.lockList.add(this.lockWrite(group, lock));</span>
+            }
+<span class="nc" id="L261">        }</span>
+
+        // NOTE: when used in multi-threads, should add `synchronized`
+        public void lockWrites(String group, Collection&lt;Id&gt; locks) {
+<span class="nc bnc" id="L265" title="All 2 branches missed.">            for (Id lock : locks) {</span>
+<span class="nc" id="L266">                this.lockList.add(this.lockWrite(group, lock));</span>
+<span class="nc" id="L267">            }</span>
+<span class="nc" id="L268">        }</span>
+
+        private Lock lockWrite(String group, Id lock) {
+<span class="nc" id="L271">            return LockUtil.lockWrite(join(this.graph, group),</span>
+<span class="nc" id="L272">                                      lock.asString(),</span>
+                                      WRITE_WAIT_TIMEOUT);
+        }
+
+        public void lockKeys(String group, Collection&lt;Id&gt; locks) {
+<span class="nc" id="L277">            this.lockList.addAll(LockUtil.lockKeys(this.graph, group, locks));</span>
+<span class="nc" id="L278">        }</span>
+
+        // NOTE: when used in multi-threads, should add `synchronized`
+        public void unlock() {
+<span class="nc" id="L282">            Collections.reverse(this.lockList);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            for (Lock lock : this.lockList) {</span>
+<span class="nc" id="L284">                lock.unlock();</span>
+<span class="nc" id="L285">            }</span>
+<span class="nc" id="L286">            this.lockList.clear();</span>
+<span class="nc" id="L287">        }</span>
+    }
+
+    /**
+     * LocksTable aggregate some locks that will be locked or unlocked together,
+     * which means LocksTable can only be used in scenario where
+     * one LocksTable object won't be accessed in different multiple threads.
+     */
+    public static class LocksTable {
+
+        private Map&lt;String, Set&lt;Id&gt;&gt; table;
+        private Locks locks;
+
+<span class="nc" id="L300">        public LocksTable(String graph) {</span>
+<span class="nc" id="L301">            this.table = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L302">            this.locks = new LockUtil.Locks(graph);</span>
+<span class="nc" id="L303">        }</span>
+
+        public void lockReads(String group, Id... locks) {
+<span class="nc" id="L306">            this.lockReads(group, Arrays.asList(locks));</span>
+<span class="nc" id="L307">        }</span>
+
+        // NOTE: when used in multi-threads, should add `synchronized`
+        public void lockReads(String group, Collection&lt;Id&gt; locks) {
+<span class="nc" id="L311">            List&lt;Id&gt; newLocks = new ArrayList&lt;&gt;(locks.size());</span>
+<span class="nc" id="L312">            Set&lt;Id&gt; locked = locksOfGroup(group);</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            for (Id lock : locks) {</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">                if (!locked.contains(lock)) {</span>
+<span class="nc" id="L315">                    newLocks.add(lock);</span>
+                }
+<span class="nc" id="L317">            }</span>
+<span class="nc" id="L318">            this.locks.lockReads(group, newLocks);</span>
+<span class="nc" id="L319">            locked.addAll(newLocks);</span>
+<span class="nc" id="L320">        }</span>
+
+        public void lockKey(String group, Id key) {
+<span class="nc" id="L323">            this.lockKeys(group, ImmutableList.of(key));</span>
+<span class="nc" id="L324">        }</span>
+
+        public void lockKeys(String group, Collection&lt;Id&gt; keys) {
+<span class="nc" id="L327">            List&lt;Id&gt; newLocks = new ArrayList&lt;&gt;(keys.size());</span>
+<span class="nc" id="L328">            Set&lt;Id&gt; locked = locksOfGroup(group);</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">            for (Id lock : keys) {</span>
+<span class="nc bnc" id="L330" title="All 2 branches missed.">                if (!locked.contains(lock)) {</span>
+<span class="nc" id="L331">                    newLocks.add(lock);</span>
+                }
+<span class="nc" id="L333">            }</span>
+<span class="nc" id="L334">            this.locks.lockKeys(group, newLocks);</span>
+<span class="nc" id="L335">            locked.addAll(newLocks);</span>
+<span class="nc" id="L336">        }</span>
+
+        // NOTE: when used in multi-threads, should add `synchronized`
+        public void unlock() {
+<span class="nc" id="L340">            this.locks.unlock();</span>
+<span class="nc" id="L341">            this.table.clear();</span>
+<span class="nc" id="L342">        }</span>
+
+        private Set&lt;Id&gt; locksOfGroup(String group) {
+<span class="nc bnc" id="L345" title="All 2 branches missed.">            if (!this.table.containsKey(group)) {</span>
+<span class="nc" id="L346">                this.table.putIfAbsent(group, new HashSet&lt;&gt;());</span>
+            }
+<span class="nc" id="L348">            return this.table.get(group);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

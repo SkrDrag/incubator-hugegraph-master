@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>UserAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.auth</a> &gt; <span class="el_source">UserAPI.java</span></div><h1>UserAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.auth;
+
+import java.util.List;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.auth.HugeUser;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.StringEncoding;
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Path(&quot;graphs/{graph}/auth/users&quot;)
+@Singleton
+@Tag(name = &quot;UserAPI&quot;)
+<span class="nc" id="L58">public class UserAPI extends API {</span>
+
+<span class="nc" id="L60">    private static final Logger LOG = Log.logger(UserAPI.class);</span>
+
+    @POST
+    @Timed
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonUser jsonUser) {
+<span class="nc" id="L70">        LOG.debug(&quot;Graph [{}] create user: {}&quot;, graph, jsonUser);</span>
+<span class="nc" id="L71">        checkCreatingBody(jsonUser);</span>
+
+<span class="nc" id="L73">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L74">        HugeUser user = jsonUser.build();</span>
+<span class="nc" id="L75">        user.id(manager.authManager().createUser(user));</span>
+<span class="nc" id="L76">        return manager.serializer(g).writeAuthElement(user);</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;id&quot;) String id,
+                         JsonUser jsonUser) {
+<span class="nc" id="L88">        LOG.debug(&quot;Graph [{}] update user: {}&quot;, graph, jsonUser);</span>
+<span class="nc" id="L89">        checkUpdatingBody(jsonUser);</span>
+
+<span class="nc" id="L91">        HugeGraph g = graph(manager, graph);</span>
+        HugeUser user;
+        try {
+<span class="nc" id="L94">            user = manager.authManager().getUser(UserAPI.parseId(id));</span>
+<span class="nc" id="L95">        } catch (NotFoundException e) {</span>
+<span class="nc" id="L96">            throw new IllegalArgumentException(&quot;Invalid user id: &quot; + id);</span>
+<span class="nc" id="L97">        }</span>
+<span class="nc" id="L98">        user = jsonUser.build(user);</span>
+<span class="nc" id="L99">        manager.authManager().updateUser(user);</span>
+<span class="nc" id="L100">        return manager.serializer(g).writeAuthElement(user);</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;limit&quot;) @DefaultValue(&quot;100&quot;) long limit) {
+<span class="nc" id="L109">        LOG.debug(&quot;Graph [{}] list users&quot;, graph);</span>
+
+<span class="nc" id="L111">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L112">        List&lt;HugeUser&gt; users = manager.authManager().listAllUsers(limit);</span>
+<span class="nc" id="L113">        return manager.serializer(g).writeAuthElements(&quot;users&quot;, users);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L123">        LOG.debug(&quot;Graph [{}] get user: {}&quot;, graph, id);</span>
+
+<span class="nc" id="L125">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L126">        HugeUser user = manager.authManager().getUser(IdGenerator.of(id));</span>
+<span class="nc" id="L127">        return manager.serializer(g).writeAuthElement(user);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{id}/role&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String role(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L137">        LOG.debug(&quot;Graph [{}] get user role: {}&quot;, graph, id);</span>
+
+        @SuppressWarnings(&quot;unused&quot;) // just check if the graph exists
+<span class="nc" id="L140">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L141">        HugeUser user = manager.authManager().getUser(IdGenerator.of(id));</span>
+<span class="nc" id="L142">        return manager.authManager().rolePermission(user).toJson();</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    public void delete(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L152">        LOG.debug(&quot;Graph [{}] delete user: {}&quot;, graph, id);</span>
+
+        @SuppressWarnings(&quot;unused&quot;) // just check if the graph exists
+<span class="nc" id="L155">        HugeGraph g = graph(manager, graph);</span>
+        try {
+<span class="nc" id="L157">            manager.authManager().deleteUser(IdGenerator.of(id));</span>
+<span class="nc" id="L158">        } catch (NotFoundException e) {</span>
+<span class="nc" id="L159">            throw new IllegalArgumentException(&quot;Invalid user id: &quot; + id);</span>
+<span class="nc" id="L160">        }</span>
+<span class="nc" id="L161">    }</span>
+
+    protected static Id parseId(String id) {
+<span class="nc" id="L164">        return IdGenerator.of(id);</span>
+    }
+
+    @JsonIgnoreProperties(value = {&quot;id&quot;, &quot;user_creator&quot;,
+                                   &quot;user_create&quot;, &quot;user_update&quot;})
+    private static class JsonUser implements Checkable {
+
+        @JsonProperty(&quot;user_name&quot;)
+        private String name;
+        @JsonProperty(&quot;user_password&quot;)
+        private String password;
+        @JsonProperty(&quot;user_phone&quot;)
+        private String phone;
+        @JsonProperty(&quot;user_email&quot;)
+        private String email;
+        @JsonProperty(&quot;user_avatar&quot;)
+        private String avatar;
+        @JsonProperty(&quot;user_description&quot;)
+        private String description;
+
+        public HugeUser build(HugeUser user) {
+<span class="nc bnc" id="L185" title="All 4 branches missed.">            E.checkArgument(this.name == null || user.name().equals(this.name),</span>
+                            &quot;The name of user can't be updated&quot;);
+<span class="nc bnc" id="L187" title="All 2 branches missed.">            if (this.password != null) {</span>
+<span class="nc" id="L188">                user.password(StringEncoding.hashPassword(this.password));</span>
+            }
+<span class="nc bnc" id="L190" title="All 2 branches missed.">            if (this.phone != null) {</span>
+<span class="nc" id="L191">                user.phone(this.phone);</span>
+            }
+<span class="nc bnc" id="L193" title="All 2 branches missed.">            if (this.email != null) {</span>
+<span class="nc" id="L194">                user.email(this.email);</span>
+            }
+<span class="nc bnc" id="L196" title="All 2 branches missed.">            if (this.avatar != null) {</span>
+<span class="nc" id="L197">                user.avatar(this.avatar);</span>
+            }
+<span class="nc bnc" id="L199" title="All 2 branches missed.">            if (this.description != null) {</span>
+<span class="nc" id="L200">                user.description(this.description);</span>
+            }
+<span class="nc" id="L202">            return user;</span>
+        }
+
+        public HugeUser build() {
+<span class="nc" id="L206">            HugeUser user = new HugeUser(this.name);</span>
+<span class="nc" id="L207">            user.password(StringEncoding.hashPassword(this.password));</span>
+<span class="nc" id="L208">            user.phone(this.phone);</span>
+<span class="nc" id="L209">            user.email(this.email);</span>
+<span class="nc" id="L210">            user.avatar(this.avatar);</span>
+<span class="nc" id="L211">            user.description(this.description);</span>
+<span class="nc" id="L212">            return user;</span>
+        }
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc bnc" id="L217" title="All 2 branches missed.">            E.checkArgument(!StringUtils.isEmpty(this.name),</span>
+                            &quot;The name of user can't be null&quot;);
+<span class="nc bnc" id="L219" title="All 2 branches missed.">            E.checkArgument(!StringUtils.isEmpty(this.password),</span>
+                            &quot;The password of user can't be null&quot;);
+<span class="nc" id="L221">        }</span>
+
+        @Override
+        public void checkUpdate() {
+<span class="nc bnc" id="L225" title="All 8 branches missed.">            E.checkArgument(!StringUtils.isEmpty(this.password) ||</span>
+                            this.phone != null ||
+                            this.email != null ||
+                            this.avatar != null,
+                            &quot;Expect one of user password/phone/email/avatar]&quot;);
+<span class="nc" id="L230">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

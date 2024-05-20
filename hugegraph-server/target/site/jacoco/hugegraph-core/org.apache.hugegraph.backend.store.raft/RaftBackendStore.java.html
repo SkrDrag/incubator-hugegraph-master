@@ -1,0 +1,295 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RaftBackendStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.raft</a> &gt; <span class="el_source">RaftBackendStore.java</span></div><h1>RaftBackendStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.raft;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.function.Function;
+
+import org.slf4j.Logger;
+
+import com.alipay.sofa.jraft.Status;
+import com.alipay.sofa.jraft.closure.ReadIndexClosure;
+import com.alipay.sofa.jraft.util.BytesUtil;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.backend.store.SystemSchemaStore;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.StoreAction;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.StoreType;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+
+public class RaftBackendStore implements BackendStore {
+
+<span class="nc" id="L47">    private static final Logger LOG = Log.logger(RaftBackendStore.class);</span>
+
+    private final BackendStore store;
+    private final RaftContext context;
+    private final ThreadLocal&lt;MutationBatch&gt; mutationBatch;
+    private final boolean isSafeRead;
+
+<span class="nc" id="L54">    public RaftBackendStore(BackendStore store, RaftContext context) {</span>
+<span class="nc" id="L55">        this.store = store;</span>
+<span class="nc" id="L56">        this.context = context;</span>
+<span class="nc" id="L57">        this.mutationBatch = new ThreadLocal&lt;&gt;();</span>
+<span class="nc" id="L58">        this.isSafeRead = this.context.safeRead();</span>
+<span class="nc" id="L59">    }</span>
+
+    public BackendStore originStore() {
+<span class="nc" id="L62">        return this.store;</span>
+    }
+
+    private RaftNode node() {
+<span class="nc" id="L66">        RaftNode node = this.context.node();</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">        E.checkState(node != null, &quot;The raft node should be initialized first&quot;);</span>
+<span class="nc" id="L68">        return node;</span>
+    }
+
+    @Override
+    public String store() {
+<span class="nc" id="L73">        return this.store.store();</span>
+    }
+
+    @Override
+    public String storedVersion() {
+<span class="nc" id="L78">        return this.store.storedVersion();</span>
+    }
+
+    @Override
+    public String database() {
+<span class="nc" id="L83">        return this.store.database();</span>
+    }
+
+    @Override
+    public BackendStoreProvider provider() {
+<span class="nc" id="L88">        return this.store.provider();</span>
+    }
+
+    @Override
+    public SystemSchemaStore systemSchemaStore() {
+<span class="nc" id="L93">        return this.store.systemSchemaStore();</span>
+    }
+
+    @Override
+    public boolean isSchemaStore() {
+<span class="nc" id="L98">        return this.store.isSchemaStore();</span>
+    }
+
+    @Override
+    public synchronized void open(HugeConfig config) {
+<span class="nc" id="L103">        this.store.open(config);</span>
+<span class="nc" id="L104">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L108">        this.store.close();</span>
+<span class="nc" id="L109">    }</span>
+
+    @Override
+    public boolean opened() {
+<span class="nc" id="L113">        return this.store.opened();</span>
+    }
+
+    @Override
+    public void init() {
+        // this.submitAndWait(StoreCommand.INIT);
+<span class="nc" id="L119">        this.store.init();</span>
+<span class="nc" id="L120">    }</span>
+
+    @Override
+    public void clear(boolean clearSpace) {
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        byte value = clearSpace ? (byte) 1 : (byte) 0;</span>
+<span class="nc" id="L125">        byte[] bytes = StoreCommand.wrap(value);</span>
+<span class="nc" id="L126">        this.submitAndWait(StoreAction.CLEAR, bytes);</span>
+<span class="nc" id="L127">    }</span>
+
+    @Override
+    public boolean initialized() {
+<span class="nc" id="L131">        return this.store.initialized();</span>
+    }
+
+    @Override
+    public void truncate() {
+<span class="nc" id="L136">        this.submitAndWait(StoreAction.TRUNCATE, null);</span>
+<span class="nc" id="L137">    }</span>
+
+    @Override
+    public void mutate(BackendMutation mutation) {
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        if (mutation.isEmpty()) {</span>
+<span class="nc" id="L142">            return;</span>
+        }
+        // Just add to local buffer
+<span class="nc" id="L145">        this.getOrNewBatch().add(mutation);</span>
+<span class="nc" id="L146">    }</span>
+
+    @Override
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public Iterator&lt;BackendEntry&gt; query(Query query) {
+<span class="nc" id="L151">        return (Iterator&lt;BackendEntry&gt;)</span>
+<span class="nc" id="L152">               this.queryByRaft(query, o -&gt; this.store.query(query));</span>
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+<span class="nc" id="L157">        return (Number)</span>
+<span class="nc" id="L158">               this.queryByRaft(query, o -&gt; this.store.queryNumber(query));</span>
+    }
+
+    @Override
+    public void beginTx() {
+        // Don't write raft log, commitTx(in StateMachine) will call beginTx
+<span class="nc" id="L164">    }</span>
+
+    @Override
+    public void commitTx() {
+<span class="nc" id="L168">        MutationBatch batch = this.getOrNewBatch();</span>
+        try {
+<span class="nc" id="L170">            byte[] bytes = StoreSerializer.writeMutations(batch.mutations);</span>
+<span class="nc" id="L171">            this.submitAndWait(StoreAction.COMMIT_TX, bytes);</span>
+        } finally {
+<span class="nc" id="L173">            batch.clear();</span>
+        }
+<span class="nc" id="L175">    }</span>
+
+    @Override
+    public void rollbackTx() {
+<span class="nc" id="L179">        this.submitAndWait(StoreAction.ROLLBACK_TX, null);</span>
+<span class="nc" id="L180">    }</span>
+
+    @Override
+    public &lt;R&gt; R metadata(HugeType type, String meta, Object[] args) {
+<span class="nc" id="L184">        return this.store.metadata(type, meta, args);</span>
+    }
+
+    @Override
+    public BackendFeatures features() {
+<span class="nc" id="L189">        return this.store.features();</span>
+    }
+
+    @Override
+    public void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L194">        IncrCounter incrCounter = new IncrCounter(type, increment);</span>
+<span class="nc" id="L195">        byte[] bytes = StoreSerializer.writeIncrCounter(incrCounter);</span>
+<span class="nc" id="L196">        this.submitAndWait(StoreAction.INCR_COUNTER, bytes);</span>
+<span class="nc" id="L197">    }</span>
+
+    @Override
+    public long getCounter(HugeType type) {
+<span class="nc" id="L201">        Object counter = this.queryByRaft(type, true, o -&gt; this.store.getCounter(type));</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        assert counter instanceof Long;</span>
+<span class="nc" id="L203">        return (Long) counter;</span>
+    }
+
+    private Object submitAndWait(StoreAction action, byte[] data) {
+<span class="nc" id="L207">        StoreType type = this.context.storeType(this.store());</span>
+<span class="nc" id="L208">        return this.submitAndWait(new StoreCommand(type, action, data));</span>
+    }
+
+    private Object submitAndWait(StoreCommand command) {
+<span class="nc" id="L212">        RaftStoreClosure closure = new RaftStoreClosure(command);</span>
+<span class="nc" id="L213">        return this.node().submitAndWait(command, closure);</span>
+    }
+
+    private Object queryByRaft(Object query, Function&lt;Object, Object&gt; func) {
+<span class="nc" id="L217">        return this.queryByRaft(query, this.isSafeRead, func);</span>
+    }
+
+    private Object queryByRaft(Object query, boolean safeRead,
+                               Function&lt;Object, Object&gt; func) {
+<span class="nc bnc" id="L222" title="All 2 branches missed.">        if (!safeRead) {</span>
+<span class="nc" id="L223">            return func.apply(query);</span>
+        }
+
+<span class="nc" id="L226">        RaftClosure&lt;Object&gt; future = new RaftClosure&lt;&gt;();</span>
+<span class="nc" id="L227">        ReadIndexClosure readIndexClosure = new ReadIndexClosure() {</span>
+            @Override
+            public void run(Status status, long index, byte[] reqCtx) {
+<span class="nc bnc" id="L230" title="All 2 branches missed.">                if (status.isOk()) {</span>
+<span class="nc" id="L231">                    future.complete(status, () -&gt; func.apply(query));</span>
+                } else {
+<span class="nc" id="L233">                    future.failure(status, new BackendException(</span>
+                                           &quot;Failed to do raft read-index: %s&quot;,
+                                           status));
+                }
+<span class="nc" id="L237">            }</span>
+        };
+<span class="nc" id="L239">        this.node().readIndex(BytesUtil.EMPTY_BYTES, readIndexClosure);</span>
+        try {
+<span class="nc" id="L241">            return future.waitFinished();</span>
+<span class="nc" id="L242">        } catch (Throwable e) {</span>
+<span class="nc" id="L243">            LOG.warn(&quot;Failed to execute query '{}': {}&quot;,</span>
+<span class="nc" id="L244">                     query, future.status(), e);</span>
+<span class="nc" id="L245">            throw new BackendException(&quot;Failed to execute query: %s&quot;, e, query);</span>
+        }
+    }
+
+    private MutationBatch getOrNewBatch() {
+<span class="nc" id="L250">        MutationBatch batch = this.mutationBatch.get();</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        if (batch == null) {</span>
+<span class="nc" id="L252">            batch = new MutationBatch();</span>
+<span class="nc" id="L253">            this.mutationBatch.set(batch);</span>
+        }
+<span class="nc" id="L255">        return batch;</span>
+    }
+
+    private static class MutationBatch {
+
+        // This object will stay in memory for a long time
+        private final List&lt;BackendMutation&gt; mutations;
+
+<span class="nc" id="L263">        public MutationBatch() {</span>
+<span class="nc" id="L264">            this.mutations = new ArrayList&lt;&gt;((int) Query.COMMIT_BATCH);</span>
+<span class="nc" id="L265">        }</span>
+
+        public void add(BackendMutation mutation) {
+<span class="nc" id="L268">            this.mutations.add(mutation);</span>
+<span class="nc" id="L269">        }</span>
+
+        public void clear() {
+<span class="nc" id="L272">            this.mutations.clear();</span>
+<span class="nc" id="L273">        }</span>
+    }
+
+    protected static final class IncrCounter {
+
+        private HugeType type;
+        private long increment;
+
+<span class="nc" id="L281">        public IncrCounter(HugeType type, long increment) {</span>
+<span class="nc" id="L282">            this.type = type;</span>
+<span class="nc" id="L283">            this.increment = increment;</span>
+<span class="nc" id="L284">        }</span>
+
+        public HugeType type() {
+<span class="nc" id="L287">            return this.type;</span>
+        }
+
+        public long increment() {
+<span class="nc" id="L291">            return this.increment;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

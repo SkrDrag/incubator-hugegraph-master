@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeVertexStepByBatch.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.optimize</a> &gt; <span class="el_source">HugeVertexStepByBatch.java</span></div><h1>HugeVertexStepByBatch.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.optimize;
+
+import java.util.Iterator;
+import java.util.List;
+
+import org.apache.hugegraph.backend.query.BatchConditionQuery;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.tinkerpop.gremlin.process.traversal.Traverser;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.VertexStep;
+import org.apache.tinkerpop.gremlin.process.traversal.util.FastNoSuchElementException;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Element;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+
+import org.apache.hugegraph.iterator.BatchMapperIterator;
+
+<span class="nc" id="L38">public class HugeVertexStepByBatch&lt;E extends Element&gt;</span>
+       extends HugeVertexStep&lt;E&gt; {
+
+    private static final long serialVersionUID = -3609787815053052222L;
+
+    private BatchMapperIterator&lt;Traverser.Admin&lt;Vertex&gt;, E&gt; batchIterator;
+    private Traverser.Admin&lt;Vertex&gt; head;
+    private Iterator&lt;E&gt; iterator;
+
+    public HugeVertexStepByBatch(final VertexStep&lt;E&gt; originalVertexStep) {
+<span class="nc" id="L48">        super(originalVertexStep);</span>
+<span class="nc" id="L49">        this.batchIterator = null;</span>
+<span class="nc" id="L50">        this.head = null;</span>
+<span class="nc" id="L51">        this.iterator = null;</span>
+<span class="nc" id="L52">    }</span>
+
+    @Override
+    protected Traverser.Admin&lt;E&gt; processNextStart() {
+        /* Override super.processNextStart() */
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        if (this.batchIterator == null) {</span>
+<span class="nc" id="L58">            int batchSize = (int) Query.QUERY_BATCH;</span>
+<span class="nc" id="L59">            this.batchIterator = new BatchMapperIterator&lt;&gt;(</span>
+                                 batchSize, this.starts, this::flatMap);
+        }
+
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (this.batchIterator.hasNext()) {</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">            assert this.head != null;</span>
+<span class="nc" id="L65">            E item = this.batchIterator.next();</span>
+            // TODO: find the parent node accurately instead the head
+<span class="nc" id="L67">            return this.head.split(item, this);</span>
+        }
+
+<span class="nc" id="L70">        throw FastNoSuchElementException.instance();</span>
+    }
+
+    @Override
+    public void reset() {
+<span class="nc" id="L75">        super.reset();</span>
+<span class="nc" id="L76">        this.closeIterator();</span>
+<span class="nc" id="L77">        this.batchIterator = null;</span>
+<span class="nc" id="L78">        this.head = null;</span>
+<span class="nc" id="L79">    }</span>
+
+    @Override
+    public Iterator&lt;?&gt; lastTimeResults() {
+        /*
+         * NOTE: fetch page from this iterator， can only get page info of
+         * the lowest level, may lost info of upper levels.
+         */
+<span class="nc" id="L87">        return this.iterator;</span>
+    }
+
+    @Override
+    protected void closeIterator() {
+<span class="nc" id="L92">        CloseableIterator.closeIterator(this.batchIterator);</span>
+<span class="nc" id="L93">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private Iterator&lt;E&gt; flatMap(List&lt;Traverser.Admin&lt;Vertex&gt;&gt; traversers) {
+<span class="nc bnc" id="L97" title="All 4 branches missed.">        if (this.head == null &amp;&amp; traversers.size() &gt; 0) {</span>
+<span class="nc" id="L98">            this.head = traversers.get(0);</span>
+        }
+<span class="nc" id="L100">        boolean queryVertex = this.returnsVertex();</span>
+<span class="nc" id="L101">        boolean queryEdge = this.returnsEdge();</span>
+<span class="nc bnc" id="L102" title="All 4 branches missed.">        assert queryVertex || queryEdge;</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        if (queryVertex) {</span>
+<span class="nc" id="L104">            this.iterator = (Iterator&lt;E&gt;) this.vertices(traversers);</span>
+        } else {
+<span class="nc bnc" id="L106" title="All 2 branches missed.">            assert queryEdge;</span>
+<span class="nc" id="L107">            this.iterator = (Iterator&lt;E&gt;) this.edges(traversers);</span>
+        }
+<span class="nc" id="L109">        return this.iterator;</span>
+    }
+
+    private Iterator&lt;Vertex&gt; vertices(
+                             List&lt;Traverser.Admin&lt;Vertex&gt;&gt; traversers) {
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        assert traversers.size() &gt; 0;</span>
+
+<span class="nc" id="L116">        Iterator&lt;Edge&gt; edges = this.edges(traversers);</span>
+<span class="nc" id="L117">        return this.queryAdjacentVertices(edges);</span>
+    }
+
+    private Iterator&lt;Edge&gt; edges(List&lt;Traverser.Admin&lt;Vertex&gt;&gt; traversers) {
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        assert traversers.size() &gt; 0;</span>
+
+<span class="nc" id="L123">        BatchConditionQuery batchQuery = new BatchConditionQuery(</span>
+<span class="nc" id="L124">                                         HugeType.EDGE, traversers.size());</span>
+
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        for (Traverser.Admin&lt;Vertex&gt; traverser : traversers) {</span>
+<span class="nc" id="L127">            ConditionQuery query = this.constructEdgesQuery(traverser);</span>
+            /*
+             * Merge each query into batch query through IN condition
+             * NOTE: duplicated results may be removed by backend store
+             */
+<span class="nc" id="L132">            batchQuery.mergeToIN(query, HugeKeys.OWNER_VERTEX);</span>
+<span class="nc" id="L133">        }</span>
+
+<span class="nc" id="L135">        this.injectQueryInfo(batchQuery);</span>
+<span class="nc" id="L136">        return this.queryEdges(batchQuery);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,701 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RocksDBOptions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-rocksdb</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.rocksdb</a> &gt; <span class="el_source">RocksDBOptions.java</span></div><h1>RocksDBOptions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.rocksdb;
+
+import static org.apache.hugegraph.config.OptionChecker.allowValues;
+import static org.apache.hugegraph.config.OptionChecker.disallowEmpty;
+import static org.apache.hugegraph.config.OptionChecker.inValues;
+import static org.apache.hugegraph.config.OptionChecker.rangeDouble;
+import static org.apache.hugegraph.config.OptionChecker.rangeInt;
+
+import org.apache.hugegraph.config.ConfigConvOption;
+import org.apache.hugegraph.config.ConfigListConvOption;
+import org.apache.hugegraph.config.ConfigListOption;
+import org.apache.hugegraph.config.ConfigOption;
+import org.apache.hugegraph.config.OptionHolder;
+import org.apache.hugegraph.util.Bytes;
+import org.rocksdb.CompactionStyle;
+import org.rocksdb.CompressionType;
+import org.rocksdb.DataBlockIndexType;
+import org.rocksdb.IndexType;
+
+import com.google.common.collect.ImmutableList;
+
+public class RocksDBOptions extends OptionHolder {
+
+    private RocksDBOptions() {
+        super();
+    }
+
+    private static volatile RocksDBOptions instance;
+
+    public static synchronized RocksDBOptions instance() {
+<span class="nc bnc" id="L48" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L49">            instance = new RocksDBOptions();</span>
+<span class="nc" id="L50">            instance.registerOptions();</span>
+        }
+<span class="nc" id="L52">        return instance;</span>
+    }
+
+    // TODO: the entire align style is wrong, change it to 4 space later
+<span class="nc" id="L56">    public static final ConfigOption&lt;String&gt; DATA_PATH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.data_path&quot;,
+                    &quot;The path for storing data of RocksDB.&quot;,
+<span class="nc" id="L60">                    disallowEmpty(),</span>
+                    &quot;rocksdb-data&quot;
+            );
+
+<span class="nc" id="L64">    public static final ConfigListOption&lt;String&gt; DATA_DISKS =</span>
+            new ConfigListOption&lt;&gt;(
+                    &quot;rocksdb.data_disks&quot;,
+                    false,
+                    &quot;The optimized disks for storing data of RocksDB. &quot; +
+                    &quot;The format of each element: `STORE/TABLE: /path/disk`.&quot; +
+                    &quot;Allowed keys are [g/vertex, g/edge_out, g/edge_in, &quot; +
+                    &quot;g/vertex_label_index, g/edge_label_index, &quot; +
+                    &quot;g/range_int_index, g/range_float_index, &quot; +
+                    &quot;g/range_long_index, g/range_double_index, &quot; +
+                    &quot;g/secondary_index, g/search_index, g/shard_index, &quot; +
+                    &quot;g/unique_index, g/olap]&quot;,
+                    null,
+                    String.class,
+<span class="nc" id="L78">                    ImmutableList.of()</span>
+            );
+
+<span class="nc" id="L81">    public static final ConfigOption&lt;String&gt; WAL_PATH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.wal_path&quot;,
+                    &quot;The path for storing WAL of RocksDB.&quot;,
+<span class="nc" id="L85">                    disallowEmpty(),</span>
+                    &quot;rocksdb-data&quot;
+            );
+
+<span class="nc" id="L89">    public static final ConfigOption&lt;String&gt; SST_PATH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.sst_path&quot;,
+                    &quot;The path for ingesting SST file into RocksDB.&quot;,
+                    null,
+                    &quot;&quot;
+            );
+
+    // TODO: support ConfigOption&lt;InfoLogLevel&gt;
+<span class="nc" id="L98">    public static final ConfigOption&lt;String&gt; LOG_LEVEL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.log_level&quot;,
+                    &quot;The info log level of RocksDB.&quot;,
+<span class="nc" id="L102">                    allowValues(&quot;DEBUG&quot;, &quot;INFO&quot;, &quot;WARN&quot;, &quot;ERROR&quot;, &quot;FATAL&quot;, &quot;HEADER&quot;),</span>
+                    &quot;INFO&quot;
+            );
+
+<span class="nc" id="L106">    public static final ConfigOption&lt;Integer&gt; NUM_LEVELS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.num_levels&quot;,
+                    &quot;Set the number of levels for this database.&quot;,
+<span class="nc" id="L110">                    rangeInt(1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L111">                    7</span>
+            );
+
+<span class="nc" id="L114">    public static final ConfigConvOption&lt;String, CompactionStyle&gt; COMPACTION_STYLE =</span>
+            new ConfigConvOption&lt;&gt;(
+                    &quot;rocksdb.compaction_style&quot;,
+                    &quot;Set compaction style for RocksDB: LEVEL/UNIVERSAL/FIFO.&quot;,
+<span class="nc" id="L118">                    allowValues(&quot;LEVEL&quot;, &quot;UNIVERSAL&quot;, &quot;FIFO&quot;),</span>
+                    CompactionStyle::valueOf,
+                    &quot;LEVEL&quot;
+            );
+
+<span class="nc" id="L123">    public static final ConfigOption&lt;Boolean&gt; OPTIMIZE_MODE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.optimize_mode&quot;,
+                    &quot;Optimize for heavy workloads and big datasets.&quot;,
+<span class="nc" id="L127">                    disallowEmpty(),</span>
+<span class="nc" id="L128">                    true</span>
+            );
+
+<span class="nc" id="L131">    public static final ConfigOption&lt;Boolean&gt; BULKLOAD_MODE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.bulkload_mode&quot;,
+                    &quot;Switch to the mode to bulk load data into RocksDB.&quot;,
+<span class="nc" id="L135">                    disallowEmpty(),</span>
+<span class="nc" id="L136">                    false</span>
+            );
+
+<span class="nc" id="L139">    public static final ConfigListConvOption&lt;String, CompressionType&gt; LEVELS_COMPRESSIONS =</span>
+            new ConfigListConvOption&lt;&gt;(
+                    &quot;rocksdb.compression_per_level&quot;,
+                    &quot;The compression algorithms for different levels of RocksDB, &quot; +
+                    &quot;allowed values are none/snappy/z/bzip2/lz4/lz4hc/xpress/zstd.&quot;,
+<span class="nc" id="L144">                    inValues(&quot;none&quot;, &quot;snappy&quot;, &quot;z&quot;, &quot;bzip2&quot;, &quot;lz4&quot;, &quot;lz4hc&quot;, &quot;xpress&quot;, &quot;zstd&quot;),</span>
+                    CompressionType::getCompressionType,
+                    &quot;none&quot;, &quot;none&quot;, &quot;snappy&quot;, &quot;snappy&quot;, &quot;snappy&quot;, &quot;snappy&quot;, &quot;snappy&quot;
+            );
+
+<span class="nc" id="L149">    public static final ConfigConvOption&lt;String, CompressionType&gt; BOTTOMMOST_COMPRESSION =</span>
+            new ConfigConvOption&lt;&gt;(
+                    &quot;rocksdb.bottommost_compression&quot;,
+                    &quot;The compression algorithm for the bottommost level of RocksDB, &quot; +
+                    &quot;allowed values are none/snappy/z/bzip2/lz4/lz4hc/xpress/zstd.&quot;,
+<span class="nc" id="L154">                    allowValues(&quot;none&quot;, &quot;snappy&quot;, &quot;z&quot;, &quot;bzip2&quot;, &quot;lz4&quot;, &quot;lz4hc&quot;, &quot;xpress&quot;, &quot;zstd&quot;),</span>
+                    CompressionType::getCompressionType,
+                    &quot;none&quot;
+            );
+
+<span class="nc" id="L159">    public static final ConfigConvOption&lt;String, CompressionType&gt; COMPRESSION =</span>
+            new ConfigConvOption&lt;&gt;(
+                    &quot;rocksdb.compression&quot;,
+                    &quot;The compression algorithm for compressing blocks of RocksDB, &quot; +
+                    &quot;allowed values are none/snappy/z/bzip2/lz4/lz4hc/xpress/zstd.&quot;,
+<span class="nc" id="L164">                    allowValues(&quot;none&quot;, &quot;snappy&quot;, &quot;z&quot;, &quot;bzip2&quot;, &quot;lz4&quot;, &quot;lz4hc&quot;, &quot;xpress&quot;, &quot;zstd&quot;),</span>
+                    CompressionType::getCompressionType,
+                    &quot;snappy&quot;
+            );
+
+<span class="nc" id="L169">    public static final ConfigOption&lt;Integer&gt; MAX_BG_JOBS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_background_jobs&quot;,
+                    &quot;Maximum number of concurrent background jobs, &quot; +
+                    &quot;including flushes and compactions.&quot;,
+<span class="nc" id="L174">                    rangeInt(1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L175">                    8</span>
+            );
+
+<span class="nc" id="L178">    public static final ConfigOption&lt;Integer&gt; MAX_SUB_COMPACTIONS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_subcompactions&quot;,
+                    &quot;The value represents the maximum number of threads per compaction job.&quot;,
+<span class="nc" id="L182">                    rangeInt(1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L183">                    4</span>
+            );
+
+<span class="nc" id="L186">    public static final ConfigOption&lt;Long&gt; DELAYED_WRITE_RATE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.delayed_write_rate&quot;,
+                    &quot;The rate limit in bytes/s of user write requests &quot; +
+                    &quot;when need to slow down if the compaction gets behind.&quot;,
+<span class="nc" id="L191">                    rangeInt(1L, Long.MAX_VALUE),</span>
+<span class="nc" id="L192">                    16L * Bytes.MB</span>
+            );
+
+<span class="nc" id="L195">    public static final ConfigOption&lt;Integer&gt; MAX_OPEN_FILES =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_open_files&quot;,
+                    &quot;The maximum number of open files that can be cached by RocksDB, &quot; +
+                    &quot;-1 means no limit.&quot;,
+<span class="nc" id="L200">                    rangeInt(-1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L201">                    -1</span>
+            );
+
+<span class="nc" id="L204">    public static final ConfigOption&lt;Long&gt; MAX_MANIFEST_FILE_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_manifest_file_size&quot;,
+                    &quot;The max size of manifest file in bytes.&quot;,
+<span class="nc" id="L208">                    rangeInt(1L, Long.MAX_VALUE),</span>
+<span class="nc" id="L209">                    100L * Bytes.MB</span>
+            );
+
+<span class="nc" id="L212">    public static final ConfigOption&lt;Boolean&gt; SKIP_STATS_UPDATE_ON_DB_OPEN =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.skip_stats_update_on_db_open&quot;,
+                    &quot;Whether to skip statistics update when opening the database, &quot; +
+                    &quot;setting this flag true allows us to not update statistics.&quot;,
+<span class="nc" id="L217">                    disallowEmpty(),</span>
+<span class="nc" id="L218">                    false</span>
+            );
+
+<span class="nc" id="L221">    public static final ConfigOption&lt;Boolean&gt; SKIP_CHECK_SIZE_ON_DB_OPEN =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.skip_check_sst_size_on_db_open&quot;,
+                    &quot;Whether to skip checking sizes of all sst files when &quot; +
+                    &quot;opening the database.&quot;,
+<span class="nc" id="L226">                    disallowEmpty(),</span>
+<span class="nc" id="L227">                    false</span>
+            );
+
+<span class="nc" id="L230">    public static final ConfigOption&lt;Integer&gt; MAX_FILE_OPENING_THREADS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_file_opening_threads&quot;,
+                    &quot;The max number of threads used to open files.&quot;,
+<span class="nc" id="L234">                    rangeInt(1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L235">                    16</span>
+            );
+
+<span class="nc" id="L238">    public static final ConfigOption&lt;Long&gt; MAX_TOTAL_WAL_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_total_wal_size&quot;,
+                    &quot;Total size of WAL files in bytes. Once WALs exceed this size, &quot; +
+                    &quot;we will start forcing the flush of column families related, &quot; +
+                    &quot;0 means no limit.&quot;,
+<span class="nc" id="L244">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L245">                    0L</span>
+            );
+
+<span class="nc" id="L248">    public static final ConfigOption&lt;Long&gt; BYTES_PER_SYNC =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.bytes_per_sync&quot;,
+                    &quot;Allows OS to incrementally sync SST files to disk while &quot; +
+                    &quot;they are being written, asynchronously in the background. &quot; +
+                    &quot;Issue one request for every bytes_per_sync written. &quot; +
+                    &quot;0 turns it off.&quot;,
+<span class="nc" id="L255">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L256">                    0L</span>
+            );
+
+<span class="nc" id="L259">    public static final ConfigOption&lt;Long&gt; WAL_BYTES_PER_SYNC =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.wal_bytes_per_sync&quot;,
+                    &quot;Allows OS to incrementally sync WAL files to disk while &quot; +
+                    &quot;they are being written, asynchronously in the background. &quot; +
+                    &quot;Issue one request for every bytes_per_sync written. &quot; +
+                    &quot;0 turns it off.&quot;,
+<span class="nc" id="L266">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L267">                    0L</span>
+            );
+
+<span class="nc" id="L270">    public static final ConfigOption&lt;Boolean&gt; STRICT_BYTES_PER_SYNC =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.strict_bytes_per_sync&quot;,
+                    &quot;When true, guarantees SST/WAL files have at most &quot; +
+                    &quot;bytes_per_sync/wal_bytes_per_sync bytes submitted for &quot; +
+                    &quot;writeback at any given time. This can be used to handle &quot; +
+                    &quot;cases where processing speed exceeds I/O speed.&quot;,
+<span class="nc" id="L277">                    disallowEmpty(),</span>
+<span class="nc" id="L278">                    false</span>
+            );
+
+<span class="nc" id="L281">    public static final ConfigOption&lt;Long&gt; DB_MEMTABLE_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.db_write_buffer_size&quot;,
+                    &quot;Total size of write buffers in bytes across all column families, &quot; +
+                    &quot;0 means no limit.&quot;,
+<span class="nc" id="L286">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L287">                    0L</span>
+            );
+
+<span class="nc" id="L290">    public static final ConfigOption&lt;Long&gt; LOG_READAHEAD_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.log_readahead_size&quot;,
+                    &quot;The number of bytes to prefetch when reading the log. &quot; +
+                    &quot;0 means the prefetching is disabled.&quot;,
+<span class="nc" id="L295">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L296">                    0L</span>
+            );
+
+<span class="nc" id="L299">    public static final ConfigOption&lt;Long&gt; COMPACTION_READAHEAD_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.compaction_readahead_size&quot;,
+                    &quot;The number of bytes to perform bigger reads when doing &quot; +
+                    &quot;compaction. If running RocksDB on spinning disks, &quot; +
+                    &quot;you should set this to at least 2MB. &quot; +
+                    &quot;0 means the prefetching is disabled.&quot;,
+<span class="nc" id="L306">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L307">                    0L</span>
+            );
+
+<span class="nc" id="L310">    public static final ConfigOption&lt;Long&gt; ROW_CACHE_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.row_cache_capacity&quot;,
+                    &quot;The capacity in bytes of global cache for table-level rows. &quot; +
+                    &quot;0 means the row_cache is disabled.&quot;,
+<span class="nc" id="L315">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L316">                    0L</span>
+            );
+
+<span class="nc" id="L319">    public static final ConfigOption&lt;Long&gt; DELETE_OBSOLETE_FILE_PERIOD =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.delete_obsolete_files_period&quot;,
+                    &quot;The periodicity in seconds when obsolete files get deleted, &quot; +
+                    &quot;0 means always do full purge.&quot;,
+<span class="nc" id="L324">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L325">                    6L * 60 * 60</span>
+            );
+
+<span class="nc" id="L328">    public static final ConfigOption&lt;Long&gt; MEMTABLE_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.write_buffer_size&quot;,
+                    &quot;Amount of data in bytes to build up in memory.&quot;,
+<span class="nc" id="L332">                    rangeInt(Bytes.MB, Long.MAX_VALUE),</span>
+<span class="nc" id="L333">                    128L * Bytes.MB</span>
+            );
+
+<span class="nc" id="L336">    public static final ConfigOption&lt;Integer&gt; MAX_MEMTABLES =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_write_buffer_number&quot;,
+                    &quot;The maximum number of write buffers that are built up in memory.&quot;,
+<span class="nc" id="L340">                    rangeInt(1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L341">                    6</span>
+            );
+
+<span class="nc" id="L344">    public static final ConfigOption&lt;Integer&gt; MIN_MEMTABLES_TO_MERGE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.min_write_buffer_number_to_merge&quot;,
+                    &quot;The minimum number of write buffers that will be merged together.&quot;,
+<span class="nc" id="L348">                    rangeInt(1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L349">                    2</span>
+            );
+
+<span class="nc" id="L352">    public static final ConfigOption&lt;Integer&gt; MAX_MEMTABLES_TO_MAINTAIN =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_write_buffer_number_to_maintain&quot;,
+                    &quot;The total maximum number of write buffers to maintain in memory &quot; +
+                    &quot;for conflict checking when transactions are used.&quot;,
+<span class="nc" id="L357">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L358">                    0</span>
+            );
+
+<span class="nc" id="L361">    public static final ConfigOption&lt;Double&gt; MEMTABLE_BLOOM_SIZE_RATIO =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.memtable_bloom_size_ratio&quot;,
+                    &quot;If prefix-extractor is set and memtable_bloom_size_ratio &quot; +
+                    &quot;is not 0, or if memtable_whole_key_filtering is set true, &quot; +
+                    &quot;create bloom filter for memtable with the size of &quot; +
+                    &quot;write_buffer_size * memtable_bloom_size_ratio. &quot; +
+                    &quot;If it is larger than 0.25, it is santinized to 0.25.&quot;,
+<span class="nc" id="L369">                    rangeDouble(0.0, 1.0),</span>
+<span class="nc" id="L370">                    0.0</span>
+            );
+
+<span class="nc" id="L373">    public static final ConfigOption&lt;Boolean&gt; MEMTABLE_BLOOM_WHOLE_KEY_FILTERING =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.memtable_whole_key_filtering&quot;,
+                    &quot;Enable whole key bloom filter in memtable, it can &quot; +
+                    &quot;potentially reduce CPU usage for point-look-ups. Note &quot; +
+                    &quot;this will only take effect if memtable_bloom_size_ratio &gt; 0.&quot;,
+<span class="nc" id="L379">                    disallowEmpty(),</span>
+<span class="nc" id="L380">                    false</span>
+            );
+
+<span class="nc" id="L383">    public static final ConfigOption&lt;Long&gt; MEMTABL_BLOOM_HUGE_PAGE_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.memtable_huge_page_size&quot;,
+                    &quot;The page size for huge page TLB for bloom in memtable. &quot; +
+                    &quot;If &lt;= 0, not allocate from huge page TLB but from malloc.&quot;,
+<span class="nc" id="L388">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L389">                    0L</span>
+            );
+
+<span class="nc" id="L392">    public static final ConfigOption&lt;Boolean&gt; MEMTABLE_INPLACE_UPDATE_SUPPORT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.inplace_update_support&quot;,
+                    &quot;Allows thread-safe inplace updates if a put key exists &quot; +
+                    &quot;in current memtable and sizeof new value is smaller.&quot;,
+<span class="nc" id="L397">                    disallowEmpty(),</span>
+<span class="nc" id="L398">                    false</span>
+            );
+
+<span class="nc" id="L401">    public static final ConfigOption&lt;Boolean&gt; DYNAMIC_LEVEL_BYTES =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.level_compaction_dynamic_level_bytes&quot;,
+                    &quot;Whether to enable level_compaction_dynamic_level_bytes, &quot; +
+                    &quot;if it's enabled we give max_bytes_for_level_multiplier a &quot; +
+                    &quot;priority against max_bytes_for_level_base, the bytes of &quot; +
+                    &quot;base level is dynamic for a more predictable LSM tree, &quot; +
+                    &quot;it is useful to limit worse case space amplification. &quot; +
+                    &quot;Turning this feature on/off for an existing DB can cause &quot; +
+                    &quot;unexpected LSM tree structure so it's not recommended.&quot;,
+<span class="nc" id="L411">                    disallowEmpty(),</span>
+<span class="nc" id="L412">                    false</span>
+            );
+
+<span class="nc" id="L415">    public static final ConfigOption&lt;Long&gt; MAX_LEVEL1_BYTES =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_bytes_for_level_base&quot;,
+                    &quot;The upper-bound of the total size of level-1 files in bytes.&quot;,
+<span class="nc" id="L419">                    rangeInt(Bytes.MB, Long.MAX_VALUE),</span>
+<span class="nc" id="L420">                    512L * Bytes.MB</span>
+            );
+
+<span class="nc" id="L423">    public static final ConfigOption&lt;Double&gt; MAX_LEVEL_BYTES_MULTIPLIER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.max_bytes_for_level_multiplier&quot;,
+                    &quot;The ratio between the total size of level (L+1) files and &quot; +
+                    &quot;the total size of level L files for all L.&quot;,
+<span class="nc" id="L428">                    rangeDouble(1.0, Double.MAX_VALUE),</span>
+<span class="nc" id="L429">                    10.0</span>
+            );
+
+<span class="nc" id="L432">    public static final ConfigOption&lt;Long&gt; TARGET_FILE_SIZE_BASE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.target_file_size_base&quot;,
+                    &quot;The target file size for compaction in bytes.&quot;,
+<span class="nc" id="L436">                    rangeInt(Bytes.MB, Long.MAX_VALUE),</span>
+<span class="nc" id="L437">                    64L * Bytes.MB</span>
+            );
+
+<span class="nc" id="L440">    public static final ConfigOption&lt;Integer&gt; TARGET_FILE_SIZE_MULTIPLIER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.target_file_size_multiplier&quot;,
+                    &quot;The size ratio between a level L file and a level (L+1) file.&quot;,
+<span class="nc" id="L444">                    rangeInt(1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L445">                    1</span>
+            );
+
+<span class="nc" id="L448">    public static final ConfigOption&lt;Integer&gt; LEVEL0_COMPACTION_TRIGGER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.level0_file_num_compaction_trigger&quot;,
+                    &quot;Number of files to trigger level-0 compaction.&quot;,
+<span class="nc" id="L452">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L453">                    2</span>
+            );
+
+<span class="nc" id="L456">    public static final ConfigOption&lt;Integer&gt; LEVEL0_SLOWDOWN_WRITES_TRIGGER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.level0_slowdown_writes_trigger&quot;,
+                    &quot;Soft limit on number of level-0 files for slowing down writes.&quot;,
+<span class="nc" id="L460">                    rangeInt(-1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L461">                    20</span>
+            );
+
+<span class="nc" id="L464">    public static final ConfigOption&lt;Integer&gt; LEVEL0_STOP_WRITES_TRIGGER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.level0_stop_writes_trigger&quot;,
+                    &quot;Hard limit on number of level-0 files for stopping writes.&quot;,
+<span class="nc" id="L468">                    rangeInt(-1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L469">                    36</span>
+            );
+
+<span class="nc" id="L472">    public static final ConfigOption&lt;Long&gt; SOFT_PENDING_COMPACTION_LIMIT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.soft_pending_compaction_bytes_limit&quot;,
+                    &quot;The soft limit to impose on pending compaction in bytes.&quot;,
+<span class="nc" id="L476">                    rangeInt(Bytes.GB, Long.MAX_VALUE),</span>
+<span class="nc" id="L477">                    64L * Bytes.GB</span>
+            );
+
+<span class="nc" id="L480">    public static final ConfigOption&lt;Long&gt; HARD_PENDING_COMPACTION_LIMIT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.hard_pending_compaction_bytes_limit&quot;,
+                    &quot;The hard limit to impose on pending compaction in bytes.&quot;,
+<span class="nc" id="L484">                    rangeInt(Bytes.GB, Long.MAX_VALUE),</span>
+<span class="nc" id="L485">                    256L * Bytes.GB</span>
+            );
+
+<span class="nc" id="L488">    public static final ConfigOption&lt;Boolean&gt; ALLOW_MMAP_WRITES =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.allow_mmap_writes&quot;,
+                    &quot;Allow the OS to mmap file for writing.&quot;,
+<span class="nc" id="L492">                    disallowEmpty(),</span>
+<span class="nc" id="L493">                    false</span>
+            );
+
+<span class="nc" id="L496">    public static final ConfigOption&lt;Boolean&gt; ALLOW_MMAP_READS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.allow_mmap_reads&quot;,
+                    &quot;Allow the OS to mmap file for reading sst tables.&quot;,
+<span class="nc" id="L500">                    disallowEmpty(),</span>
+<span class="nc" id="L501">                    false</span>
+            );
+
+<span class="nc" id="L504">    public static final ConfigOption&lt;Boolean&gt; USE_DIRECT_READS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.use_direct_reads&quot;,
+                    &quot;Enable the OS to use direct I/O for reading sst tables.&quot;,
+<span class="nc" id="L508">                    disallowEmpty(),</span>
+<span class="nc" id="L509">                    false</span>
+            );
+
+<span class="nc" id="L512">    public static final ConfigOption&lt;Boolean&gt; USE_DIRECT_READS_WRITES_FC =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.use_direct_io_for_flush_and_compaction&quot;,
+                    &quot;Enable the OS to use direct read/writes in flush and compaction.&quot;,
+<span class="nc" id="L516">                    disallowEmpty(),</span>
+<span class="nc" id="L517">                    false</span>
+            );
+
+<span class="nc" id="L520">    public static final ConfigOption&lt;Boolean&gt; USE_FSYNC =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.use_fsync&quot;,
+                    &quot;If true, then every store to stable storage will issue a fsync.&quot;,
+<span class="nc" id="L524">                    disallowEmpty(),</span>
+<span class="nc" id="L525">                    false</span>
+            );
+
+<span class="nc" id="L528">    public static final ConfigOption&lt;Boolean&gt; ATOMIC_FLUSH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.atomic_flush&quot;,
+                    &quot;If true, flushing multiple column families and committing &quot; +
+                    &quot;their results atomically to MANIFEST. Note that it's not &quot; +
+                    &quot;necessary to set atomic_flush=true if WAL is always enabled.&quot;,
+<span class="nc" id="L534">                    disallowEmpty(),</span>
+<span class="nc" id="L535">                    false</span>
+            );
+
+<span class="nc" id="L538">    public static final ConfigOption&lt;Integer&gt; TABLE_FORMAT_VERSION =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.format_version&quot;,
+                    &quot;The format version of BlockBasedTable, allowed values are 0~5.&quot;,
+<span class="nc" id="L542">                    rangeInt(0, 5),</span>
+<span class="nc" id="L543">                    5</span>
+            );
+
+<span class="nc" id="L546">    public static final ConfigConvOption&lt;String, IndexType&gt; INDEX_TYPE =</span>
+            new ConfigConvOption&lt;&gt;(
+                    &quot;rocksdb.index_type&quot;,
+                    &quot;The index type used to lookup between data blocks &quot; +
+                    &quot;with the sst table, allowed values are [kBinarySearch,&quot; +
+                    &quot;kHashSearch,kTwoLevelIndexSearch,kBinarySearchWithFirstKey].&quot;,
+<span class="nc" id="L552">                    allowValues(&quot;kBinarySearch&quot;, &quot;kHashSearch&quot;,</span>
+                                &quot;kTwoLevelIndexSearch&quot;, &quot;kBinarySearchWithFirstKey&quot;),
+                    IndexType::valueOf,
+                    &quot;kBinarySearch&quot;
+            );
+
+<span class="nc" id="L558">    public static final ConfigConvOption&lt;String, DataBlockIndexType&gt; DATA_BLOCK_SEARCH_TYPE =</span>
+            new ConfigConvOption&lt;&gt;(
+                    &quot;rocksdb.data_block_index_type&quot;,
+                    &quot;The search type used to point lookup in data block with &quot; +
+                    &quot;the sst table, allowed values are [kDataBlockBinarySearch,&quot; +
+                    &quot;kDataBlockBinaryAndHash].&quot;,
+<span class="nc" id="L564">                    allowValues(&quot;kDataBlockBinarySearch&quot;, &quot;kDataBlockBinaryAndHash&quot;),</span>
+                    DataBlockIndexType::valueOf,
+                    &quot;kDataBlockBinarySearch&quot;
+            );
+
+<span class="nc" id="L569">    public static final ConfigOption&lt;Double&gt; DATA_BLOCK_HASH_TABLE_RATIO =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.data_block_hash_table_util_ratio&quot;,
+                    &quot;The hash table utilization ratio value of entries/buckets. &quot; +
+                    &quot;It is valid only when data_block_index_type=kDataBlockBinaryAndHash.&quot;,
+<span class="nc" id="L574">                    rangeDouble(0.0, 1.0),</span>
+<span class="nc" id="L575">                    0.75</span>
+            );
+
+<span class="nc" id="L578">    public static final ConfigOption&lt;Long&gt; BLOCK_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.block_size&quot;,
+                    &quot;Approximate size of user data packed per block, Note that &quot; +
+                    &quot;it corresponds to uncompressed data.&quot;,
+<span class="nc" id="L583">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L584">                    4L * Bytes.KB</span>
+            );
+
+<span class="nc" id="L587">    public static final ConfigOption&lt;Integer&gt; BLOCK_SIZE_DEVIATION =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.block_size_deviation&quot;,
+                    &quot;The percentage of free space used to close a block.&quot;,
+<span class="nc" id="L591">                    rangeInt(0, 100),</span>
+<span class="nc" id="L592">                    10</span>
+            );
+
+<span class="nc" id="L595">    public static final ConfigOption&lt;Integer&gt; BLOCK_RESTART_INTERVAL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.block_restart_interval&quot;,
+                    &quot;The block restart interval for delta encoding in blocks.&quot;,
+<span class="nc" id="L599">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L600">                    16</span>
+            );
+
+<span class="nc" id="L603">    public static final ConfigOption&lt;Long&gt; BLOCK_CACHE_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.block_cache_capacity&quot;,
+                    &quot;The amount of block cache in bytes that will be used by RocksDB, &quot; +
+                    &quot;0 means no block cache.&quot;,
+<span class="nc" id="L608">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L609">                    8L * Bytes.MB</span>
+            );
+
+<span class="nc" id="L612">    public static final ConfigOption&lt;Boolean&gt; CACHE_FILTER_AND_INDEX =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.cache_index_and_filter_blocks&quot;,
+                    &quot;Set this option true if we'd put index/filter blocks to &quot; +
+                    &quot;the block cache.&quot;,
+<span class="nc" id="L617">                    disallowEmpty(),</span>
+<span class="nc" id="L618">                    true</span>
+            );
+
+<span class="nc" id="L621">    public static final ConfigOption&lt;Boolean&gt; PIN_L0_INDEX_AND_FILTER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.pin_l0_filter_and_index_blocks_in_cache&quot;,
+                    &quot;Set this option true if we'd pin L0 index/filter blocks to &quot; +
+                    &quot;the block cache.&quot;,
+<span class="nc" id="L626">                    disallowEmpty(),</span>
+<span class="nc" id="L627">                    true</span>
+            );
+
+<span class="nc" id="L630">    public static final ConfigOption&lt;Integer&gt; BLOOM_FILTER_BITS_PER_KEY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.bloom_filter_bits_per_key&quot;,
+                    &quot;The bits per key in bloom filter, a good value is 10, &quot; +
+                    &quot;which yields a filter with ~ 1% false positive rate. &quot; +
+                    &quot;Set bloom_filter_bits_per_key &gt; 0 to enable bloom filter, &quot; +
+                    &quot;-1 means no bloom filter (0~0.5 round down to no filter).&quot;,
+<span class="nc" id="L637">                    rangeInt(-1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L638">                    -1</span>
+            );
+
+<span class="nc" id="L641">    public static final ConfigOption&lt;Boolean&gt; BLOOM_FILTER_MODE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.bloom_filter_block_based_mode&quot;,
+                    &quot;If bloom filter is enabled, set this option true to &quot; +
+                    &quot;use block based filter rather than full filter.&quot;,
+<span class="nc" id="L646">                    disallowEmpty(),</span>
+<span class="nc" id="L647">                    false</span>
+            );
+
+<span class="nc" id="L650">    public static final ConfigOption&lt;Boolean&gt; BLOOM_FILTER_WHOLE_KEY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.bloom_filter_whole_key_filtering&quot;,
+                    &quot;If bloom filter is enabled, set this option true to &quot; +
+                    &quot;place whole keys in the bloom filter, else place the &quot; +
+                    &quot;prefix of keys when prefix-extractor is set.&quot;,
+<span class="nc" id="L656">                    disallowEmpty(),</span>
+<span class="nc" id="L657">                    true</span>
+            );
+
+<span class="nc" id="L660">    public static final ConfigOption&lt;Boolean&gt; BLOOM_FILTERS_SKIP_LAST_LEVEL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.optimize_filters_for_hits&quot;,
+                    &quot;If bloom filter is enabled, this flag allows us to not &quot; +
+                    &quot;store filters for the last level. set this option true to &quot; +
+                    &quot;optimize the filters mainly for cases where keys are found &quot; +
+                    &quot;rather than also optimize for keys missed.&quot;,
+<span class="nc" id="L667">                    disallowEmpty(),</span>
+<span class="nc" id="L668">                    true</span>
+            );
+
+<span class="nc" id="L671">    public static final ConfigOption&lt;Boolean&gt; PARTITION_FILTERS_INDEXES =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.partition_filters_and_indexes&quot;,
+                    &quot;If bloom filter is enabled, set this option true to use &quot; +
+                    &quot;partitioned full filters and indexes for each sst file. &quot; +
+                    &quot;This option is incompatible with block-based filters.&quot;,
+<span class="nc" id="L677">                    disallowEmpty(),</span>
+<span class="nc" id="L678">                    false</span>
+            );
+
+<span class="nc" id="L681">    public static final ConfigOption&lt;Boolean&gt; PIN_TOP_INDEX_AND_FILTER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.pin_top_level_index_and_filter&quot;,
+                    &quot;If partition_filters_and_indexes is set true, set this &quot; +
+                    &quot;option true if we'd pin top-level index of partitioned &quot; +
+                    &quot;filter and index blocks to the block cache.&quot;,
+<span class="nc" id="L687">                    disallowEmpty(),</span>
+<span class="nc" id="L688">                    true</span>
+            );
+
+<span class="nc" id="L691">    public static final ConfigOption&lt;Integer&gt; PREFIX_EXTRACTOR_CAPPED =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rocksdb.prefix_extractor_n_bytes&quot;,
+                    &quot;The prefix-extractor uses the first N bytes of a key as its prefix, &quot; +
+                    &quot;it will use the full key when a key is shorter than the N. &quot; +
+                    &quot;0 means unset prefix-extractor.&quot;,
+<span class="nc" id="L697">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L698">                    0</span>
+            );
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,760 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StandardAuthManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">StandardAuthManager.java</span></div><h1>StandardAuthManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Callable;
+
+import javax.security.sasl.AuthenticationException;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.auth.HugeUser.P;
+import org.apache.hugegraph.auth.SchemaDefine.AuthElement;
+import org.apache.hugegraph.backend.cache.Cache;
+import org.apache.hugegraph.backend.cache.CacheManager;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.config.AuthOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.LockUtil;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.StringEncoding;
+import org.slf4j.Logger;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+
+import io.jsonwebtoken.Claims;
+import jakarta.ws.rs.ForbiddenException;
+
+public class StandardAuthManager implements AuthManager {
+
+<span class="nc" id="L57">    protected static final Logger LOG = Log.logger(StandardAuthManager.class);</span>
+
+    private final HugeGraphParams graph;
+
+    // Cache &lt;username, HugeUser&gt;
+    private final Cache&lt;Id, HugeUser&gt; usersCache;
+    // Cache &lt;userId, passwd&gt;
+    private final Cache&lt;Id, String&gt; pwdCache;
+    // Cache &lt;token, username&gt;
+    private final Cache&lt;Id, String&gt; tokenCache;
+
+    private final EntityManager&lt;HugeUser&gt; users;
+    private final EntityManager&lt;HugeGroup&gt; groups;
+    private final EntityManager&lt;HugeTarget&gt; targets;
+    private final EntityManager&lt;HugeProject&gt; project;
+
+    private final RelationshipManager&lt;HugeBelong&gt; belong;
+    private final RelationshipManager&lt;HugeAccess&gt; access;
+
+    private final TokenGenerator tokenGenerator;
+    private final long tokenExpire;
+
+    private Set&lt;String&gt; ipWhiteList;
+
+    private Boolean ipWhiteListEnabled;
+
+<span class="nc" id="L83">    public StandardAuthManager(HugeGraphParams graph) {</span>
+<span class="nc" id="L84">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+<span class="nc" id="L85">        HugeConfig config = graph.configuration();</span>
+<span class="nc" id="L86">        long expired = config.get(AuthOptions.AUTH_CACHE_EXPIRE);</span>
+<span class="nc" id="L87">        long capacity = config.get(AuthOptions.AUTH_CACHE_CAPACITY);</span>
+<span class="nc" id="L88">        this.tokenExpire = config.get(AuthOptions.AUTH_TOKEN_EXPIRE) * 1000;</span>
+
+<span class="nc" id="L90">        this.graph = graph;</span>
+<span class="nc" id="L91">        this.usersCache = this.cache(&quot;users&quot;, capacity, expired);</span>
+<span class="nc" id="L92">        this.pwdCache = this.cache(&quot;users_pwd&quot;, capacity, expired);</span>
+<span class="nc" id="L93">        this.tokenCache = this.cache(&quot;token&quot;, capacity, expired);</span>
+
+<span class="nc" id="L95">        this.users = new EntityManager&lt;&gt;(this.graph, HugeUser.P.USER,</span>
+                                         HugeUser::fromVertex);
+<span class="nc" id="L97">        this.groups = new EntityManager&lt;&gt;(this.graph, HugeGroup.P.GROUP,</span>
+                                          HugeGroup::fromVertex);
+<span class="nc" id="L99">        this.targets = new EntityManager&lt;&gt;(this.graph, HugeTarget.P.TARGET,</span>
+                                           HugeTarget::fromVertex);
+<span class="nc" id="L101">        this.project = new EntityManager&lt;&gt;(this.graph, HugeProject.P.PROJECT,</span>
+                                           HugeProject::fromVertex);
+
+<span class="nc" id="L104">        this.belong = new RelationshipManager&lt;&gt;(this.graph, HugeBelong.P.BELONG,</span>
+                                                HugeBelong::fromEdge);
+<span class="nc" id="L106">        this.access = new RelationshipManager&lt;&gt;(this.graph, HugeAccess.P.ACCESS,</span>
+                                                HugeAccess::fromEdge);
+
+<span class="nc" id="L109">        this.tokenGenerator = new TokenGenerator(config);</span>
+
+<span class="nc" id="L111">        this.ipWhiteList = new HashSet&lt;&gt;();</span>
+
+<span class="nc" id="L113">        this.ipWhiteListEnabled = false;</span>
+<span class="nc" id="L114">    }</span>
+
+    private &lt;V&gt; Cache&lt;Id, V&gt; cache(String prefix, long capacity,
+                                   long expiredTime) {
+<span class="nc" id="L118">        String name = prefix + &quot;-&quot; + this.graph.name();</span>
+<span class="nc" id="L119">        Cache&lt;Id, V&gt; cache = CacheManager.instance().cache(name, capacity);</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (expiredTime &gt; 0L) {</span>
+<span class="nc" id="L121">            cache.expire(Duration.ofSeconds(expiredTime).toMillis());</span>
+        } else {
+<span class="nc" id="L123">            cache.expire(expiredTime);</span>
+        }
+<span class="nc" id="L125">        return cache;</span>
+    }
+
+    @Override
+    public void init() {
+<span class="nc" id="L130">        this.invalidateUserCache();</span>
+<span class="nc" id="L131">        HugeUser.schema(this.graph).initSchemaIfNeeded();</span>
+<span class="nc" id="L132">        HugeGroup.schema(this.graph).initSchemaIfNeeded();</span>
+<span class="nc" id="L133">        HugeTarget.schema(this.graph).initSchemaIfNeeded();</span>
+<span class="nc" id="L134">        HugeBelong.schema(this.graph).initSchemaIfNeeded();</span>
+<span class="nc" id="L135">        HugeAccess.schema(this.graph).initSchemaIfNeeded();</span>
+<span class="nc" id="L136">        HugeProject.schema(this.graph).initSchemaIfNeeded();</span>
+<span class="nc" id="L137">    }</span>
+
+    @Override
+    public boolean close() {
+<span class="nc" id="L141">        return true;</span>
+    }
+
+    private void invalidateUserCache() {
+<span class="nc" id="L145">        this.usersCache.clear();</span>
+<span class="nc" id="L146">    }</span>
+
+    private void invalidatePasswordCache(Id id) {
+<span class="nc" id="L149">        this.pwdCache.invalidate(id);</span>
+        // Clear all tokenCache because can't get userId in it
+<span class="nc" id="L151">        this.tokenCache.clear();</span>
+<span class="nc" id="L152">    }</span>
+
+    @Override
+    public Id createUser(HugeUser user) {
+<span class="nc" id="L156">        this.invalidateUserCache();</span>
+<span class="nc" id="L157">        return this.users.add(user);</span>
+    }
+
+    @Override
+    public Id updateUser(HugeUser user) {
+<span class="nc" id="L162">        this.invalidateUserCache();</span>
+<span class="nc" id="L163">        this.invalidatePasswordCache(user.id());</span>
+<span class="nc" id="L164">        return this.users.update(user);</span>
+    }
+
+    @Override
+    public HugeUser deleteUser(Id id) {
+<span class="nc" id="L169">        this.invalidateUserCache();</span>
+<span class="nc" id="L170">        this.invalidatePasswordCache(id);</span>
+<span class="nc" id="L171">        return this.users.delete(id);</span>
+    }
+
+    @Override
+    public HugeUser findUser(String name) {
+<span class="nc" id="L176">        Id username = IdGenerator.of(name);</span>
+<span class="nc" id="L177">        HugeUser user = this.usersCache.get(username);</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (user != null) {</span>
+<span class="nc" id="L179">            return user;</span>
+        }
+
+<span class="nc" id="L182">        List&lt;HugeUser&gt; users = this.users.query(P.NAME, name, 2L);</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">        if (users.size() &gt; 0) {</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">            assert users.size() == 1;</span>
+<span class="nc" id="L185">            user = users.get(0);</span>
+<span class="nc" id="L186">            this.usersCache.update(username, user);</span>
+        }
+<span class="nc" id="L188">        return user;</span>
+    }
+
+    @Override
+    public HugeUser getUser(Id id) {
+<span class="nc" id="L193">        return this.users.get(id);</span>
+    }
+
+    @Override
+    public List&lt;HugeUser&gt; listUsers(List&lt;Id&gt; ids) {
+<span class="nc" id="L198">        return this.users.list(ids);</span>
+    }
+
+    @Override
+    public List&lt;HugeUser&gt; listAllUsers(long limit) {
+<span class="nc" id="L203">        return this.users.list(limit);</span>
+    }
+
+    @Override
+    public Id createGroup(HugeGroup group) {
+<span class="nc" id="L208">        this.invalidateUserCache();</span>
+<span class="nc" id="L209">        return this.groups.add(group);</span>
+    }
+
+    @Override
+    public Id updateGroup(HugeGroup group) {
+<span class="nc" id="L214">        this.invalidateUserCache();</span>
+<span class="nc" id="L215">        return this.groups.update(group);</span>
+    }
+
+    @Override
+    public HugeGroup deleteGroup(Id id) {
+<span class="nc" id="L220">        this.invalidateUserCache();</span>
+<span class="nc" id="L221">        return this.groups.delete(id);</span>
+    }
+
+    @Override
+    public HugeGroup getGroup(Id id) {
+<span class="nc" id="L226">        return this.groups.get(id);</span>
+    }
+
+    @Override
+    public List&lt;HugeGroup&gt; listGroups(List&lt;Id&gt; ids) {
+<span class="nc" id="L231">        return this.groups.list(ids);</span>
+    }
+
+    @Override
+    public List&lt;HugeGroup&gt; listAllGroups(long limit) {
+<span class="nc" id="L236">        return this.groups.list(limit);</span>
+    }
+
+    @Override
+    public Id createTarget(HugeTarget target) {
+<span class="nc" id="L241">        this.invalidateUserCache();</span>
+<span class="nc" id="L242">        return this.targets.add(target);</span>
+    }
+
+    @Override
+    public Id updateTarget(HugeTarget target) {
+<span class="nc" id="L247">        this.invalidateUserCache();</span>
+<span class="nc" id="L248">        return this.targets.update(target);</span>
+    }
+
+    @Override
+    public HugeTarget deleteTarget(Id id) {
+<span class="nc" id="L253">        this.invalidateUserCache();</span>
+<span class="nc" id="L254">        return this.targets.delete(id);</span>
+    }
+
+    @Override
+    public HugeTarget getTarget(Id id) {
+<span class="nc" id="L259">        return this.targets.get(id);</span>
+    }
+
+    @Override
+    public List&lt;HugeTarget&gt; listTargets(List&lt;Id&gt; ids) {
+<span class="nc" id="L264">        return this.targets.list(ids);</span>
+    }
+
+    @Override
+    public List&lt;HugeTarget&gt; listAllTargets(long limit) {
+<span class="nc" id="L269">        return this.targets.list(limit);</span>
+    }
+
+    @Override
+    public Id createBelong(HugeBelong belong) {
+<span class="nc" id="L274">        this.invalidateUserCache();</span>
+<span class="nc" id="L275">        E.checkArgument(this.users.exists(belong.source()),</span>
+<span class="nc" id="L276">                        &quot;Not exists user '%s'&quot;, belong.source());</span>
+<span class="nc" id="L277">        E.checkArgument(this.groups.exists(belong.target()),</span>
+<span class="nc" id="L278">                        &quot;Not exists group '%s'&quot;, belong.target());</span>
+<span class="nc" id="L279">        return this.belong.add(belong);</span>
+    }
+
+    @Override
+    public Id updateBelong(HugeBelong belong) {
+<span class="nc" id="L284">        this.invalidateUserCache();</span>
+<span class="nc" id="L285">        return this.belong.update(belong);</span>
+    }
+
+    @Override
+    public HugeBelong deleteBelong(Id id) {
+<span class="nc" id="L290">        this.invalidateUserCache();</span>
+<span class="nc" id="L291">        return this.belong.delete(id);</span>
+    }
+
+    @Override
+    public HugeBelong getBelong(Id id) {
+<span class="nc" id="L296">        return this.belong.get(id);</span>
+    }
+
+    @Override
+    public List&lt;HugeBelong&gt; listBelong(List&lt;Id&gt; ids) {
+<span class="nc" id="L301">        return this.belong.list(ids);</span>
+    }
+
+    @Override
+    public List&lt;HugeBelong&gt; listAllBelong(long limit) {
+<span class="nc" id="L306">        return this.belong.list(limit);</span>
+    }
+
+    @Override
+    public List&lt;HugeBelong&gt; listBelongByUser(Id user, long limit) {
+<span class="nc" id="L311">        return this.belong.list(user, Directions.OUT,</span>
+                                HugeBelong.P.BELONG, limit);
+    }
+
+    @Override
+    public List&lt;HugeBelong&gt; listBelongByGroup(Id group, long limit) {
+<span class="nc" id="L317">        return this.belong.list(group, Directions.IN,</span>
+                                HugeBelong.P.BELONG, limit);
+    }
+
+    @Override
+    public Id createAccess(HugeAccess access) {
+<span class="nc" id="L323">        this.invalidateUserCache();</span>
+<span class="nc" id="L324">        E.checkArgument(this.groups.exists(access.source()),</span>
+<span class="nc" id="L325">                        &quot;Not exists group '%s'&quot;, access.source());</span>
+<span class="nc" id="L326">        E.checkArgument(this.targets.exists(access.target()),</span>
+<span class="nc" id="L327">                        &quot;Not exists target '%s'&quot;, access.target());</span>
+<span class="nc" id="L328">        return this.access.add(access);</span>
+    }
+
+    @Override
+    public Id updateAccess(HugeAccess access) {
+<span class="nc" id="L333">        this.invalidateUserCache();</span>
+<span class="nc" id="L334">        return this.access.update(access);</span>
+    }
+
+    @Override
+    public HugeAccess deleteAccess(Id id) {
+<span class="nc" id="L339">        this.invalidateUserCache();</span>
+<span class="nc" id="L340">        return this.access.delete(id);</span>
+    }
+
+    @Override
+    public HugeAccess getAccess(Id id) {
+<span class="nc" id="L345">        return this.access.get(id);</span>
+    }
+
+    @Override
+    public List&lt;HugeAccess&gt; listAccess(List&lt;Id&gt; ids) {
+<span class="nc" id="L350">        return this.access.list(ids);</span>
+    }
+
+    @Override
+    public List&lt;HugeAccess&gt; listAllAccess(long limit) {
+<span class="nc" id="L355">        return this.access.list(limit);</span>
+    }
+
+    @Override
+    public List&lt;HugeAccess&gt; listAccessByGroup(Id group, long limit) {
+<span class="nc" id="L360">        return this.access.list(group, Directions.OUT,</span>
+                                HugeAccess.P.ACCESS, limit);
+    }
+
+    @Override
+    public List&lt;HugeAccess&gt; listAccessByTarget(Id target, long limit) {
+<span class="nc" id="L366">        return this.access.list(target, Directions.IN,</span>
+                                HugeAccess.P.ACCESS, limit);
+    }
+
+    @Override
+    public Id createProject(HugeProject project) {
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        E.checkArgument(!StringUtils.isEmpty(project.name()),</span>
+                        &quot;The name of project can't be null or empty&quot;);
+<span class="nc" id="L374">        return commit(() -&gt; {</span>
+            // Create project admin group
+<span class="nc bnc" id="L376" title="All 2 branches missed.">            if (project.adminGroupId() == null) {</span>
+<span class="nc" id="L377">                HugeGroup adminGroup = new HugeGroup(&quot;admin_&quot; + project.name());</span>
+                /*
+                 * &quot;creator&quot; is a necessary parameter, other places are passed
+                 * in &quot;AuthManagerProxy&quot;, but here is the underlying module, so
+                 * pass it directly here
+                 */
+<span class="nc" id="L383">                adminGroup.creator(project.creator());</span>
+<span class="nc" id="L384">                Id adminGroupId = this.createGroup(adminGroup);</span>
+<span class="nc" id="L385">                project.adminGroupId(adminGroupId);</span>
+            }
+
+            // Create project op group
+<span class="nc bnc" id="L389" title="All 2 branches missed.">            if (project.opGroupId() == null) {</span>
+<span class="nc" id="L390">                HugeGroup opGroup = new HugeGroup(&quot;op_&quot; + project.name());</span>
+                // Ditto
+<span class="nc" id="L392">                opGroup.creator(project.creator());</span>
+<span class="nc" id="L393">                Id opGroupId = this.createGroup(opGroup);</span>
+<span class="nc" id="L394">                project.opGroupId(opGroupId);</span>
+            }
+
+            // Create project target to verify permission
+<span class="nc" id="L398">            final String targetName = &quot;project_res_&quot; + project.name();</span>
+<span class="nc" id="L399">            HugeResource resource = new HugeResource(ResourceType.PROJECT,</span>
+<span class="nc" id="L400">                                                     project.name(),</span>
+                                                     null);
+<span class="nc" id="L402">            HugeTarget target = new HugeTarget(targetName,</span>
+<span class="nc" id="L403">                                               this.graph.name(),</span>
+                                               &quot;localhost:8080&quot;,
+<span class="nc" id="L405">                                               ImmutableList.of(resource));</span>
+            // Ditto
+<span class="nc" id="L407">            target.creator(project.creator());</span>
+<span class="nc" id="L408">            Id targetId = this.targets.add(target);</span>
+<span class="nc" id="L409">            project.targetId(targetId);</span>
+
+<span class="nc" id="L411">            Id adminGroupId = project.adminGroupId();</span>
+<span class="nc" id="L412">            Id opGroupId = project.opGroupId();</span>
+<span class="nc" id="L413">            HugeAccess adminGroupWriteAccess = new HugeAccess(</span>
+                                                   adminGroupId, targetId,
+                                                   HugePermission.WRITE);
+            // Ditto
+<span class="nc" id="L417">            adminGroupWriteAccess.creator(project.creator());</span>
+<span class="nc" id="L418">            HugeAccess adminGroupReadAccess = new HugeAccess(</span>
+                                                  adminGroupId, targetId,
+                                                  HugePermission.READ);
+            // Ditto
+<span class="nc" id="L422">            adminGroupReadAccess.creator(project.creator());</span>
+<span class="nc" id="L423">            HugeAccess opGroupReadAccess = new HugeAccess(opGroupId, targetId,</span>
+                                                          HugePermission.READ);
+            // Ditto
+<span class="nc" id="L426">            opGroupReadAccess.creator(project.creator());</span>
+<span class="nc" id="L427">            this.access.add(adminGroupWriteAccess);</span>
+<span class="nc" id="L428">            this.access.add(adminGroupReadAccess);</span>
+<span class="nc" id="L429">            this.access.add(opGroupReadAccess);</span>
+<span class="nc" id="L430">            return this.project.add(project);</span>
+        });
+    }
+
+    @Override
+    public HugeProject deleteProject(Id id) {
+<span class="nc" id="L436">        return this.commit(() -&gt; {</span>
+<span class="nc" id="L437">            LockUtil.Locks locks = new LockUtil.Locks(this.graph.name());</span>
+            try {
+<span class="nc" id="L439">                locks.lockWrites(LockUtil.PROJECT_UPDATE, id);</span>
+
+<span class="nc" id="L441">                HugeProject oldProject = this.project.get(id);</span>
+                /*
+                 * Check whether there are any graph binding this project,
+                 * throw ForbiddenException, if it is
+                 */
+<span class="nc bnc" id="L446" title="All 2 branches missed.">                if (!CollectionUtils.isEmpty(oldProject.graphs())) {</span>
+<span class="nc" id="L447">                    String errInfo = String.format(&quot;Can't delete project '%s' &quot; +</span>
+                                                   &quot;that contains any graph, &quot; +
+                                                   &quot;there are graphs bound &quot; +
+                                                   &quot;to it&quot;, id);
+<span class="nc" id="L451">                    throw new ForbiddenException(errInfo);</span>
+                }
+<span class="nc" id="L453">                HugeProject project = this.project.delete(id);</span>
+<span class="nc" id="L454">                E.checkArgumentNotNull(project,</span>
+                                       &quot;Failed to delete the project '%s'&quot;,
+                                       id);
+<span class="nc" id="L457">                E.checkArgumentNotNull(project.adminGroupId(),</span>
+                                       &quot;Failed to delete the project '%s',&quot; +
+                                       &quot;the admin group of project can't &quot; +
+                                       &quot;be null&quot;, id);
+<span class="nc" id="L461">                E.checkArgumentNotNull(project.opGroupId(),</span>
+                                       &quot;Failed to delete the project '%s',&quot; +
+                                       &quot;the op group of project can't be null&quot;,
+                                       id);
+<span class="nc" id="L465">                E.checkArgumentNotNull(project.targetId(),</span>
+                                       &quot;Failed to delete the project '%s', &quot; +
+                                       &quot;the target resource of project &quot; +
+                                       &quot;can't be null&quot;, id);
+                // Delete admin group
+<span class="nc" id="L470">                this.groups.delete(project.adminGroupId());</span>
+                // Delete op group
+<span class="nc" id="L472">                this.groups.delete(project.opGroupId());</span>
+                // Delete project_target
+<span class="nc" id="L474">                this.targets.delete(project.targetId());</span>
+<span class="nc" id="L475">                return project;</span>
+            } finally {
+<span class="nc" id="L477">                locks.unlock();</span>
+            }
+        });
+    }
+
+    @Override
+    public Id updateProject(HugeProject project) {
+<span class="nc" id="L484">        return this.project.update(project);</span>
+    }
+
+    @Override
+    public Id projectAddGraphs(Id id, Set&lt;String&gt; graphs) {
+<span class="nc bnc" id="L489" title="All 2 branches missed.">        E.checkArgument(!CollectionUtils.isEmpty(graphs),</span>
+                        &quot;Failed to add graphs to project '%s', the graphs &quot; +
+                        &quot;parameter can't be empty&quot;, id);
+
+<span class="nc" id="L493">        LockUtil.Locks locks = new LockUtil.Locks(this.graph.name());</span>
+        try {
+<span class="nc" id="L495">            locks.lockWrites(LockUtil.PROJECT_UPDATE, id);</span>
+
+<span class="nc" id="L497">            HugeProject project = this.project.get(id);</span>
+<span class="nc" id="L498">            Set&lt;String&gt; sourceGraphs = new HashSet&lt;&gt;(project.graphs());</span>
+<span class="nc" id="L499">            int oldSize = sourceGraphs.size();</span>
+<span class="nc" id="L500">            sourceGraphs.addAll(graphs);</span>
+            // Return if there is none graph been added
+<span class="nc bnc" id="L502" title="All 2 branches missed.">            if (sourceGraphs.size() == oldSize) {</span>
+<span class="nc" id="L503">                return id;</span>
+            }
+<span class="nc" id="L505">            project.graphs(sourceGraphs);</span>
+<span class="nc" id="L506">            return this.project.update(project);</span>
+        } finally {
+<span class="nc" id="L508">            locks.unlock();</span>
+        }
+    }
+
+    @Override
+    public Id projectRemoveGraphs(Id id, Set&lt;String&gt; graphs) {
+<span class="nc" id="L514">        E.checkArgumentNotNull(id,</span>
+                               &quot;Failed to remove graphs, the project id &quot; +
+                               &quot;parameter can't be null&quot;);
+<span class="nc bnc" id="L517" title="All 2 branches missed.">        E.checkArgument(!CollectionUtils.isEmpty(graphs),</span>
+                        &quot;Failed to delete graphs from the project '%s', &quot; +
+                        &quot;the graphs parameter can't be null or empty&quot;, id);
+
+<span class="nc" id="L521">        LockUtil.Locks locks = new LockUtil.Locks(this.graph.name());</span>
+        try {
+<span class="nc" id="L523">            locks.lockWrites(LockUtil.PROJECT_UPDATE, id);</span>
+
+<span class="nc" id="L525">            HugeProject project = this.project.get(id);</span>
+<span class="nc" id="L526">            Set&lt;String&gt; sourceGraphs = new HashSet&lt;&gt;(project.graphs());</span>
+<span class="nc" id="L527">            int oldSize = sourceGraphs.size();</span>
+<span class="nc" id="L528">            sourceGraphs.removeAll(graphs);</span>
+            // Return if there is none graph been removed
+<span class="nc bnc" id="L530" title="All 2 branches missed.">            if (sourceGraphs.size() == oldSize) {</span>
+<span class="nc" id="L531">                return id;</span>
+            }
+<span class="nc" id="L533">            project.graphs(sourceGraphs);</span>
+<span class="nc" id="L534">            return this.project.update(project);</span>
+        } finally {
+<span class="nc" id="L536">            locks.unlock();</span>
+        }
+    }
+
+    @Override
+    public HugeProject getProject(Id id) {
+<span class="nc" id="L542">        return this.project.get(id);</span>
+    }
+
+    @Override
+    public List&lt;HugeProject&gt; listAllProject(long limit) {
+<span class="nc" id="L547">        return this.project.list(limit);</span>
+    }
+
+    @Override
+    public HugeUser matchUser(String name, String password) {
+<span class="nc" id="L552">        E.checkArgumentNotNull(name, &quot;User name can't be null&quot;);</span>
+<span class="nc" id="L553">        E.checkArgumentNotNull(password, &quot;User password can't be null&quot;);</span>
+
+<span class="nc" id="L555">        HugeUser user = this.findUser(name);</span>
+<span class="nc bnc" id="L556" title="All 2 branches missed.">        if (user == null) {</span>
+<span class="nc" id="L557">            return null;</span>
+        }
+
+<span class="nc bnc" id="L560" title="All 2 branches missed.">        if (password.equals(this.pwdCache.get(user.id()))) {</span>
+<span class="nc" id="L561">            return user;</span>
+        }
+
+<span class="nc bnc" id="L564" title="All 2 branches missed.">        if (StringEncoding.checkPassword(password, user.password())) {</span>
+<span class="nc" id="L565">            this.pwdCache.update(user.id(), password);</span>
+<span class="nc" id="L566">            return user;</span>
+        }
+<span class="nc" id="L568">        return null;</span>
+    }
+
+    @Override
+    public RolePermission rolePermission(AuthElement element) {
+<span class="nc bnc" id="L573" title="All 2 branches missed.">        if (element instanceof HugeUser) {</span>
+<span class="nc" id="L574">            return this.rolePermission((HugeUser) element);</span>
+<span class="nc bnc" id="L575" title="All 2 branches missed.">        } else if (element instanceof HugeTarget) {</span>
+<span class="nc" id="L576">            return this.rolePermission((HugeTarget) element);</span>
+        }
+
+<span class="nc" id="L579">        List&lt;HugeAccess&gt; accesses = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L580" title="All 2 branches missed.">        if (element instanceof HugeBelong) {</span>
+<span class="nc" id="L581">            HugeBelong belong = (HugeBelong) element;</span>
+<span class="nc" id="L582">            accesses.addAll(this.listAccessByGroup(belong.target(), -1));</span>
+<span class="nc bnc" id="L583" title="All 2 branches missed.">        } else if (element instanceof HugeGroup) {</span>
+<span class="nc" id="L584">            HugeGroup group = (HugeGroup) element;</span>
+<span class="nc" id="L585">            accesses.addAll(this.listAccessByGroup(group.id(), -1));</span>
+<span class="nc bnc" id="L586" title="All 2 branches missed.">        } else if (element instanceof HugeAccess) {</span>
+<span class="nc" id="L587">            HugeAccess access = (HugeAccess) element;</span>
+<span class="nc" id="L588">            accesses.add(access);</span>
+<span class="nc" id="L589">        } else {</span>
+<span class="nc" id="L590">            E.checkArgument(false, &quot;Invalid type for role permission: %s&quot;,</span>
+                            element);
+        }
+
+<span class="nc" id="L594">        return this.rolePermission(accesses);</span>
+    }
+
+    private RolePermission rolePermission(HugeUser user) {
+<span class="nc bnc" id="L598" title="All 2 branches missed.">        if (user.role() != null) {</span>
+            // Return cached role (40ms =&gt; 10ms)
+<span class="nc" id="L600">            return user.role();</span>
+        }
+
+        // Collect accesses by user
+<span class="nc" id="L604">        List&lt;HugeAccess&gt; accesses = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L605">        List&lt;HugeBelong&gt; belongs = this.listBelongByUser(user.id(), -1);</span>
+<span class="nc bnc" id="L606" title="All 2 branches missed.">        for (HugeBelong belong : belongs) {</span>
+<span class="nc" id="L607">            accesses.addAll(this.listAccessByGroup(belong.target(), -1));</span>
+<span class="nc" id="L608">        }</span>
+
+        // Collect permissions by accesses
+<span class="nc" id="L611">        RolePermission role = this.rolePermission(accesses);</span>
+
+<span class="nc" id="L613">        user.role(role);</span>
+<span class="nc" id="L614">        return role;</span>
+    }
+
+    private RolePermission rolePermission(List&lt;HugeAccess&gt; accesses) {
+        // Mapping of: graph -&gt; action -&gt; resource
+<span class="nc" id="L619">        RolePermission role = new RolePermission();</span>
+<span class="nc bnc" id="L620" title="All 2 branches missed.">        for (HugeAccess access : accesses) {</span>
+<span class="nc" id="L621">            HugePermission accessPerm = access.permission();</span>
+<span class="nc" id="L622">            HugeTarget target = this.getTarget(access.target());</span>
+<span class="nc" id="L623">            role.add(target.graph(), accessPerm, target.resources());</span>
+<span class="nc" id="L624">        }</span>
+<span class="nc" id="L625">        return role;</span>
+    }
+
+    private RolePermission rolePermission(HugeTarget target) {
+<span class="nc" id="L629">        RolePermission role = new RolePermission();</span>
+        // TODO: improve for the actual meaning
+<span class="nc" id="L631">        role.add(target.graph(), HugePermission.READ, target.resources());</span>
+<span class="nc" id="L632">        return role;</span>
+    }
+
+    @Override
+    public String loginUser(String username, String password)
+                            throws AuthenticationException {
+<span class="nc" id="L638">        HugeUser user = this.matchUser(username, password);</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">        if (user == null) {</span>
+<span class="nc" id="L640">            String msg = &quot;Incorrect username or password&quot;;</span>
+<span class="nc" id="L641">            throw new AuthenticationException(msg);</span>
+        }
+
+<span class="nc" id="L644">        Map&lt;String, ?&gt; payload = ImmutableMap.of(AuthConstant.TOKEN_USER_NAME,</span>
+                                                 username,
+                                                 AuthConstant.TOKEN_USER_ID,
+<span class="nc" id="L647">                                                 user.id.asString());</span>
+<span class="nc" id="L648">        String token = this.tokenGenerator.create(payload, this.tokenExpire);</span>
+
+<span class="nc" id="L650">        this.tokenCache.update(IdGenerator.of(token), username);</span>
+<span class="nc" id="L651">        return token;</span>
+    }
+
+    @Override
+    public void logoutUser(String token) {
+<span class="nc" id="L656">        this.tokenCache.invalidate(IdGenerator.of(token));</span>
+<span class="nc" id="L657">    }</span>
+
+    @Override
+    public UserWithRole validateUser(String username, String password) {
+<span class="nc" id="L661">        HugeUser user = this.matchUser(username, password);</span>
+<span class="nc bnc" id="L662" title="All 2 branches missed.">        if (user == null) {</span>
+<span class="nc" id="L663">            return new UserWithRole(username);</span>
+        }
+<span class="nc" id="L665">        return new UserWithRole(user.id, username, this.rolePermission(user));</span>
+    }
+
+    @Override
+    public UserWithRole validateUser(String token) {
+<span class="nc" id="L670">        String username = this.tokenCache.get(IdGenerator.of(token));</span>
+
+<span class="nc" id="L672">        Claims payload = null;</span>
+<span class="nc" id="L673">        boolean needBuildCache = false;</span>
+<span class="nc bnc" id="L674" title="All 2 branches missed.">        if (username == null) {</span>
+            try{
+<span class="nc" id="L676">                payload = this.tokenGenerator.verify(token);</span>
+<span class="nc" id="L677">            }catch (Throwable t){</span>
+<span class="nc" id="L678">                LOG.error(String.format(&quot;Failed to verify token:[ %s ], cause:&quot;,token),t);</span>
+<span class="nc" id="L679">                return new UserWithRole(&quot;&quot;);</span>
+<span class="nc" id="L680">            }</span>
+<span class="nc" id="L681">            username = (String) payload.get(AuthConstant.TOKEN_USER_NAME);</span>
+<span class="nc" id="L682">            needBuildCache = true;</span>
+        }
+
+<span class="nc" id="L685">        HugeUser user = this.findUser(username);</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">        if (user == null) {</span>
+<span class="nc" id="L687">            return new UserWithRole(username);</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">        } else if (needBuildCache) {</span>
+<span class="nc" id="L689">            long expireAt = payload.getExpiration().getTime();</span>
+<span class="nc" id="L690">            long bornTime = this.tokenCache.expire() -</span>
+<span class="nc" id="L691">                            (expireAt - System.currentTimeMillis());</span>
+<span class="nc" id="L692">            this.tokenCache.update(IdGenerator.of(token), username,</span>
+<span class="nc" id="L693">                                   Math.negateExact(bornTime));</span>
+        }
+
+<span class="nc" id="L696">        return new UserWithRole(user.id(), username, this.rolePermission(user));</span>
+    }
+
+    @Override
+    public Set&lt;String&gt; listWhiteIPs() {
+<span class="nc" id="L701">        return ipWhiteList;</span>
+    }
+
+    @Override
+    public void setWhiteIPs(Set&lt;String&gt; ipWhiteList) {
+<span class="nc" id="L706">        this.ipWhiteList = ipWhiteList;</span>
+<span class="nc" id="L707">    }</span>
+
+    @Override
+    public boolean getWhiteIpStatus() {
+<span class="nc" id="L711">        return this.ipWhiteListEnabled;</span>
+    }
+
+    @Override
+    public void enabledWhiteIpList(boolean status) {
+<span class="nc" id="L716">        this.ipWhiteListEnabled = status;</span>
+<span class="nc" id="L717">    }</span>
+
+    /**
+     * Maybe can define an proxy class to choose forward or call local
+     */
+    public static boolean isLocal(AuthManager authManager) {
+<span class="nc" id="L723">        return authManager instanceof StandardAuthManager;</span>
+    }
+
+    public &lt;R&gt; R commit(Callable&lt;R&gt; callable) {
+<span class="nc" id="L727">        this.groups.autoCommit(false);</span>
+<span class="nc" id="L728">        this.access.autoCommit(false);</span>
+<span class="nc" id="L729">        this.targets.autoCommit(false);</span>
+<span class="nc" id="L730">        this.project.autoCommit(false);</span>
+<span class="nc" id="L731">        this.belong.autoCommit(false);</span>
+<span class="nc" id="L732">        this.users.autoCommit(false);</span>
+
+        try {
+<span class="nc" id="L735">            R result = callable.call();</span>
+<span class="nc" id="L736">            this.graph.systemTransaction().commit();</span>
+<span class="nc" id="L737">            return result;</span>
+<span class="nc" id="L738">        } catch (Throwable e) {</span>
+<span class="nc" id="L739">            this.groups.autoCommit(true);</span>
+<span class="nc" id="L740">            this.access.autoCommit(true);</span>
+<span class="nc" id="L741">            this.targets.autoCommit(true);</span>
+<span class="nc" id="L742">            this.project.autoCommit(true);</span>
+<span class="nc" id="L743">            this.belong.autoCommit(true);</span>
+<span class="nc" id="L744">            this.users.autoCommit(true);</span>
+            try {
+<span class="nc" id="L746">                this.graph.systemTransaction().rollback();</span>
+<span class="nc" id="L747">            } catch (Throwable rollbackException) {</span>
+<span class="nc" id="L748">                LOG.error(&quot;Failed to rollback transaction: {}&quot;,</span>
+<span class="nc" id="L749">                          rollbackException.getMessage(), rollbackException);</span>
+<span class="nc" id="L750">            }</span>
+<span class="nc bnc" id="L751" title="All 2 branches missed.">            if (e instanceof HugeException) {</span>
+<span class="nc" id="L752">                throw (HugeException) e;</span>
+            } else {
+<span class="nc" id="L754">                throw new HugeException(&quot;Failed to commit transaction: %s&quot;,</span>
+<span class="nc" id="L755">                                        e.getMessage(), e);</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

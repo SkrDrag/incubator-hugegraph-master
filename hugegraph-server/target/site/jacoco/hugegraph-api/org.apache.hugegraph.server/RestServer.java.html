@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RestServer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.server</a> &gt; <span class="el_source">RestServer.java</span></div><h1>RestServer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.server;
+
+import java.io.IOException;
+import java.net.URI;
+import java.util.Collection;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
+
+import jakarta.ws.rs.core.UriBuilder;
+
+import org.glassfish.grizzly.CompletionHandler;
+import org.glassfish.grizzly.GrizzlyFuture;
+import org.glassfish.grizzly.http.server.HttpServer;
+import org.glassfish.grizzly.http.server.NetworkListener;
+import org.glassfish.grizzly.http.server.StaticHttpHandler;
+import org.glassfish.grizzly.ssl.SSLContextConfigurator;
+import org.glassfish.grizzly.ssl.SSLEngineConfigurator;
+import org.glassfish.jersey.grizzly2.httpserver.GrizzlyHttpServerFactory;
+import org.glassfish.jersey.server.ResourceConfig;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.version.ApiVersion;
+
+public class RestServer {
+
+<span class="nc" id="L48">    private static final Logger LOG = Log.logger(RestServer.class);</span>
+
+    private final HugeConfig conf;
+    private final EventHub eventHub;
+<span class="nc" id="L52">    private HttpServer httpServer = null;</span>
+
+<span class="nc" id="L54">    public RestServer(HugeConfig conf, EventHub hub) {</span>
+<span class="nc" id="L55">        this.conf = conf;</span>
+<span class="nc" id="L56">        this.eventHub = hub;</span>
+<span class="nc" id="L57">    }</span>
+
+    public void start() throws IOException {
+<span class="nc" id="L60">        String url = this.conf.get(ServerOptions.REST_SERVER_URL);</span>
+<span class="nc" id="L61">        URI uri = UriBuilder.fromUri(url).build();</span>
+
+<span class="nc" id="L63">        ResourceConfig rc = new ApplicationConfig(this.conf, this.eventHub);</span>
+
+<span class="nc" id="L65">        this.httpServer = this.configHttpServer(uri, rc);</span>
+        try {
+            // Register HttpHandler for swagger-ui
+<span class="nc" id="L68">            this.httpServer.getServerConfiguration()</span>
+<span class="nc" id="L69">                           .addHttpHandler(new StaticHttpHandler(&quot;swagger-ui&quot;),</span>
+                                           &quot;/swagger-ui&quot;);
+<span class="nc" id="L71">            this.httpServer.start();</span>
+<span class="nc" id="L72">        } catch (Throwable e) {</span>
+<span class="nc" id="L73">            this.httpServer.shutdownNow();</span>
+<span class="nc" id="L74">            throw e;</span>
+<span class="nc" id="L75">        }</span>
+<span class="nc" id="L76">        this.calcMaxWriteThreads();</span>
+<span class="nc" id="L77">    }</span>
+
+    private HttpServer configHttpServer(URI uri, ResourceConfig rc) {
+<span class="nc" id="L80">        String protocol = uri.getScheme();</span>
+        final HttpServer server;
+<span class="nc bnc" id="L82" title="All 4 branches missed.">        if (protocol != null &amp;&amp; protocol.equals(&quot;https&quot;)) {</span>
+<span class="nc" id="L83">            SSLContextConfigurator sslContext = new SSLContextConfigurator();</span>
+<span class="nc" id="L84">            String keystoreFile = this.conf.get(</span>
+                                  ServerOptions.SSL_KEYSTORE_FILE);
+<span class="nc" id="L86">            String keystorePass = this.conf.get(</span>
+                                  ServerOptions.SSL_KEYSTORE_PASSWORD);
+<span class="nc" id="L88">            sslContext.setKeyStoreFile(keystoreFile);</span>
+<span class="nc" id="L89">            sslContext.setKeyStorePass(keystorePass);</span>
+<span class="nc" id="L90">            SSLEngineConfigurator sslConfig = new SSLEngineConfigurator(</span>
+                                              sslContext);
+<span class="nc" id="L92">            sslConfig.setClientMode(false);</span>
+<span class="nc" id="L93">            sslConfig.setWantClientAuth(true);</span>
+<span class="nc" id="L94">            server = GrizzlyHttpServerFactory.createHttpServer(uri, rc, true,</span>
+                                                               sslConfig);
+<span class="nc" id="L96">        } else {</span>
+<span class="nc" id="L97">            server = GrizzlyHttpServerFactory.createHttpServer(uri, rc, false);</span>
+        }
+
+<span class="nc" id="L100">        Collection&lt;NetworkListener&gt; listeners = server.getListeners();</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        E.checkState(listeners.size() &gt; 0,</span>
+                     &quot;Http Server should have some listeners, but now is none&quot;);
+<span class="nc" id="L103">        NetworkListener listener = listeners.iterator().next();</span>
+
+        // Option max_worker_threads
+<span class="nc" id="L106">        int maxWorkerThreads = this.conf.get(ServerOptions.MAX_WORKER_THREADS);</span>
+<span class="nc" id="L107">        listener.getTransport()</span>
+<span class="nc" id="L108">                .getWorkerThreadPoolConfig()</span>
+<span class="nc" id="L109">                .setCorePoolSize(maxWorkerThreads)</span>
+<span class="nc" id="L110">                .setMaxPoolSize(maxWorkerThreads);</span>
+
+        // Option keep_alive
+<span class="nc" id="L113">        int idleTimeout = this.conf.get(ServerOptions.CONN_IDLE_TIMEOUT);</span>
+<span class="nc" id="L114">        int maxRequests = this.conf.get(ServerOptions.CONN_MAX_REQUESTS);</span>
+<span class="nc" id="L115">        listener.getKeepAlive().setIdleTimeoutInSeconds(idleTimeout);</span>
+<span class="nc" id="L116">        listener.getKeepAlive().setMaxRequestsCount(maxRequests);</span>
+
+        // Option transaction timeout
+<span class="nc" id="L119">        int transactionTimeout = this.conf.get(ServerOptions.REQUEST_TIMEOUT);</span>
+<span class="nc" id="L120">        listener.setTransactionTimeout(transactionTimeout);</span>
+
+<span class="nc" id="L122">        return server;</span>
+    }
+
+    public Future&lt;HttpServer&gt; shutdown() {
+<span class="nc" id="L126">        E.checkNotNull(this.httpServer, &quot;http server&quot;);</span>
+        /*
+         * Since 2.3.x shutdown() won't call shutdownNow(), so the event
+         * ApplicationEvent.Type.DESTROY_FINISHED also won't be triggered,
+         * which is listened by ApplicationConfig.GraphManagerFactory, we
+         * manually call shutdownNow() here when the future is completed.
+         * See shutdown() change:
+         * https://github.com/javaee/grizzly/commit/182d8bcb4e45de5609ab92f6f1d5980f95d79b04
+         * #diff-f6c130f38a1ec11bdf9d3cb7e0a81084c8788c79a00befe65e40a13bc989b098R388
+         */
+<span class="nc" id="L136">        CompletableFuture&lt;HttpServer&gt; future = new CompletableFuture&lt;&gt;();</span>
+<span class="nc" id="L137">        future.whenComplete((server, exception) -&gt; {</span>
+<span class="nc" id="L138">            this.httpServer.shutdownNow();</span>
+<span class="nc" id="L139">        });</span>
+
+<span class="nc" id="L141">        GrizzlyFuture&lt;HttpServer&gt; grizzlyFuture = this.httpServer.shutdown();</span>
+<span class="nc" id="L142">        grizzlyFuture.addCompletionHandler(new CompletionHandler&lt;HttpServer&gt;() {</span>
+            @Override
+            public void cancelled() {
+<span class="nc" id="L145">                future.cancel(true);</span>
+<span class="nc" id="L146">            }</span>
+
+            @Override
+            public void failed(Throwable throwable) {
+<span class="nc" id="L150">                future.completeExceptionally(throwable);</span>
+<span class="nc" id="L151">            }</span>
+
+            @Override
+            public void completed(HttpServer result) {
+<span class="nc" id="L155">                future.complete(result);</span>
+<span class="nc" id="L156">            }</span>
+
+            @Override
+            public void updated(HttpServer result) {
+                // pass
+<span class="nc" id="L161">            }</span>
+        });
+
+<span class="nc" id="L164">        return future;</span>
+    }
+
+    public void shutdownNow() {
+<span class="nc" id="L168">        E.checkNotNull(this.httpServer, &quot;http server&quot;);</span>
+<span class="nc" id="L169">        this.httpServer.shutdownNow();</span>
+<span class="nc" id="L170">    }</span>
+
+    public static RestServer start(String conf, EventHub hub) throws Exception {
+<span class="nc" id="L173">        LOG.info(&quot;RestServer starting...&quot;);</span>
+<span class="nc" id="L174">        ApiVersion.check();</span>
+
+<span class="nc" id="L176">        HugeConfig config = new HugeConfig(conf);</span>
+<span class="nc" id="L177">        RestServer server = new RestServer(config, hub);</span>
+<span class="nc" id="L178">        server.start();</span>
+<span class="nc" id="L179">        LOG.info(&quot;RestServer started&quot;);</span>
+
+<span class="nc" id="L181">        return server;</span>
+    }
+
+    private void calcMaxWriteThreads() {
+<span class="nc" id="L185">        int maxWriteThreads = this.conf.get(ServerOptions.MAX_WRITE_THREADS);</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (maxWriteThreads &gt; 0) {</span>
+            // Use the value of MAX_WRITE_THREADS option if it's not 0
+<span class="nc" id="L188">            return;</span>
+        }
+
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        assert maxWriteThreads == 0;</span>
+
+<span class="nc" id="L193">        int maxWriteRatio = this.conf.get(ServerOptions.MAX_WRITE_RATIO);</span>
+<span class="nc bnc" id="L194" title="All 4 branches missed.">        assert maxWriteRatio &gt;= 0 &amp;&amp; maxWriteRatio &lt;= 100;</span>
+<span class="nc" id="L195">        int maxWorkerThreads = this.conf.get(ServerOptions.MAX_WORKER_THREADS);</span>
+<span class="nc" id="L196">        maxWriteThreads = maxWorkerThreads * maxWriteRatio / 100;</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        E.checkState(maxWriteThreads &gt;= 0,</span>
+                     &quot;Invalid value of maximum batch writing threads '%s'&quot;,
+<span class="nc" id="L199">                     maxWriteThreads);</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        if (maxWriteThreads == 0) {</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            E.checkState(maxWriteRatio == 0,</span>
+                         &quot;The value of maximum batch writing threads is 0 &quot; +
+                         &quot;due to the max_write_ratio '%s' is too small, &quot; +
+                         &quot;set to '%s' at least to ensure one thread.&quot; +
+                         &quot;If you want to disable batch write, &quot; +
+<span class="nc" id="L206">                         &quot;please let max_write_ratio be 0&quot;, maxWriteRatio,</span>
+<span class="nc" id="L207">                         (int) Math.ceil(100.0 / maxWorkerThreads));</span>
+        }
+<span class="nc" id="L209">        LOG.info(&quot;The maximum batch writing threads is {} (total threads {})&quot;,</span>
+<span class="nc" id="L210">                 maxWriteThreads, maxWorkerThreads);</span>
+        // NOTE: addProperty will make exist option's value become List
+<span class="nc" id="L212">        this.conf.setProperty(ServerOptions.MAX_WRITE_THREADS.name(),</span>
+<span class="nc" id="L213">                              String.valueOf(maxWriteThreads));</span>
+<span class="nc" id="L214">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WhiteIpListAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.profile</a> &gt; <span class="el_source">WhiteIpListAPI.java</span></div><h1>WhiteIpListAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.profile;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.StatusFilter;
+import org.apache.hugegraph.auth.AuthManager;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.google.common.collect.ImmutableMap;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;whiteiplist&quot;)
+@Singleton
+@Tag(name = &quot;WhiteIpListAPI&quot;)
+<span class="nc" id="L56">public class WhiteIpListAPI extends API {</span>
+
+<span class="nc" id="L58">    private static final Logger LOG = Log.logger(WhiteIpListAPI.class);</span>
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed(&quot;admin&quot;)
+    @Operation(summary = &quot;list white ips&quot;)
+    public Map&lt;String, Object&gt; list(@Context GraphManager manager) {
+<span class="nc" id="L66">        LOG.debug(&quot;List white ips&quot;);</span>
+<span class="nc" id="L67">        AuthManager authManager = manager.authManager();</span>
+<span class="nc" id="L68">        Set&lt;String&gt; whiteIpList = authManager.listWhiteIPs();</span>
+<span class="nc" id="L69">        return ImmutableMap.of(&quot;whiteIpList&quot;, whiteIpList);</span>
+    }
+
+    @POST
+    @Timed
+    @StatusFilter.Status(StatusFilter.Status.ACCEPTED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed(&quot;admin&quot;)
+    @Operation(summary = &quot;update white ip list&quot;)
+    public Map&lt;String, Object&gt; updateWhiteIPs(@Context GraphManager manager, Map&lt;String, Object&gt; actionMap) {
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        E.checkArgument(actionMap != null,</span>
+                        &quot;Missing argument: actionMap&quot;);
+<span class="nc" id="L82">        Set&lt;String&gt; whiteIpList = manager.authManager().listWhiteIPs();</span>
+<span class="nc" id="L83">        Object ipListRaw = actionMap.get(&quot;ips&quot;);</span>
+<span class="nc" id="L84">        E.checkArgument(ipListRaw instanceof List,</span>
+<span class="nc" id="L85">                        &quot;Invalid ips type '%s', must be list&quot;, ipListRaw.getClass());</span>
+<span class="nc" id="L86">        List&lt;String&gt; ipList = (List&lt;String&gt;) ipListRaw;</span>
+<span class="nc" id="L87">        Object actionRaw = actionMap.get(&quot;action&quot;);</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        E.checkArgument(actionRaw != null,</span>
+                        &quot;Missing argument: action&quot;);
+<span class="nc" id="L90">        E.checkArgument(actionRaw instanceof String,</span>
+                        &quot;Invalid action type '%s', must be string&quot;,
+<span class="nc" id="L92">                        actionRaw.getClass());</span>
+<span class="nc" id="L93">        String action = (String) actionRaw;</span>
+<span class="nc" id="L94">        E.checkArgument(StringUtils.isNotEmpty(action),</span>
+                        &quot;Missing argument: action&quot;);
+<span class="nc" id="L96">        Set&lt;String&gt; existedIPs = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L97">        Set&lt;String&gt; loadedIPs = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L98">        Set&lt;String&gt; illegalIPs = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L99">        Map&lt;String, Object&gt; result = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        for (String ip : ipList) {</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            if (whiteIpList.contains(ip)) {</span>
+<span class="nc" id="L102">                existedIPs.add(ip);</span>
+<span class="nc" id="L103">                continue;</span>
+            }
+<span class="nc bnc" id="L105" title="All 2 branches missed.">            if (&quot;load&quot;.equals(action)) {</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">                boolean rightIp = checkIp(ip) ? loadedIPs.add(ip) : illegalIPs.add(ip);</span>
+            }
+<span class="nc" id="L108">        }</span>
+<span class="nc bnc" id="L109" title="All 3 branches missed.">        switch (action) {</span>
+            case &quot;load&quot;:
+<span class="nc" id="L111">                LOG.debug(&quot;Load to white ip list&quot;);</span>
+<span class="nc" id="L112">                result.put(&quot;existed_ips&quot;, existedIPs);</span>
+<span class="nc" id="L113">                result.put(&quot;added_ips&quot;, loadedIPs);</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">                if (!illegalIPs.isEmpty()) {</span>
+<span class="nc" id="L115">                    result.put(&quot;illegal_ips&quot;, illegalIPs);</span>
+                }
+<span class="nc" id="L117">                whiteIpList.addAll(loadedIPs);</span>
+<span class="nc" id="L118">                break;</span>
+            case &quot;remove&quot;:
+<span class="nc" id="L120">                LOG.debug(&quot;Remove from white ip list&quot;);</span>
+<span class="nc" id="L121">                result.put(&quot;removed_ips&quot;, existedIPs);</span>
+<span class="nc" id="L122">                result.put(&quot;non_existed_ips&quot;, loadedIPs);</span>
+<span class="nc" id="L123">                whiteIpList.removeAll(existedIPs);</span>
+<span class="nc" id="L124">                break;</span>
+            default:
+<span class="nc" id="L126">                throw new AssertionError(String.format(&quot;Invalid action '%s', &quot; +</span>
+                                                       &quot;supported action is &quot; +
+                                                       &quot;'load' or 'remove'&quot;,
+                                                       action));
+        }
+<span class="nc" id="L131">        manager.authManager().setWhiteIPs(whiteIpList);</span>
+<span class="nc" id="L132">        return result;</span>
+    }
+
+    @PUT
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed(&quot;admin&quot;)
+    @Operation(summary = &quot;enable/disable the white ip list&quot;)
+    public Map&lt;String, Object&gt; updateStatus(@Context GraphManager manager, @QueryParam(&quot;status&quot;) String status) {
+<span class="nc" id="L141">        LOG.debug(&quot;Enable or disable white ip list&quot;);</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        E.checkArgument(&quot;true&quot;.equals(status) ||</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">                        &quot;false&quot;.equals(status),</span>
+                        &quot;Invalid status, valid status is 'true' or 'false'&quot;);
+<span class="nc" id="L145">        boolean open = Boolean.parseBoolean(status);</span>
+<span class="nc" id="L146">        manager.authManager().enabledWhiteIpList(open);</span>
+<span class="nc" id="L147">        Map&lt;String, Object&gt; map = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L148">        map.put(&quot;WhiteIpListOpen&quot;, open);</span>
+<span class="nc" id="L149">        return map;</span>
+    }
+
+    private boolean checkIp(String ipStr) {
+<span class="nc" id="L153">        String ip = &quot;^(1\\d{2}|2[0-4]\\d|25[0-5]|[1-9]\\d|[1-9])\\.&quot;</span>
+                    + &quot;(00?\\d|1\\d{2}|2[0-4]\\d|25[0-5]|[1-9]\\d|\\d)\\.&quot;
+                    + &quot;(00?\\d|1\\d{2}|2[0-4]\\d|25[0-5]|[1-9]\\d|\\d)\\.&quot;
+                    + &quot;(00?\\d|1\\d{2}|2[0-4]\\d|25[0-5]|[1-9]\\d|\\d)$&quot;;
+<span class="nc" id="L157">        Pattern pattern = Pattern.compile(ip);</span>
+<span class="nc" id="L158">        Matcher matcher = pattern.matcher(ipStr);</span>
+<span class="nc" id="L159">        return matcher.matches();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

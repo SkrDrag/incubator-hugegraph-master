@@ -1,0 +1,303 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MetricsModule.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.metrics</a> &gt; <span class="el_source">MetricsModule.java</span></div><h1>MetricsModule.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.metrics;
+
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.tinkerpop.shaded.jackson.core.JsonGenerator;
+import org.apache.tinkerpop.shaded.jackson.core.Version;
+import org.apache.tinkerpop.shaded.jackson.databind.Module;
+import org.apache.tinkerpop.shaded.jackson.databind.SerializerProvider;
+import org.apache.tinkerpop.shaded.jackson.databind.module.SimpleSerializers;
+import org.apache.tinkerpop.shaded.jackson.databind.ser.std.StdSerializer;
+
+import com.codahale.metrics.Counter;
+import com.codahale.metrics.Gauge;
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.MetricFilter;
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.Snapshot;
+import com.codahale.metrics.Timer;
+
+/**
+ * Copy from com.codahale.metrics.json.MetricsModule
+ */
+public class MetricsModule extends Module {
+
+<span class="nc" id="L46">    private static final Version VERSION = new Version(1, 1, 0, &quot;&quot;,</span>
+                                                       &quot;org.apache.hugegraph&quot;,
+                                                       &quot;hugegraph-api&quot;);
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    private static class GaugeSerializer extends StdSerializer&lt;Gauge&gt; {
+
+        private static final long serialVersionUID = -5347786455542725809L;
+
+        private GaugeSerializer() {
+<span class="nc" id="L56">            super(Gauge.class);</span>
+<span class="nc" id="L57">        }</span>
+
+        @Override
+        public void serialize(Gauge gauge, JsonGenerator json,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L62">            json.writeStartObject();</span>
+            final Object value;
+            try {
+<span class="nc" id="L65">                value = gauge.getValue();</span>
+<span class="nc" id="L66">                json.writeObjectField(&quot;value&quot;, value);</span>
+<span class="nc" id="L67">            } catch (RuntimeException e) {</span>
+<span class="nc" id="L68">                json.writeObjectField(&quot;error&quot;, e.toString());</span>
+<span class="nc" id="L69">            }</span>
+<span class="nc" id="L70">            json.writeEndObject();</span>
+<span class="nc" id="L71">        }</span>
+    }
+
+    private static class CounterSerializer extends StdSerializer&lt;Counter&gt; {
+
+        private static final long serialVersionUID = -209508117719806468L;
+
+        private CounterSerializer() {
+<span class="nc" id="L79">            super(Counter.class);</span>
+<span class="nc" id="L80">        }</span>
+
+        @Override
+        public void serialize(Counter counter, JsonGenerator json,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L85">            json.writeStartObject();</span>
+<span class="nc" id="L86">            json.writeNumberField(&quot;count&quot;, counter.getCount());</span>
+<span class="nc" id="L87">            json.writeEndObject();</span>
+<span class="nc" id="L88">        }</span>
+    }
+
+    private static class HistogramSerializer extends StdSerializer&lt;Histogram&gt; {
+
+        private static final long serialVersionUID = -775852382644934747L;
+
+        private final boolean showSamples;
+
+        private HistogramSerializer(boolean showSamples) {
+<span class="nc" id="L98">            super(Histogram.class);</span>
+<span class="nc" id="L99">            this.showSamples = showSamples;</span>
+<span class="nc" id="L100">        }</span>
+
+        @Override
+        public void serialize(Histogram histogram, JsonGenerator json,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L105">            json.writeStartObject();</span>
+<span class="nc" id="L106">            final Snapshot snapshot = histogram.getSnapshot();</span>
+<span class="nc" id="L107">            json.writeNumberField(&quot;count&quot;, histogram.getCount());</span>
+<span class="nc" id="L108">            json.writeNumberField(&quot;min&quot;, snapshot.getMin());</span>
+<span class="nc" id="L109">            json.writeNumberField(&quot;mean&quot;, snapshot.getMean());</span>
+<span class="nc" id="L110">            json.writeNumberField(&quot;max&quot;, snapshot.getMax());</span>
+<span class="nc" id="L111">            json.writeNumberField(&quot;stddev&quot;, snapshot.getStdDev());</span>
+<span class="nc" id="L112">            json.writeNumberField(&quot;p50&quot;, snapshot.getMedian());</span>
+<span class="nc" id="L113">            json.writeNumberField(&quot;p75&quot;, snapshot.get75thPercentile());</span>
+<span class="nc" id="L114">            json.writeNumberField(&quot;p95&quot;, snapshot.get95thPercentile());</span>
+<span class="nc" id="L115">            json.writeNumberField(&quot;p98&quot;, snapshot.get98thPercentile());</span>
+<span class="nc" id="L116">            json.writeNumberField(&quot;p99&quot;, snapshot.get99thPercentile());</span>
+<span class="nc" id="L117">            json.writeNumberField(&quot;p999&quot;, snapshot.get999thPercentile());</span>
+
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            if (this.showSamples) {</span>
+<span class="nc" id="L120">                json.writeObjectField(&quot;values&quot;, snapshot.getValues());</span>
+            }
+
+<span class="nc" id="L123">            json.writeEndObject();</span>
+<span class="nc" id="L124">        }</span>
+    }
+
+    private static class MeterSerializer extends StdSerializer&lt;Meter&gt; {
+
+        private static final long serialVersionUID = 5418467941358294770L;
+
+        private final String rateUnit;
+        private final double rateFactor;
+
+        public MeterSerializer(TimeUnit rateUnit) {
+<span class="nc" id="L135">            super(Meter.class);</span>
+<span class="nc" id="L136">            this.rateFactor = rateUnit.toSeconds(1);</span>
+<span class="nc" id="L137">            this.rateUnit = calculateRateUnit(rateUnit, &quot;events&quot;);</span>
+<span class="nc" id="L138">        }</span>
+
+        @Override
+        public void serialize(Meter meter, JsonGenerator json,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L143">            json.writeStartObject();</span>
+<span class="nc" id="L144">            json.writeNumberField(&quot;count&quot;, meter.getCount());</span>
+<span class="nc" id="L145">            json.writeNumberField(&quot;mean_rate&quot;, meter.getMeanRate() *</span>
+                                               this.rateFactor);
+<span class="nc" id="L147">            json.writeNumberField(&quot;m15_rate&quot;, meter.getFifteenMinuteRate() *</span>
+                                              this.rateFactor);
+<span class="nc" id="L149">            json.writeNumberField(&quot;m5_rate&quot;, meter.getFiveMinuteRate() *</span>
+                                             this.rateFactor);
+<span class="nc" id="L151">            json.writeNumberField(&quot;m1_rate&quot;, meter.getOneMinuteRate() *</span>
+                                             this.rateFactor);
+<span class="nc" id="L153">            json.writeStringField(&quot;rate_unit&quot;, this.rateUnit);</span>
+<span class="nc" id="L154">            json.writeEndObject();</span>
+<span class="nc" id="L155">        }</span>
+    }
+
+    private static class TimerSerializer extends StdSerializer&lt;Timer&gt; {
+
+        private static final long serialVersionUID = 6283520188524929099L;
+
+        private final String rateUnit;
+        private final double rateFactor;
+        private final String durationUnit;
+        private final double durationFactor;
+        private final boolean showSamples;
+
+        private TimerSerializer(TimeUnit rateUnit, TimeUnit durationUnit,
+                                boolean showSamples) {
+<span class="nc" id="L170">            super(Timer.class);</span>
+<span class="nc" id="L171">            this.rateUnit = calculateRateUnit(rateUnit, &quot;calls&quot;);</span>
+<span class="nc" id="L172">            this.rateFactor = rateUnit.toSeconds(1);</span>
+<span class="nc" id="L173">            this.durationUnit = durationUnit.toString().toLowerCase(Locale.US);</span>
+<span class="nc" id="L174">            this.durationFactor = 1.0 / durationUnit.toNanos(1);</span>
+<span class="nc" id="L175">            this.showSamples = showSamples;</span>
+<span class="nc" id="L176">        }</span>
+
+        @Override
+        public void serialize(Timer timer, JsonGenerator json,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L181">            json.writeStartObject();</span>
+<span class="nc" id="L182">            final Snapshot snapshot = timer.getSnapshot();</span>
+<span class="nc" id="L183">            json.writeNumberField(&quot;count&quot;, timer.getCount());</span>
+<span class="nc" id="L184">            json.writeNumberField(&quot;min&quot;, snapshot.getMin() *</span>
+                                         this.durationFactor);
+<span class="nc" id="L186">            json.writeNumberField(&quot;mean&quot;, snapshot.getMean() *</span>
+                                          this.durationFactor);
+<span class="nc" id="L188">            json.writeNumberField(&quot;max&quot;, snapshot.getMax() *</span>
+                                         this.durationFactor);
+<span class="nc" id="L190">            json.writeNumberField(&quot;stddev&quot;, snapshot.getStdDev() *</span>
+                                            this.durationFactor);
+
+<span class="nc" id="L193">            json.writeNumberField(&quot;p50&quot;, snapshot.getMedian() *</span>
+                                         this.durationFactor);
+<span class="nc" id="L195">            json.writeNumberField(&quot;p75&quot;, snapshot.get75thPercentile() *</span>
+                                         this.durationFactor);
+<span class="nc" id="L197">            json.writeNumberField(&quot;p95&quot;, snapshot.get95thPercentile() *</span>
+                                         this.durationFactor);
+<span class="nc" id="L199">            json.writeNumberField(&quot;p98&quot;, snapshot.get98thPercentile() *</span>
+                                         this.durationFactor);
+<span class="nc" id="L201">            json.writeNumberField(&quot;p99&quot;, snapshot.get99thPercentile() *</span>
+                                         this.durationFactor);
+<span class="nc" id="L203">            json.writeNumberField(&quot;p999&quot;, snapshot.get999thPercentile() *</span>
+                                          this.durationFactor);
+<span class="nc" id="L205">            json.writeStringField(&quot;duration_unit&quot;, this.durationUnit);</span>
+
+<span class="nc bnc" id="L207" title="All 2 branches missed.">            if (this.showSamples) {</span>
+<span class="nc" id="L208">                final long[] values = snapshot.getValues();</span>
+<span class="nc" id="L209">                final double[] scaledValues = new double[values.length];</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">                for (int i = 0; i &lt; values.length; i++) {</span>
+<span class="nc" id="L211">                    scaledValues[i] = values[i] * this.durationFactor;</span>
+                }
+<span class="nc" id="L213">                json.writeObjectField(&quot;values&quot;, scaledValues);</span>
+            }
+
+<span class="nc" id="L216">            json.writeNumberField(&quot;mean_rate&quot;, timer.getMeanRate() *</span>
+                                               this.rateFactor);
+<span class="nc" id="L218">            json.writeNumberField(&quot;m15_rate&quot;, timer.getFifteenMinuteRate() *</span>
+                                              this.rateFactor);
+<span class="nc" id="L220">            json.writeNumberField(&quot;m5_rate&quot;, timer.getFiveMinuteRate() *</span>
+                                             this.rateFactor);
+<span class="nc" id="L222">            json.writeNumberField(&quot;m1_rate&quot;, timer.getOneMinuteRate() *</span>
+                                             this.rateFactor);
+<span class="nc" id="L224">            json.writeStringField(&quot;rate_unit&quot;, this.rateUnit);</span>
+<span class="nc" id="L225">            json.writeEndObject();</span>
+<span class="nc" id="L226">        }</span>
+    }
+
+    private static class MetricRegistrySerializer
+                   extends StdSerializer&lt;MetricRegistry&gt; {
+
+        private static final long serialVersionUID = 3717001164181726933L;
+
+        private final MetricFilter filter;
+
+        private MetricRegistrySerializer(MetricFilter filter) {
+<span class="nc" id="L237">            super(MetricRegistry.class);</span>
+<span class="nc" id="L238">            this.filter = filter;</span>
+<span class="nc" id="L239">        }</span>
+
+        @Override
+        public void serialize(MetricRegistry registry, JsonGenerator json,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L244">            json.writeStartObject();</span>
+<span class="nc" id="L245">            json.writeStringField(&quot;version&quot;, VERSION.toString());</span>
+<span class="nc" id="L246">            json.writeObjectField(&quot;gauges&quot;, registry.getGauges(this.filter));</span>
+<span class="nc" id="L247">            json.writeObjectField(&quot;counters&quot;,</span>
+<span class="nc" id="L248">                                  registry.getCounters(this.filter));</span>
+<span class="nc" id="L249">            json.writeObjectField(&quot;histograms&quot;,</span>
+<span class="nc" id="L250">                                  registry.getHistograms(this.filter));</span>
+<span class="nc" id="L251">            json.writeObjectField(&quot;meters&quot;, registry.getMeters(this.filter));</span>
+<span class="nc" id="L252">            json.writeObjectField(&quot;timers&quot;, registry.getTimers(this.filter));</span>
+<span class="nc" id="L253">            json.writeEndObject();</span>
+<span class="nc" id="L254">        }</span>
+    }
+
+    private final TimeUnit rateUnit;
+    private final TimeUnit durationUnit;
+    private final boolean showSamples;
+    private final MetricFilter filter;
+
+    public MetricsModule(TimeUnit rateUnit, TimeUnit durationUnit,
+                         boolean showSamples) {
+<span class="nc" id="L264">        this(rateUnit, durationUnit, showSamples, MetricFilter.ALL);</span>
+<span class="nc" id="L265">    }</span>
+
+    public MetricsModule(TimeUnit rateUnit, TimeUnit durationUnit,
+<span class="nc" id="L268">                         boolean showSamples, MetricFilter filter) {</span>
+<span class="nc" id="L269">        this.rateUnit = rateUnit;</span>
+<span class="nc" id="L270">        this.durationUnit = durationUnit;</span>
+<span class="nc" id="L271">        this.showSamples = showSamples;</span>
+<span class="nc" id="L272">        this.filter = filter;</span>
+<span class="nc" id="L273">    }</span>
+
+    @Override
+    public String getModuleName() {
+<span class="nc" id="L277">        return &quot;metrics&quot;;</span>
+    }
+
+    @Override
+    public Version version() {
+<span class="nc" id="L282">        return VERSION;</span>
+    }
+
+    @Override
+    public void setupModule(Module.SetupContext context) {
+<span class="nc" id="L287">        context.addSerializers(new SimpleSerializers(Arrays.asList(</span>
+                new GaugeSerializer(),
+                new CounterSerializer(),
+                new HistogramSerializer(this.showSamples),
+                new MeterSerializer(this.rateUnit),
+                new TimerSerializer(this.rateUnit, this.durationUnit,
+                                    this.showSamples),
+                new MetricRegistrySerializer(this.filter)
+        )));
+<span class="nc" id="L296">    }</span>
+
+    private static String calculateRateUnit(TimeUnit unit, String name) {
+<span class="nc" id="L299">        final String s = unit.toString().toLowerCase(Locale.US);</span>
+<span class="nc" id="L300">        return name + '/' + s.substring(0, s.length() - 1);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

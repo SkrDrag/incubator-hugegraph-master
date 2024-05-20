@@ -1,0 +1,592 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IntSet.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util.collection</a> &gt; <span class="el_source">IntSet.java</span></div><h1>IntSet.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util.collection;
+
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+
+import org.eclipse.collections.api.collection.primitive.MutableIntCollection;
+import org.eclipse.collections.impl.set.mutable.primitive.IntHashSet;
+
+import org.apache.hugegraph.util.E;
+
+import io.netty.util.internal.shaded.org.jctools.util.UnsafeAccess;
+
+public interface IntSet {
+
+    boolean add(int key);
+
+    boolean remove(int key);
+
+    boolean contains(int key);
+
+    void clear();
+
+    int size();
+
+    boolean concurrent();
+
+    /**
+     * NOTE: IntSetBySegments(backend by IntSetByFixedAddr) is:
+     * - slower 2.5x than IntSetByFixedAddr for single thread;
+     * - slower 2.0x than IntSetByFixedAddr for 4 threads;
+     */
+    final class IntSetBySegments implements IntSet {
+
+        private final IntSet[] sets;
+        private final long capacity;
+        private final long unsignedSize;
+        private final int segmentSize;
+        private final int segmentShift;
+        private final int segmentMask;
+        private final Function&lt;Integer, IntSet&gt; creator;
+
+<span class="nc" id="L60">        private static final int DEFAULT_SEGMENTS = IntSet.CPUS * 100;</span>
+<span class="nc" id="L61">        private static final Function&lt;Integer, IntSet&gt; DEFAULT_CREATOR =</span>
+<span class="nc" id="L62">                             size -&gt; new IntSetByFixedAddr4Unsigned(size);</span>
+
+        @SuppressWarnings(&quot;static-access&quot;)
+<span class="nc" id="L65">        private static final int BASE_OFFSET = UNSAFE.ARRAY_OBJECT_BASE_OFFSET;</span>
+        @SuppressWarnings(&quot;static-access&quot;)
+<span class="nc" id="L67">        private static final int SHIFT = 31 - Integer.numberOfLeadingZeros(</span>
+                                              UNSAFE.ARRAY_OBJECT_INDEX_SCALE);
+
+        public IntSetBySegments(int capacity) {
+<span class="nc" id="L71">            this(capacity, DEFAULT_SEGMENTS, DEFAULT_CREATOR);</span>
+<span class="nc" id="L72">        }</span>
+
+        public IntSetBySegments(int capacity, int segments) {
+<span class="nc" id="L75">            this(capacity, segments, DEFAULT_CREATOR);</span>
+<span class="nc" id="L76">        }</span>
+
+        public IntSetBySegments(int capacity, int segments,
+<span class="nc" id="L79">                                Function&lt;Integer, IntSet&gt; creator) {</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">            E.checkArgument(segments &gt;= 1,</span>
+<span class="nc" id="L81">                            &quot;Invalid segments %s&quot;, segments);</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">            E.checkArgument(capacity &gt;= segments,</span>
+                            &quot;Invalid capacity %s, expect &gt;= segments %s&quot;,
+<span class="nc" id="L84">                            capacity, segments);</span>
+
+<span class="nc" id="L86">            this.sets = new IntSet[segments];</span>
+            // include signed and unsigned number
+<span class="nc" id="L88">            this.unsignedSize = capacity;</span>
+<span class="nc" id="L89">            this.capacity = this.unsignedSize * 2L;</span>
+<span class="nc" id="L90">            this.segmentSize = IntSet.segmentSize(this.capacity, segments);</span>
+<span class="nc" id="L91">            this.segmentShift = Integer.numberOfTrailingZeros(this.segmentSize);</span>
+            /*
+             * The mask is lower bits of each segment size, like
+             * segmentSize=4096 (0x1000), segmentMask=4095 (0xfff),
+             * NOTE: `-1 &gt;&gt;&gt; 0` or `-1 &gt;&gt;&gt; 32` is -1.
+             */
+<span class="nc bnc" id="L97" title="All 2 branches missed.">            this.segmentMask = this.segmentShift == 0 ?</span>
+<span class="nc" id="L98">                               0 : -1 &gt;&gt;&gt; (32 - this.segmentShift);</span>
+<span class="nc" id="L99">            this.creator = creator;</span>
+<span class="nc" id="L100">        }</span>
+
+        @Override
+        public boolean add(int key) {
+<span class="nc" id="L104">            int innerKey = (int) ((key + this.unsignedSize) &amp; this.segmentMask);</span>
+<span class="nc" id="L105">            return segment(key).add(innerKey);</span>
+        }
+
+        @Override
+        public boolean remove(int key) {
+<span class="nc" id="L110">            int innerKey = (int) ((key + this.unsignedSize) &amp; this.segmentMask);</span>
+<span class="nc" id="L111">            return segment(key).remove(innerKey);</span>
+        }
+
+        @Override
+        public boolean contains(int key) {
+<span class="nc" id="L116">            long ukey = key + this.unsignedSize;</span>
+<span class="nc bnc" id="L117" title="All 4 branches missed.">            if (ukey &gt;= this.capacity || ukey &lt; 0L) {</span>
+<span class="nc" id="L118">                return false;</span>
+            }
+<span class="nc" id="L120">            int innerKey = (int) (ukey &amp; this.segmentMask);</span>
+<span class="nc" id="L121">            return segment(key).contains(innerKey);</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            for (int i = 0; i &lt; this.sets.length; i++) {</span>
+<span class="nc" id="L127">                IntSet set = this.segmentAt(i);</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                if (set != null) {</span>
+<span class="nc" id="L129">                    set.clear();</span>
+                }
+            }
+<span class="nc" id="L132">        }</span>
+
+        @Override
+        public int size() {
+<span class="nc" id="L136">            int size = 0;</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            for (int i = 0; i &lt; this.sets.length; i++) {</span>
+<span class="nc" id="L138">                IntSet set = this.segmentAt(i);</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">                if (set != null) {</span>
+<span class="nc" id="L140">                    size += set.size();</span>
+                }
+                // TODO: can we assume all the remaining sets are null here
+            }
+<span class="nc" id="L144">            return size;</span>
+        }
+
+        @Override
+        public boolean concurrent() {
+<span class="nc" id="L149">            return true;</span>
+        }
+
+        private IntSet segment(int key) {
+<span class="nc" id="L153">            long ukey = key + this.unsignedSize;</span>
+<span class="nc bnc" id="L154" title="All 4 branches missed.">            if (ukey &gt;= this.capacity || ukey &lt; 0L) {</span>
+<span class="nc" id="L155">                E.checkArgument(false,</span>
+                                &quot;The key %s is out of bound %s&quot;,
+<span class="nc" id="L157">                                key, this.capacity);</span>
+            }
+
+<span class="nc" id="L160">            long index = ukey &gt;&gt;&gt; this.segmentShift;</span>
+<span class="nc" id="L161">            IntSet exist = this.sets[(int) index];</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">            if (exist != null) {</span>
+<span class="nc" id="L163">                return exist;</span>
+            }
+
+            // volatile get this.sets[index]
+<span class="nc" id="L167">            long offset = (index &lt;&lt; SHIFT) + BASE_OFFSET;</span>
+<span class="nc" id="L168">            Object old = UNSAFE.getObjectVolatile(this.sets, offset);</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            if (old != null) {</span>
+<span class="nc" id="L170">                return (IntSet) old;</span>
+            }
+
+            // set this.sets[index] = new IntSet()
+<span class="nc" id="L174">            IntSet set = this.creator.apply(this.segmentSize);</span>
+            while (true) {
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                if (UNSAFE.compareAndSwapObject(this.sets, offset, null, set)) {</span>
+<span class="nc" id="L177">                    return set;</span>
+                }
+<span class="nc" id="L179">                old = UNSAFE.getObjectVolatile(this.sets, offset);</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">                if (old != null) {</span>
+<span class="nc" id="L181">                    return (IntSet) old;</span>
+                }
+            }
+        }
+
+        private IntSet segmentAt(int index) {
+            // volatile get this.sets[index]
+<span class="nc" id="L188">            long offset = (index &lt;&lt; SHIFT) + BASE_OFFSET;</span>
+<span class="nc" id="L189">            IntSet set = (IntSet) UNSAFE.getObjectVolatile(this.sets, offset);</span>
+<span class="nc" id="L190">            return set;</span>
+        }
+    }
+
+    /**
+     * NOTE: IntSetByFixedAddr is:
+     * - faster 3x than ec IntIntHashSet for single thread;
+     * - faster 6x than ec IntIntHashSet for 4 threads, 4x operations
+     *   with 0.67x cost;
+     * - faster 20x than ec IntIntHashSet-segment-lock for 4 threads;
+     * - faster 60x than ec IntIntHashSet-global-lock for 4 threads;
+     */
+    final class IntSetByFixedAddr implements IntSet {
+
+        private final long[] bits;
+        private final long numBits;
+        private final long numBitsUnsigned;
+        private final AtomicInteger size;
+
+<span class="nc" id="L209">        public IntSetByFixedAddr(int numBits) {</span>
+<span class="nc" id="L210">            this.numBitsUnsigned = numBits;</span>
+<span class="nc" id="L211">            this.numBits = numBits * 2L;</span>
+<span class="nc" id="L212">            this.bits = new long[IntSet.bits2words(this.numBits)];</span>
+<span class="nc" id="L213">            this.size = new AtomicInteger();</span>
+<span class="nc" id="L214">        }</span>
+
+        @Override
+        public boolean add(int key) {
+<span class="nc" id="L218">            long ukey = key + this.numBitsUnsigned;</span>
+<span class="nc" id="L219">            long offset = this.offset(key);</span>
+<span class="nc" id="L220">            long bitmask = IntSetByFixedAddr4Unsigned.bitmaskOfKey(ukey);</span>
+
+            while (true) {
+<span class="nc" id="L223">                long oldV = UNSAFE.getLongVolatile(this.bits, offset);</span>
+<span class="nc" id="L224">                long newV = oldV | bitmask;</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">                if (newV == oldV) {</span>
+<span class="nc" id="L226">                    return false;</span>
+                }
+                // this.bits[index] |= bitmask;
+<span class="nc bnc" id="L229" title="All 2 branches missed.">                if (UNSAFE.compareAndSwapLong(this.bits, offset, oldV, newV)) {</span>
+<span class="nc" id="L230">                    this.size.incrementAndGet();</span>
+<span class="nc" id="L231">                    return true;</span>
+                }
+<span class="nc" id="L233">            }</span>
+        }
+
+        @Override
+        public boolean contains(int key) {
+<span class="nc" id="L238">            long ukey = key + this.numBitsUnsigned;</span>
+<span class="nc bnc" id="L239" title="All 4 branches missed.">            if (ukey &gt;= this.numBits || ukey &lt; 0L) {</span>
+<span class="nc" id="L240">                return false;</span>
+            }
+<span class="nc" id="L242">            long offset = this.offset(key);</span>
+<span class="nc" id="L243">            long bitmask = IntSetByFixedAddr4Unsigned.bitmaskOfKey(ukey);</span>
+
+<span class="nc" id="L245">            long value = UNSAFE.getLongVolatile(this.bits, offset);</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">            return (value &amp; bitmask) != 0L;</span>
+        }
+
+        @Override
+        public boolean remove(int key) {
+<span class="nc" id="L251">            long ukey = key + this.numBitsUnsigned;</span>
+<span class="nc" id="L252">            long offset = this.offset(key);</span>
+<span class="nc" id="L253">            long bitmask = IntSetByFixedAddr4Unsigned.bitmaskOfKey(ukey);</span>
+
+            while (true) {
+<span class="nc" id="L256">                long oldV = UNSAFE.getLongVolatile(this.bits, offset);</span>
+<span class="nc" id="L257">                long newV = oldV &amp; ~bitmask;</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">                if (newV == oldV) {</span>
+<span class="nc" id="L259">                    return false;</span>
+                }
+                // this.bits[index] &amp;= ~bitmask
+<span class="nc bnc" id="L262" title="All 2 branches missed.">                if (UNSAFE.compareAndSwapLong(this.bits, offset, oldV, newV)) {</span>
+<span class="nc" id="L263">                    this.size.decrementAndGet();</span>
+<span class="nc" id="L264">                    return true;</span>
+                }
+<span class="nc" id="L266">            }</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="nc" id="L271">            Arrays.fill(this.bits, 0);</span>
+<span class="nc" id="L272">            this.size.set(0);</span>
+<span class="nc" id="L273">        }</span>
+
+        @Override
+        public int size() {
+<span class="nc" id="L277">            return this.size.get();</span>
+        }
+
+        @Override
+        public boolean concurrent() {
+<span class="nc" id="L282">            return true;</span>
+        }
+
+        private long offset(long key) {
+<span class="nc" id="L286">            long ukey = key + this.numBitsUnsigned;</span>
+<span class="nc bnc" id="L287" title="All 4 branches missed.">            if (ukey &gt;= this.numBits || ukey &lt; 0L) {</span>
+<span class="nc" id="L288">                E.checkArgument(false, &quot;The key %s is out of bound %s&quot;,</span>
+<span class="nc" id="L289">                                key, this.numBits);</span>
+            }
+<span class="nc" id="L291">            return IntSetByFixedAddr4Unsigned.bitOffsetToByteOffset(ukey);</span>
+        }
+    }
+
+    final class IntSetByFixedAddr4Unsigned implements IntSet {
+
+        private final long[] bits;
+        private final int numBits;
+        private final AtomicInteger size;
+
+        @SuppressWarnings(&quot;static-access&quot;)
+<span class="nc" id="L302">        private static final int BASE_OFFSET = UNSAFE.ARRAY_LONG_BASE_OFFSET;</span>
+        @SuppressWarnings(&quot;static-access&quot;)
+<span class="nc" id="L304">        private static final int MUL8 = 31 - Integer.numberOfLeadingZeros(</span>
+                                             UNSAFE.ARRAY_LONG_INDEX_SCALE);
+
+<span class="nc" id="L307">        public IntSetByFixedAddr4Unsigned(int numBits) {</span>
+<span class="nc" id="L308">            this.numBits = numBits;</span>
+<span class="nc" id="L309">            this.bits = new long[IntSet.bits2words(numBits)];</span>
+<span class="nc" id="L310">            this.size = new AtomicInteger();</span>
+<span class="nc" id="L311">        }</span>
+
+        @Override
+        public boolean add(int key) {
+<span class="nc" id="L315">            long offset = this.offset(key);</span>
+<span class="nc" id="L316">            long bitmask = bitmaskOfKey(key);</span>
+
+            while (true) {
+<span class="nc" id="L319">                long oldV = UNSAFE.getLongVolatile(this.bits, offset);</span>
+<span class="nc" id="L320">                long newV = oldV | bitmask;</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">                if (newV == oldV) {</span>
+<span class="nc" id="L322">                    return false;</span>
+                }
+                // this.bits[index] |= bitmask;
+<span class="nc bnc" id="L325" title="All 2 branches missed.">                if (UNSAFE.compareAndSwapLong(this.bits, offset, oldV, newV)) {</span>
+<span class="nc" id="L326">                    this.size.incrementAndGet();</span>
+<span class="nc" id="L327">                    return true;</span>
+                }
+<span class="nc" id="L329">            }</span>
+        }
+
+        @Override
+        public boolean contains(int key) {
+<span class="nc bnc" id="L334" title="All 4 branches missed.">            if (key &gt;= this.numBits || key &lt; 0) {</span>
+<span class="nc" id="L335">                return false;</span>
+            }
+<span class="nc" id="L337">            long offset = this.offset(key);</span>
+<span class="nc" id="L338">            long bitmask = bitmaskOfKey(key);</span>
+
+<span class="nc" id="L340">            long value = UNSAFE.getLongVolatile(this.bits, offset);</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">            return (value &amp; bitmask) != 0L;</span>
+        }
+
+        @Override
+        public boolean remove(int key) {
+<span class="nc" id="L346">            long offset = this.offset(key);</span>
+<span class="nc" id="L347">            long bitmask = bitmaskOfKey(key);</span>
+
+            while (true) {
+<span class="nc" id="L350">                long oldV = UNSAFE.getLongVolatile(this.bits, offset);</span>
+<span class="nc" id="L351">                long newV = oldV &amp; ~bitmask;</span>
+<span class="nc bnc" id="L352" title="All 2 branches missed.">                if (newV == oldV) {</span>
+<span class="nc" id="L353">                    return false;</span>
+                }
+                // this.bits[index] &amp;= ~bitmask
+<span class="nc bnc" id="L356" title="All 2 branches missed.">                if (UNSAFE.compareAndSwapLong(this.bits, offset, oldV, newV)) {</span>
+<span class="nc" id="L357">                    this.size.decrementAndGet();</span>
+<span class="nc" id="L358">                    return true;</span>
+                }
+<span class="nc" id="L360">            }</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="nc" id="L365">            Arrays.fill(this.bits, 0);</span>
+<span class="nc" id="L366">            this.size.set(0);</span>
+<span class="nc" id="L367">        }</span>
+
+        @Override
+        public int size() {
+<span class="nc" id="L371">            return this.size.get();</span>
+        }
+
+        @Override
+        public boolean concurrent() {
+<span class="nc" id="L376">            return true;</span>
+        }
+
+        public int nextKey(int key) {
+<span class="nc bnc" id="L380" title="All 2 branches missed.">            if (key &lt; 0) {</span>
+<span class="nc" id="L381">                key = 0;</span>
+            }
+<span class="nc bnc" id="L383" title="All 2 branches missed.">            if (key &gt;= this.numBits) {</span>
+<span class="nc" id="L384">                return key;</span>
+            }
+
+<span class="nc" id="L387">            long offset = this.offset(key);</span>
+<span class="nc" id="L388">            int startBit = key &amp; (int) MOD64;</span>
+<span class="nc" id="L389">            int bitsEachLong = 64;</span>
+<span class="nc" id="L390">            int bytesEachLong = 8;</span>
+<span class="nc" id="L391">            key -= startBit;</span>
+
+            // check the first long
+<span class="nc" id="L394">            long value = UNSAFE.getLongVolatile(this.bits, offset);</span>
+<span class="nc bnc" id="L395" title="All 2 branches missed.">            if (value != 0L) {</span>
+<span class="nc bnc" id="L396" title="All 2 branches missed.">                for (int bit = startBit; bit &lt; bitsEachLong; bit++) {</span>
+<span class="nc" id="L397">                    long bitmask = 1L &lt;&lt; bit;</span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">                    if ((value &amp; bitmask) != 0L) {</span>
+<span class="nc" id="L399">                        return key + bit;</span>
+                    }
+                }
+            }
+<span class="nc" id="L403">            offset += bytesEachLong;</span>
+<span class="nc" id="L404">            key += bitsEachLong;</span>
+
+            // check the remaining
+<span class="nc bnc" id="L407" title="All 2 branches missed.">            while (key &lt; this.numBits) {</span>
+<span class="nc" id="L408">                value = UNSAFE.getLongVolatile(this.bits, offset);</span>
+<span class="nc bnc" id="L409" title="All 2 branches missed.">                if (value != 0L) {</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">                    for (int bit = 0; bit &lt; bitsEachLong; bit++) {</span>
+<span class="nc" id="L411">                        long bitmask = 1L &lt;&lt; bit;</span>
+<span class="nc bnc" id="L412" title="All 2 branches missed.">                        if ((value &amp; bitmask) != 0L) {</span>
+<span class="nc" id="L413">                            return key + bit;</span>
+                        }
+                    }
+                }
+<span class="nc" id="L417">                offset += bytesEachLong;</span>
+<span class="nc" id="L418">                key += bitsEachLong;</span>
+            }
+<span class="nc" id="L420">            return key;</span>
+        }
+
+        private long offset(int key) {
+<span class="nc bnc" id="L424" title="All 4 branches missed.">            if (key &gt;= this.numBits || key &lt; 0) {</span>
+<span class="nc" id="L425">                E.checkArgument(false, &quot;The key %s is out of bound %s&quot;,</span>
+<span class="nc" id="L426">                                key, this.numBits);</span>
+            }
+<span class="nc" id="L428">            return bitOffsetToByteOffset(key);</span>
+        }
+
+        private static long bitOffsetToByteOffset(long key) {
+            // bits to long offset
+<span class="nc" id="L433">            long index = key &gt;&gt; DIV64;</span>
+            // long offset to byte offset
+<span class="nc" id="L435">            long offset = index &lt;&lt; MUL8;</span>
+            // add the array base offset
+<span class="nc" id="L437">            offset += BASE_OFFSET;</span>
+<span class="nc" id="L438">            return offset;</span>
+        }
+
+        private static long bitmaskOfKey(long key) {
+<span class="nc" id="L442">            long bitIndex = key &amp; MOD64;</span>
+<span class="nc" id="L443">            long bitmask = 1L &lt;&lt; bitIndex;</span>
+<span class="nc" id="L444">            return bitmask;</span>
+        }
+    }
+
+    final class IntSetByEcSegment implements IntSet {
+
+        private final MutableIntCollection[] sets;
+        private final int segmentMask;
+
+<span class="nc" id="L453">        public IntSetByEcSegment(int segments) {</span>
+<span class="nc" id="L454">            segments = IntSet.sizeToPowerOf2Size(segments);</span>
+<span class="nc" id="L455">            this.segmentMask = segments - 1;</span>
+<span class="nc" id="L456">            this.sets = new MutableIntCollection[segments];</span>
+<span class="nc bnc" id="L457" title="All 2 branches missed.">            for (int i = 0; i &lt; segments; i++) {</span>
+                /*
+                 * NOTE: asSynchronized() is:
+                 * - about slower 2x for single thread;
+                 * - about slower 4x for 4 threads, 4x operations with 16x cost;
+                 * - about faster 20x than global-lock for 4 threads;
+                 */
+<span class="nc" id="L464">                this.sets[i] = new IntHashSet().asSynchronized();</span>
+            }
+<span class="nc" id="L466">        }</span>
+
+        private MutableIntCollection set(int key) {
+            // NOTE '%' is slower 20% ~ 50% than '&amp;': key % this.sets.length;
+<span class="nc" id="L470">            int index = key &amp; this.segmentMask;</span>
+<span class="nc" id="L471">            return this.sets[index];</span>
+        }
+
+        @Override
+        public boolean add(int key) {
+<span class="nc" id="L476">            return set(key).add(key);</span>
+        }
+
+        @Override
+        public boolean contains(int key) {
+<span class="nc" id="L481">            return set(key).contains(key);</span>
+        }
+
+        @Override
+        public boolean remove(int key) {
+<span class="nc" id="L486">            return set(key).remove(key);</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="nc bnc" id="L491" title="All 2 branches missed.">            for (MutableIntCollection set : this.sets) {</span>
+<span class="nc" id="L492">                set.clear();</span>
+            }
+<span class="nc" id="L494">        }</span>
+
+        @Override
+        public int size() {
+<span class="nc" id="L498">            int size = 0;</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">            for (MutableIntCollection set : this.sets) {</span>
+<span class="nc" id="L500">                size += set.size();</span>
+            }
+<span class="nc" id="L502">            return size;</span>
+        }
+
+        @Override
+        public boolean concurrent() {
+<span class="nc" id="L507">            return false;</span>
+        }
+    }
+
+    final class IntSetByFixedAddrByHppc implements IntSet {
+
+        private final com.carrotsearch.hppc.BitSet bits;
+
+<span class="nc" id="L515">        public IntSetByFixedAddrByHppc(int numBits) {</span>
+<span class="nc" id="L516">            this.bits = new com.carrotsearch.hppc.BitSet(numBits);</span>
+<span class="nc" id="L517">        }</span>
+
+        @Override
+        public boolean add(int key) {
+<span class="nc" id="L521">            this.bits.set(key);</span>
+<span class="nc" id="L522">            return true;</span>
+        }
+
+        @Override
+        public boolean remove(int key) {
+<span class="nc" id="L527">            this.bits.clear(key);</span>
+<span class="nc" id="L528">            return true;</span>
+        }
+
+        @Override
+        public boolean contains(int key) {
+<span class="nc" id="L533">            return this.bits.get(key);</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="nc" id="L538">            this.bits.clear();</span>
+<span class="nc" id="L539">        }</span>
+
+        @Override
+        public int size() {
+<span class="nc" id="L543">            return (int) this.bits.size();</span>
+        }
+
+        @Override
+        public boolean concurrent() {
+<span class="nc" id="L548">            return false;</span>
+        }
+    }
+
+<span class="nc" id="L552">    int CPUS = Runtime.getRuntime().availableProcessors();</span>
+<span class="nc" id="L553">    sun.misc.Unsafe UNSAFE = UnsafeAccess.UNSAFE;</span>
+
+    long MOD64 = 0x3fL;
+    int DIV64 = 6;
+
+    static int segmentSize(long capacity, int segments) {
+<span class="nc" id="L559">        long eachSize = capacity / segments;</span>
+<span class="nc" id="L560">        eachSize = IntSet.sizeToPowerOf2Size((int) eachSize);</span>
+        /*
+         * Supply total size
+         * like capacity=20 and segments=19, then eachSize=1
+         * should increase eachSize to eachSize * 2.
+         */
+<span class="nc bnc" id="L566" title="All 2 branches missed.">        while (eachSize * segments &lt; capacity) {</span>
+<span class="nc" id="L567">            eachSize &lt;&lt;= 1;</span>
+        }
+<span class="nc" id="L569">        return (int) eachSize;</span>
+    }
+
+    static int sizeToPowerOf2Size(int size) {
+<span class="nc bnc" id="L573" title="All 2 branches missed.">        if (size &lt; 1) {</span>
+<span class="nc" id="L574">            size = 1;</span>
+        }
+
+<span class="nc" id="L577">        int n = size - 1;</span>
+<span class="nc" id="L578">        n |= n &gt;&gt;&gt; 1;</span>
+<span class="nc" id="L579">        n |= n &gt;&gt;&gt; 2;</span>
+<span class="nc" id="L580">        n |= n &gt;&gt;&gt; 4;</span>
+<span class="nc" id="L581">        n |= n &gt;&gt;&gt; 8;</span>
+<span class="nc" id="L582">        n |= n &gt;&gt;&gt; 16;</span>
+<span class="nc" id="L583">        size = n + 1;</span>
+
+<span class="nc" id="L585">        return size;</span>
+    }
+
+    static int bits2words(long numBits) {
+<span class="nc" id="L589">        return (int) ((numBits - 1) &gt;&gt;&gt; DIV64) + 1;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

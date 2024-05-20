@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Aggregate.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.query</a> &gt; <span class="el_source">Aggregate.java</span></div><h1>Aggregate.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.query;
+
+import java.util.Iterator;
+import java.util.function.BiFunction;
+
+import org.apache.tinkerpop.gremlin.util.NumberHelper;
+
+public class Aggregate {
+
+    private final AggregateFunc func;
+    private final String column;
+
+<span class="nc" id="L30">    public Aggregate(AggregateFunc func, String column) {</span>
+<span class="nc" id="L31">        this.func = func;</span>
+<span class="nc" id="L32">        this.column = column;</span>
+<span class="nc" id="L33">    }</span>
+
+    public AggregateFunc func() {
+<span class="nc" id="L36">        return this.func;</span>
+    }
+
+    public String column() {
+<span class="nc" id="L40">        return this.column;</span>
+    }
+
+    public boolean countAll() {
+<span class="nc bnc" id="L44" title="All 4 branches missed.">        return this.func == AggregateFunc.COUNT &amp;&amp; this.column == null;</span>
+    }
+
+    public Number reduce(Iterator&lt;Number&gt; results) {
+<span class="nc" id="L48">        return this.func.reduce(results);</span>
+    }
+
+    public Number defaultValue() {
+<span class="nc" id="L52">        return this.func.defaultValue();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L57">        return String.format(&quot;%s(%s)&quot;, this.func.string(),</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">                             this.column == null ? &quot;*&quot; : this.column);</span>
+    }
+
+<span class="nc" id="L61">    public enum AggregateFunc {</span>
+
+<span class="nc" id="L63">        COUNT(&quot;count&quot;, 0L, NumberHelper::add),</span>
+<span class="nc" id="L64">        MAX(&quot;max&quot;, -Double.MAX_VALUE, NumberHelper::max),</span>
+<span class="nc" id="L65">        MIN(&quot;min&quot;, Double.MAX_VALUE, NumberHelper::min),</span>
+<span class="nc" id="L66">        AVG(&quot;avg&quot;, 0D, NumberHelper::add),</span>
+<span class="nc" id="L67">        SUM(&quot;sum&quot;, 0L, NumberHelper::add);</span>
+
+        private final String name;
+        private final Number defaultValue;
+        private final BiFunction&lt;Number, Number, Number&gt; merger;
+
+        AggregateFunc(String name, Number defaultValue,
+<span class="nc" id="L74">                      BiFunction&lt;Number, Number, Number&gt; merger) {</span>
+<span class="nc" id="L75">            this.name = name;</span>
+<span class="nc" id="L76">            this.defaultValue = defaultValue;</span>
+<span class="nc" id="L77">            this.merger = merger;</span>
+<span class="nc" id="L78">        }</span>
+
+        public String string() {
+<span class="nc" id="L81">            return this.name;</span>
+        }
+
+        public Number defaultValue() {
+<span class="nc" id="L85">            return this.defaultValue;</span>
+        }
+
+        public Number reduce(Iterator&lt;Number&gt; results) {
+            Number number;
+<span class="nc" id="L90">            long count = 0L;</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">            if (results.hasNext()) {</span>
+<span class="nc" id="L92">                number = results.next();</span>
+<span class="nc" id="L93">                count++;</span>
+            } else {
+<span class="nc" id="L95">                return this.defaultValue;</span>
+            }
+<span class="nc bnc" id="L97" title="All 2 branches missed.">            while (results.hasNext()) {</span>
+<span class="nc" id="L98">                number = this.merger.apply(number, results.next());</span>
+<span class="nc" id="L99">                count++;</span>
+            }
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            if (this == AVG) {</span>
+<span class="nc" id="L102">                number = NumberHelper.div(number, count);</span>
+            }
+<span class="nc" id="L104">            return number;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

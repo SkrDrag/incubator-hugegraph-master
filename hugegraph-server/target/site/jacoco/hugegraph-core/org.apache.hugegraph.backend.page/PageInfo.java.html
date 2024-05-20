@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PageInfo.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.page</a> &gt; <span class="el_source">PageInfo.java</span></div><h1>PageInfo.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.page;
+
+import java.util.Iterator;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.iterator.Metadatable;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.StringEncoding;
+
+public final class PageInfo {
+
+    public static final String PAGE = &quot;page&quot;;
+    public static final String PAGE_NONE = &quot;&quot;;
+
+    private int offset;
+    private String page;
+
+<span class="nc" id="L37">    public PageInfo(int offset, String page) {</span>
+<span class="nc bnc" id="L38" title="All 2 branches missed.">        E.checkArgument(offset &gt;= 0, &quot;The offset must be &gt;= 0&quot;);</span>
+<span class="nc" id="L39">        E.checkNotNull(page, &quot;page&quot;);</span>
+<span class="nc" id="L40">        this.offset = offset;</span>
+<span class="nc" id="L41">        this.page = page;</span>
+<span class="nc" id="L42">    }</span>
+
+    public void increase() {
+<span class="nc" id="L45">        this.offset++;</span>
+<span class="nc" id="L46">        this.page = PAGE_NONE;</span>
+<span class="nc" id="L47">    }</span>
+
+    public int offset() {
+<span class="nc" id="L50">        return this.offset;</span>
+    }
+
+    public void page(String page) {
+<span class="nc" id="L54">        this.page = page;</span>
+<span class="nc" id="L55">    }</span>
+
+    public String page() {
+<span class="nc" id="L58">        return this.page;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L63">        return StringEncoding.encodeBase64(this.toBytes());</span>
+    }
+
+    public byte[] toBytes() {
+<span class="nc" id="L67">        byte[] pageState = PageState.toBytes(this.page);</span>
+<span class="nc" id="L68">        int length = 2 + BytesBuffer.INT_LEN + pageState.length;</span>
+<span class="nc" id="L69">        BytesBuffer buffer = BytesBuffer.allocate(length);</span>
+<span class="nc" id="L70">        buffer.writeInt(this.offset);</span>
+<span class="nc" id="L71">        buffer.writeBytes(pageState);</span>
+<span class="nc" id="L72">        return buffer.bytes();</span>
+    }
+
+    public static PageInfo fromString(String page) {
+        byte[] bytes;
+        try {
+<span class="nc" id="L78">            bytes = StringEncoding.decodeBase64(page);</span>
+<span class="nc" id="L79">        } catch (Exception e) {</span>
+<span class="nc" id="L80">            throw new HugeException(&quot;Invalid page: '%s'&quot;, e, page);</span>
+<span class="nc" id="L81">        }</span>
+<span class="nc" id="L82">        return fromBytes(bytes);</span>
+    }
+
+    public static PageInfo fromBytes(byte[] bytes) {
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        if (bytes.length == 0) {</span>
+            // The first page
+<span class="nc" id="L88">            return new PageInfo(0, PAGE_NONE);</span>
+        }
+        try {
+<span class="nc" id="L91">            BytesBuffer buffer = BytesBuffer.wrap(bytes);</span>
+<span class="nc" id="L92">            int offset = buffer.readInt();</span>
+<span class="nc" id="L93">            byte[] pageState = buffer.readBytes();</span>
+<span class="nc" id="L94">            String page = PageState.toString(pageState);</span>
+<span class="nc" id="L95">            return new PageInfo(offset, page);</span>
+<span class="nc" id="L96">        } catch (Exception e) {</span>
+<span class="nc" id="L97">            throw new HugeException(&quot;Invalid page: '0x%s'&quot;,</span>
+<span class="nc" id="L98">                                    e, Bytes.toHex(bytes));</span>
+        }
+    }
+
+    public static PageState pageState(Iterator&lt;?&gt; iterator) {
+<span class="nc" id="L103">        E.checkState(iterator instanceof Metadatable,</span>
+<span class="nc" id="L104">                     &quot;Invalid paging iterator: %s&quot;, iterator.getClass());</span>
+<span class="nc" id="L105">        Object page = ((Metadatable) iterator).metadata(PAGE);</span>
+<span class="nc" id="L106">        E.checkState(page instanceof PageState,</span>
+                     &quot;Invalid PageState '%s'&quot;, page);
+<span class="nc" id="L108">        return (PageState) page;</span>
+    }
+
+    public static String pageInfo(Iterator&lt;?&gt; iterator) {
+<span class="nc" id="L112">        E.checkState(iterator instanceof Metadatable,</span>
+<span class="nc" id="L113">                     &quot;Invalid paging iterator: %s&quot;, iterator.getClass());</span>
+<span class="nc" id="L114">        Object page = ((Metadatable) iterator).metadata(PAGE);</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        return page == null ? null : page.toString();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

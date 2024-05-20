@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EdgeExistenceAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">EdgeExistenceAPI.java</span></div><h1>EdgeExistenceAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_LIMIT;
+
+import java.util.Iterator;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.graph.VertexAPI;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.traversal.algorithm.EdgeExistenceTraverser;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/traversers/edgeexist&quot;)
+@Singleton
+@Tag(name = &quot;EdgeExistenceAPI&quot;)
+<span class="nc" id="L51">public class EdgeExistenceAPI extends TraverserAPI {</span>
+
+<span class="nc" id="L53">    private static final Logger LOG = Log.logger(EdgeExistenceAPI.class);</span>
+    private static final String DEFAULT_EMPTY = &quot;&quot;;
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @Operation(summary = &quot;get edges from 'source' to 'target' vertex&quot;)
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @QueryParam(&quot;source&quot;) String source,
+                      @QueryParam(&quot;target&quot;) String target,
+                      @QueryParam(&quot;label&quot;) String edgeLabel,
+                      @QueryParam(&quot;sort_values&quot;)
+                      @DefaultValue(DEFAULT_EMPTY) String sortValues,
+                      @QueryParam(&quot;limit&quot;)
+                      @DefaultValue(DEFAULT_LIMIT) long limit) {
+<span class="nc" id="L69">        LOG.debug(&quot;Graph [{}] get edgeExistence with &quot; +</span>
+                  &quot;source '{}', target '{}', edgeLabel '{}', sortValue '{}', limit '{}'&quot;,
+<span class="nc" id="L71">                  graph, source, target, edgeLabel, sortValues, limit);</span>
+
+<span class="nc" id="L73">        E.checkArgumentNotNull(source, &quot;The source can't be null&quot;);</span>
+<span class="nc" id="L74">        E.checkArgumentNotNull(target, &quot;The target can't be null&quot;);</span>
+
+<span class="nc" id="L76">        Id sourceId = VertexAPI.checkAndParseVertexId(source);</span>
+<span class="nc" id="L77">        Id targetId = VertexAPI.checkAndParseVertexId(target);</span>
+<span class="nc" id="L78">        HugeGraph hugegraph = graph(manager, graph);</span>
+<span class="nc" id="L79">        EdgeExistenceTraverser traverser = new EdgeExistenceTraverser(hugegraph);</span>
+<span class="nc" id="L80">        Iterator&lt;Edge&gt; edges = traverser.queryEdgeExistence(sourceId, targetId, edgeLabel,</span>
+                                                            sortValues, limit);
+
+<span class="nc" id="L83">        return manager.serializer(hugegraph).writeEdges(edges, false);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

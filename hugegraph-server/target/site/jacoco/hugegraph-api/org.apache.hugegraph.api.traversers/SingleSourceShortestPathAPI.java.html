@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SingleSourceShortestPathAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">SingleSourceShortestPathAPI.java</span></div><h1>SingleSourceShortestPathAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_CAPACITY;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_PATHS_LIMIT;
+
+import java.util.Iterator;
+import java.util.Set;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.graph.EdgeAPI;
+import org.apache.hugegraph.api.graph.VertexAPI;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.traversal.algorithm.SingleSourceShortestPathTraverser;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/traversers/singlesourceshortestpath&quot;)
+@Singleton
+@Tag(name = &quot;SingleSourceShortestPathAPI&quot;)
+<span class="nc" id="L55">public class SingleSourceShortestPathAPI extends API {</span>
+
+<span class="nc" id="L57">    private static final Logger LOG = Log.logger(SingleSourceShortestPathAPI.class);</span>
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @QueryParam(&quot;source&quot;) String source,
+                      @QueryParam(&quot;direction&quot;) String direction,
+                      @QueryParam(&quot;label&quot;) String edgeLabel,
+                      @QueryParam(&quot;weight&quot;) String weight,
+                      @QueryParam(&quot;max_degree&quot;)
+                      @DefaultValue(DEFAULT_MAX_DEGREE) long maxDegree,
+                      @QueryParam(&quot;skip_degree&quot;)
+                      @DefaultValue(&quot;0&quot;) long skipDegree,
+                      @QueryParam(&quot;with_vertex&quot;)
+                      @DefaultValue(&quot;false&quot;) boolean withVertex,
+                      @QueryParam(&quot;with_edge&quot;)
+                      @DefaultValue(&quot;false&quot;) boolean withEdge,
+                      @QueryParam(&quot;capacity&quot;)
+                      @DefaultValue(DEFAULT_CAPACITY) long capacity,
+                      @QueryParam(&quot;limit&quot;)
+                      @DefaultValue(DEFAULT_PATHS_LIMIT) int limit) {
+<span class="nc" id="L80">        LOG.debug(&quot;Graph [{}] get single source shortest path from '{}' &quot; +</span>
+                  &quot;with direction {}, edge label {}, weight property {}, &quot; +
+                  &quot;max degree '{}', capacity '{}', limit '{}', &quot; +
+                  &quot;with_vertex '{}' and with_edge '{}'&quot;,
+                  graph, source, direction, edgeLabel,
+<span class="nc" id="L85">                  weight, maxDegree, capacity, limit, withVertex, withEdge);</span>
+
+<span class="nc" id="L87">        ApiMeasurer measure = new ApiMeasurer();</span>
+
+<span class="nc" id="L89">        Id sourceId = VertexAPI.checkAndParseVertexId(source);</span>
+<span class="nc" id="L90">        Directions dir = Directions.convert(EdgeAPI.parseDirection(direction));</span>
+
+<span class="nc" id="L92">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L93">        SingleSourceShortestPathTraverser traverser =</span>
+                new SingleSourceShortestPathTraverser(g);
+<span class="nc" id="L95">        SingleSourceShortestPathTraverser.WeightedPaths paths =</span>
+<span class="nc" id="L96">                traverser.singleSourceShortestPaths(</span>
+                        sourceId, dir, edgeLabel, weight,
+                        maxDegree, skipDegree, capacity, limit);
+<span class="nc" id="L99">        measure.addIterCount(traverser.vertexIterCounter.get(),</span>
+<span class="nc" id="L100">                             traverser.edgeIterCounter.get());</span>
+
+        Iterator&lt;?&gt; iterVertex;
+<span class="nc" id="L103">        Set&lt;Id&gt; vertexIds = paths.vertices();</span>
+<span class="nc bnc" id="L104" title="All 4 branches missed.">        if (withVertex &amp;&amp; !vertexIds.isEmpty()) {</span>
+<span class="nc" id="L105">            iterVertex = g.vertices(vertexIds.toArray());</span>
+<span class="nc" id="L106">            measure.addIterCount(vertexIds.size(), 0L);</span>
+        } else {
+<span class="nc" id="L108">            iterVertex = vertexIds.iterator();</span>
+        }
+
+        Iterator&lt;?&gt; iterEdge;
+<span class="nc" id="L112">        Set&lt;Edge&gt; edges = paths.getEdges();</span>
+<span class="nc bnc" id="L113" title="All 4 branches missed.">        if (withEdge &amp;&amp; !edges.isEmpty()) {</span>
+<span class="nc" id="L114">            iterEdge = edges.iterator();</span>
+        } else {
+<span class="nc" id="L116">            iterEdge = HugeTraverser.EdgeRecord.getEdgeIds(edges).iterator();</span>
+        }
+
+<span class="nc" id="L119">        return manager.serializer(g, measure.measures())</span>
+<span class="nc" id="L120">                      .writeWeightedPaths(paths, iterVertex, iterEdge);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

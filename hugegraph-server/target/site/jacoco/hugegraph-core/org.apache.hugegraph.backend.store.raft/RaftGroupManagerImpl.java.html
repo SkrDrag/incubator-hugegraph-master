@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RaftGroupManagerImpl.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.raft</a> &gt; <span class="el_source">RaftGroupManagerImpl.java</span></div><h1>RaftGroupManagerImpl.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.raft;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+import com.alipay.sofa.jraft.Node;
+import com.alipay.sofa.jraft.Status;
+import com.alipay.sofa.jraft.entity.PeerId;
+import org.apache.hugegraph.backend.store.raft.rpc.RpcForwarder;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.ListPeersRequest;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.ListPeersResponse;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.SetLeaderRequest;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.SetLeaderResponse;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.AddPeerRequest;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.AddPeerResponse;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.RemovePeerRequest;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.RemovePeerResponse;
+
+import org.apache.hugegraph.util.E;
+import com.google.protobuf.Message;
+
+public class RaftGroupManagerImpl implements RaftGroupManager {
+
+    private final String group;
+    private final RaftNode raftNode;
+    private final RpcForwarder rpcForwarder;
+
+<span class="nc" id="L46">    public RaftGroupManagerImpl(RaftContext context) {</span>
+<span class="nc" id="L47">        this.group = context.group();</span>
+<span class="nc" id="L48">        this.raftNode = context.node();</span>
+<span class="nc" id="L49">        this.rpcForwarder = context.rpcForwarder();</span>
+<span class="nc" id="L50">    }</span>
+
+    @Override
+    public String group() {
+<span class="nc" id="L54">        return this.group;</span>
+    }
+
+    @Override
+    public List&lt;String&gt; listPeers() {
+<span class="nc bnc" id="L59" title="All 2 branches missed.">        if (this.raftNode.selfIsLeader()) {</span>
+<span class="nc" id="L60">            List&lt;PeerId&gt; peerIds = this.raftNode.node().listPeers();</span>
+<span class="nc" id="L61">            return peerIds.stream().map(PeerId::toString)</span>
+<span class="nc" id="L62">                          .collect(Collectors.toList());</span>
+        }
+        // If current node is not leader, forward request to leader
+<span class="nc" id="L65">        ListPeersRequest request = ListPeersRequest.getDefaultInstance();</span>
+        try {
+            RaftClosure&lt;ListPeersResponse&gt; future;
+<span class="nc" id="L68">            future = this.forwardToLeader(request);</span>
+<span class="nc" id="L69">            ListPeersResponse response = future.waitFinished();</span>
+<span class="nc" id="L70">            return response.getEndpointsList();</span>
+<span class="nc" id="L71">        } catch (Throwable e) {</span>
+<span class="nc" id="L72">            throw new BackendException(&quot;Failed to list peers&quot;, e);</span>
+        }
+    }
+
+    @Override
+    public String getLeader() {
+<span class="nc" id="L78">        PeerId leaderId = this.raftNode.leaderId();</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        E.checkState(leaderId != null,</span>
+                     &quot;There is no leader for raft group '%s'&quot;, this.group);
+<span class="nc" id="L81">        return leaderId.toString();</span>
+    }
+
+    @Override
+    public String transferLeaderTo(String endpoint) {
+<span class="nc" id="L86">        PeerId peerId = PeerId.parsePeer(endpoint);</span>
+<span class="nc" id="L87">        Status status = this.raftNode.node().transferLeadershipTo(peerId);</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        if (!status.isOk()) {</span>
+<span class="nc" id="L89">            throw new BackendException(</span>
+                      &quot;Failed to transfer leader to '%s', raft error: %s&quot;,
+<span class="nc" id="L91">                      endpoint, status.getErrorMsg());</span>
+        }
+<span class="nc" id="L93">        return peerId.toString();</span>
+    }
+
+    @Override
+    public String setLeader(String endpoint) {
+<span class="nc" id="L98">        PeerId newLeaderId = PeerId.parsePeer(endpoint);</span>
+<span class="nc" id="L99">        Node node = this.raftNode.node();</span>
+        // If expected endpoint has already been raft leader
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (node.getLeaderId().equals(newLeaderId)) {</span>
+<span class="nc" id="L102">            return newLeaderId.toString();</span>
+        }
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (this.raftNode.selfIsLeader()) {</span>
+            // If current node is the leader, transfer directly
+<span class="nc" id="L106">            this.transferLeaderTo(endpoint);</span>
+        } else {
+            // If current node is not leader, forward request to leader
+<span class="nc" id="L109">            SetLeaderRequest request = SetLeaderRequest.newBuilder()</span>
+<span class="nc" id="L110">                                                       .setEndpoint(endpoint)</span>
+<span class="nc" id="L111">                                                       .build();</span>
+            try {
+                RaftClosure&lt;SetLeaderResponse&gt; future;
+<span class="nc" id="L114">                future = this.forwardToLeader(request);</span>
+<span class="nc" id="L115">                future.waitFinished();</span>
+<span class="nc" id="L116">            } catch (Throwable e) {</span>
+<span class="nc" id="L117">                throw new BackendException(&quot;Failed to set leader to '%s'&quot;,</span>
+                                           e, endpoint);
+<span class="nc" id="L119">            }</span>
+        }
+<span class="nc" id="L121">        return newLeaderId.toString();</span>
+    }
+
+    @Override
+    public String addPeer(String endpoint) {
+<span class="nc" id="L126">        PeerId peerId = PeerId.parsePeer(endpoint);</span>
+        try {
+<span class="nc" id="L128">            RaftClosure&lt;?&gt; future = new RaftClosure&lt;&gt;();</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">            if (this.raftNode.selfIsLeader()) {</span>
+<span class="nc" id="L130">                this.raftNode.node().addPeer(peerId, future);</span>
+            } else {
+<span class="nc" id="L132">                AddPeerRequest request = AddPeerRequest.newBuilder()</span>
+<span class="nc" id="L133">                                                       .setEndpoint(endpoint)</span>
+<span class="nc" id="L134">                                                       .build();</span>
+<span class="nc" id="L135">                future = this.forwardToLeader(request);</span>
+            }
+<span class="nc" id="L137">            future.waitFinished();</span>
+<span class="nc" id="L138">        } catch (Throwable e) {</span>
+<span class="nc" id="L139">            throw new BackendException(&quot;Failed to add peer '%s'&quot;, e, endpoint);</span>
+<span class="nc" id="L140">        }</span>
+<span class="nc" id="L141">        return peerId.toString();</span>
+    }
+
+    @Override
+    public String removePeer(String endpoint) {
+<span class="nc" id="L146">        PeerId peerId = PeerId.parsePeer(endpoint);</span>
+        try {
+<span class="nc" id="L148">            RaftClosure&lt;?&gt; future = new RaftClosure&lt;&gt;();</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            if (this.raftNode.selfIsLeader()) {</span>
+<span class="nc" id="L150">                this.raftNode.node().removePeer(peerId, future);</span>
+            } else {
+<span class="nc" id="L152">                RemovePeerRequest request = RemovePeerRequest.newBuilder()</span>
+<span class="nc" id="L153">                                                             .setEndpoint(endpoint)</span>
+<span class="nc" id="L154">                                                             .build();</span>
+<span class="nc" id="L155">                future = this.forwardToLeader(request);</span>
+            }
+<span class="nc" id="L157">            future.waitFinished();</span>
+<span class="nc" id="L158">        } catch (Throwable e) {</span>
+<span class="nc" id="L159">            throw new BackendException(&quot;Failed to remove peer '%s'&quot;, e, endpoint);</span>
+<span class="nc" id="L160">        }</span>
+<span class="nc" id="L161">        return peerId.toString();</span>
+    }
+
+    private &lt;T extends Message&gt; RaftClosure&lt;T&gt; forwardToLeader(Message request) {
+<span class="nc" id="L165">        PeerId leaderId = this.raftNode.leaderId();</span>
+<span class="nc" id="L166">        return this.rpcForwarder.forwardToLeader(leaderId, request);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

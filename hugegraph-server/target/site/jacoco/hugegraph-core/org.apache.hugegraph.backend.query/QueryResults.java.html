@@ -1,0 +1,329 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>QueryResults.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.query</a> &gt; <span class="el_source">QueryResults.java</span></div><h1>QueryResults.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.query;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Set;
+import java.util.function.Function;
+
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.iterator.CIter;
+import org.apache.hugegraph.iterator.FlatMapperIterator;
+import org.apache.hugegraph.iterator.ListIterator;
+import org.apache.hugegraph.iterator.MapperIterator;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.type.Idfiable;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+
+public class QueryResults&lt;R&gt; {
+
+<span class="nc" id="L44">    private static final Iterator&lt;?&gt; EMPTY_ITERATOR = new EmptyIterator&lt;&gt;();</span>
+
+<span class="nc" id="L46">    private static final QueryResults&lt;?&gt; EMPTY = new QueryResults&lt;&gt;(</span>
+<span class="nc" id="L47">                                                 emptyIterator(), Query.NONE);</span>
+
+    private final Iterator&lt;R&gt; results;
+    private final List&lt;Query&gt; queries;
+
+    public QueryResults(Iterator&lt;R&gt; results, Query query) {
+<span class="nc" id="L53">        this(results);</span>
+<span class="nc" id="L54">        this.addQuery(query);</span>
+<span class="nc" id="L55">    }</span>
+
+<span class="nc" id="L57">    private QueryResults(Iterator&lt;R&gt; results) {</span>
+<span class="nc" id="L58">        this.results = results;</span>
+<span class="nc" id="L59">        this.queries = InsertionOrderUtil.newList();</span>
+<span class="nc" id="L60">    }</span>
+
+    public void setQuery(Query query) {
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (this.queries.size() &gt; 0) {</span>
+<span class="nc" id="L64">            this.queries.clear();</span>
+        }
+<span class="nc" id="L66">        this.addQuery(query);</span>
+<span class="nc" id="L67">    }</span>
+
+    private void addQuery(Query query) {
+<span class="nc" id="L70">        E.checkNotNull(query, &quot;query&quot;);</span>
+<span class="nc" id="L71">        this.queries.add(query);</span>
+<span class="nc" id="L72">    }</span>
+
+    private void addQueries(List&lt;Query&gt; queries) {
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        assert !queries.isEmpty();</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        for (Query query : queries) {</span>
+<span class="nc" id="L77">            this.addQuery(query);</span>
+<span class="nc" id="L78">        }</span>
+<span class="nc" id="L79">    }</span>
+
+    public Iterator&lt;R&gt; iterator() {
+<span class="nc" id="L82">        return this.results;</span>
+    }
+
+    public R one() {
+<span class="nc" id="L86">        return one(this.results);</span>
+    }
+
+    public QueryResults&lt;R&gt; toList() {
+<span class="nc" id="L90">        QueryResults&lt;R&gt; fetched = new QueryResults&lt;&gt;(toList(this.results));</span>
+<span class="nc" id="L91">        fetched.addQueries(this.queries);</span>
+<span class="nc" id="L92">        return fetched;</span>
+    }
+
+    public List&lt;Query&gt; queries() {
+<span class="nc" id="L96">        return Collections.unmodifiableList(this.queries);</span>
+    }
+
+    public &lt;T extends Idfiable&gt; Iterator&lt;T&gt; keepInputOrderIfNeeded(
+                                            Iterator&lt;T&gt; origin) {
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (!origin.hasNext()) {</span>
+            // None result found
+<span class="nc" id="L103">            return origin;</span>
+        }
+        Collection&lt;Id&gt; ids;
+<span class="nc bnc" id="L106" title="All 4 branches missed.">        if (!this.mustSortByInputIds() || this.paging() ||</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">            (ids = this.queryIds()).size() &lt;= 1) {</span>
+            /*
+             * Return the original iterator if it's paging query or if the
+             * query input is less than one id, or don't have to do sort.
+             * NOTE: queryIds() only return the first batch of index query
+             */
+<span class="nc" id="L113">            return origin;</span>
+        }
+
+        // Fill map with all elements
+<span class="nc" id="L117">        Map&lt;Id, T&gt; map = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L118">        QueryResults.fillMap(origin, map);</span>
+
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (map.size() &gt; ids.size()) {</span>
+            /*
+             * This means current query is part of QueryResults. For example,
+             * g.V().has('country', 'china').has('city', within('HK', 'BJ'))
+             * will be converted to
+             * g.V().has('country', 'china').has('city', 'HK') or
+             * g.V().has('country', 'china').has('city', 'BJ'),
+             * and ids is just first index subquery's id, not all.
+             */
+<span class="nc" id="L129">            ids = map.keySet();</span>
+        }
+
+<span class="nc" id="L132">        return new MapperIterator&lt;&gt;(ids.iterator(), map::get);</span>
+    }
+
+    private boolean mustSortByInputIds() {
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        assert !this.queries.isEmpty() : this;</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        for (Query query : this.queries) {</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">            if (query instanceof IdQuery &amp;&amp;</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">                ((IdQuery) query).mustSortByInput()) {</span>
+<span class="nc" id="L140">                return true;</span>
+            }
+<span class="nc" id="L142">        }</span>
+<span class="nc" id="L143">        return false;</span>
+    }
+
+    private boolean paging() {
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        assert !this.queries.isEmpty();</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">        for (Query query : this.queries) {</span>
+<span class="nc" id="L149">            Query origin = query.originQuery();</span>
+<span class="nc bnc" id="L150" title="All 6 branches missed.">            if (query.paging() || origin != null &amp;&amp; origin.paging()) {</span>
+<span class="nc" id="L151">                return true;</span>
+            }
+<span class="nc" id="L153">        }</span>
+<span class="nc" id="L154">        return false;</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    private boolean bigCapacity() {
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        assert !this.queries.isEmpty();</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        for (Query query : this.queries) {</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">            if (query.bigCapacity()) {</span>
+<span class="nc" id="L162">                return true;</span>
+            }
+<span class="nc" id="L164">        }</span>
+<span class="nc" id="L165">        return false;</span>
+    }
+
+    private Collection&lt;Id&gt; queryIds() {
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        assert !this.queries.isEmpty();</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        if (this.queries.size() == 1) {</span>
+<span class="nc" id="L171">            return this.queries.get(0).ids();</span>
+        }
+
+<span class="nc" id="L174">        Set&lt;Id&gt; ids = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        for (Query query : this.queries) {</span>
+<span class="nc" id="L176">            ids.addAll(query.ids());</span>
+<span class="nc" id="L177">        }</span>
+<span class="nc" id="L178">        return ids;</span>
+    }
+
+    @Watched
+    public static &lt;T&gt; ListIterator&lt;T&gt; toList(Iterator&lt;T&gt; iterator) {
+        try {
+<span class="nc" id="L184">            return new ListIterator&lt;&gt;(Query.DEFAULT_CAPACITY, iterator);</span>
+        } finally {
+<span class="nc" id="L186">            CloseableIterator.closeIterator(iterator);</span>
+        }
+    }
+
+    @Watched
+    public static &lt;T&gt; void fillList(Iterator&lt;T&gt; iterator, List&lt;T&gt; list) {
+        try {
+<span class="nc bnc" id="L193" title="All 2 branches missed.">            while (iterator.hasNext()) {</span>
+<span class="nc" id="L194">                T result = iterator.next();</span>
+<span class="nc" id="L195">                list.add(result);</span>
+<span class="nc" id="L196">                Query.checkForceCapacity(list.size());</span>
+<span class="nc" id="L197">            }</span>
+        } finally {
+<span class="nc" id="L199">            CloseableIterator.closeIterator(iterator);</span>
+        }
+<span class="nc" id="L201">    }</span>
+
+    @Watched
+    public static &lt;T extends Idfiable&gt; void fillMap(Iterator&lt;T&gt; iterator,
+                                                    Map&lt;Id, T&gt; map) {
+        try {
+<span class="nc bnc" id="L207" title="All 2 branches missed.">            while (iterator.hasNext()) {</span>
+<span class="nc" id="L208">                T result = iterator.next();</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">                assert result.id() != null;</span>
+<span class="nc" id="L210">                map.put(result.id(), result);</span>
+<span class="nc" id="L211">                Query.checkForceCapacity(map.size());</span>
+<span class="nc" id="L212">            }</span>
+        } finally {
+<span class="nc" id="L214">            CloseableIterator.closeIterator(iterator);</span>
+        }
+<span class="nc" id="L216">    }</span>
+
+    public static &lt;T, R&gt; QueryResults&lt;R&gt; flatMap(
+                  Iterator&lt;T&gt; iterator, Function&lt;T, QueryResults&lt;R&gt;&gt; func) {
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L221">        QueryResults&lt;R&gt;[] qr = new QueryResults[1];</span>
+<span class="nc" id="L222">        qr[0] = new QueryResults&lt;&gt;(new FlatMapperIterator&lt;&gt;(iterator, i -&gt; {</span>
+<span class="nc" id="L223">            QueryResults&lt;R&gt; results = func.apply(i);</span>
+<span class="nc bnc" id="L224" title="All 4 branches missed.">            if (results == null || !results.iterator().hasNext()) {</span>
+<span class="nc" id="L225">                return null;</span>
+            }
+            /*
+             * NOTE: should call results.iterator().hasNext() before
+             * results.queries() to collect sub-query with index query
+             */
+<span class="nc" id="L231">            qr[0].addQueries(results.queries());</span>
+<span class="nc" id="L232">            return results.iterator();</span>
+        }));
+<span class="nc" id="L234">        return qr[0];</span>
+    }
+
+    @Watched
+    public static &lt;T&gt; T one(Iterator&lt;T&gt; iterator) {
+        try {
+<span class="nc bnc" id="L240" title="All 2 branches missed.">            if (iterator.hasNext()) {</span>
+<span class="nc" id="L241">                T result = iterator.next();</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">                if (iterator.hasNext()) {</span>
+<span class="nc" id="L243">                    throw new HugeException(&quot;Expect just one result, &quot; +</span>
+                                            &quot;but got at least two: [%s, %s]&quot;,
+<span class="nc" id="L245">                                            result, iterator.next());</span>
+                }
+<span class="nc" id="L247">                return result;</span>
+            }
+        } finally {
+<span class="nc" id="L250">            CloseableIterator.closeIterator(iterator);</span>
+        }
+<span class="nc" id="L252">        return null;</span>
+    }
+
+    public static &lt;T&gt; Iterator&lt;T&gt; iterator(T elem) {
+<span class="nc" id="L256">        return new OneIterator&lt;&gt;(elem);</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public static &lt;T&gt; QueryResults&lt;T&gt; empty() {
+<span class="nc" id="L261">        return (QueryResults&lt;T&gt;) EMPTY;</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public static &lt;T&gt; Iterator&lt;T&gt; emptyIterator() {
+<span class="nc" id="L266">        return (Iterator&lt;T&gt;) EMPTY_ITERATOR;</span>
+    }
+
+    public interface Fetcher&lt;R&gt; extends Function&lt;Query, QueryResults&lt;R&gt;&gt; {}
+
+    private static class EmptyIterator&lt;T&gt; implements CIter&lt;T&gt; {
+
+        @Override
+        public Object metadata(String meta, Object... args) {
+<span class="nc" id="L275">            return null;</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="nc" id="L280">            return false;</span>
+        }
+
+        @Override
+        public T next() {
+<span class="nc" id="L285">            throw new NoSuchElementException();</span>
+        }
+
+        @Override
+        public void close() throws Exception {
+            // pass
+<span class="nc" id="L291">        }</span>
+    }
+
+<span class="nc" id="L294">    private static class OneIterator&lt;T&gt; implements CIter&lt;T&gt; {</span>
+
+        private T element;
+
+<span class="nc" id="L298">        public OneIterator(T element) {</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">            assert element != null;</span>
+<span class="nc" id="L300">            this.element = element;</span>
+<span class="nc" id="L301">        }</span>
+
+        @Override
+        public Object metadata(String meta, Object... args) {
+<span class="nc" id="L305">            return null;</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="nc bnc" id="L310" title="All 2 branches missed.">            return this.element != null;</span>
+        }
+
+        @Override
+        public T next() {
+<span class="nc bnc" id="L315" title="All 2 branches missed.">            if (this.element == null) {</span>
+<span class="nc" id="L316">                throw new NoSuchElementException();</span>
+            }
+<span class="nc" id="L318">            T result = this.element;</span>
+<span class="nc" id="L319">            this.element = null;</span>
+<span class="nc" id="L320">            return result;</span>
+        }
+
+        @Override
+        public void close() throws Exception {
+            // pass
+<span class="nc" id="L326">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RocksDBIteratorPool.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-rocksdb</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.rocksdb</a> &gt; <span class="el_source">RocksDBIteratorPool.java</span></div><h1>RocksDBIteratorPool.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.rocksdb;
+
+import java.util.Queue;
+import java.util.concurrent.ArrayBlockingQueue;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.StringEncoding;
+import org.rocksdb.ColumnFamilyHandle;
+import org.rocksdb.RocksDB;
+import org.rocksdb.RocksDBException;
+import org.rocksdb.RocksIterator;
+import org.slf4j.Logger;
+
+public final class RocksDBIteratorPool implements AutoCloseable {
+
+<span class="nc" id="L35">    private static final Logger LOG = Log.logger(RocksDBIteratorPool.class);</span>
+
+<span class="nc" id="L37">    private static final int ITERATOR_POOL_CAPACITY = CoreOptions.CPUS * 2;</span>
+
+    private final Queue&lt;RocksIterator&gt; pool;
+    private final RocksDB rocksdb;
+    private final ColumnFamilyHandle cfh;
+    private final String cfName;
+
+<span class="nc" id="L44">    public RocksDBIteratorPool(RocksDB rocksdb, ColumnFamilyHandle cfh) {</span>
+<span class="nc" id="L45">        this.pool = new ArrayBlockingQueue&lt;&gt;(ITERATOR_POOL_CAPACITY);</span>
+<span class="nc" id="L46">        this.rocksdb = rocksdb;</span>
+<span class="nc" id="L47">        this.cfh = cfh;</span>
+
+        String cfName;
+        try {
+<span class="nc" id="L51">            cfName = StringEncoding.decode(this.cfh.getName());</span>
+<span class="nc" id="L52">        } catch (RocksDBException e) {</span>
+<span class="nc" id="L53">            LOG.warn(&quot;Can't get column family name&quot;, e);</span>
+<span class="nc" id="L54">            cfName = &quot;CF-&quot; + cfh.getID();</span>
+<span class="nc" id="L55">        }</span>
+<span class="nc" id="L56">        this.cfName = cfName;</span>
+<span class="nc" id="L57">    }</span>
+
+    public ReusedRocksIterator newIterator() {
+<span class="nc" id="L60">        return new ReusedRocksIterator();</span>
+    }
+
+    @Override
+    public void close() {
+<span class="nc" id="L65">        LOG.debug(&quot;Close IteratorPool with pool size {} ({})&quot;, this.pool.size(), this);</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        for (RocksIterator iter; (iter = this.pool.poll()) != null; ) {</span>
+<span class="nc" id="L67">            this.closeIterator(iter);</span>
+        }
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        assert this.pool.isEmpty();</span>
+<span class="nc" id="L70">    }</span>
+
+    @Override
+    public String toString() {
+<span class="nc" id="L74">        return &quot;IteratorPool-&quot; + this.cfName;</span>
+    }
+
+    private RocksIterator allocIterator() {
+        /*
+         * NOTE: Seems there is a bug if share RocksIterator between threads
+         * RocksIterator iter = this.pool.poll();
+         */
+<span class="nc" id="L82">        RocksIterator iter = this.pool.poll();</span>
+
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (iter != null) {</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            if (this.refreshIterator(iter)) {</span>
+                // Must refresh when an iterator is reused
+<span class="nc" id="L87">                return iter;</span>
+            } else {
+                // Close it if can't fresh, and create a new one later
+<span class="nc" id="L90">                this.closeIterator(iter);</span>
+            }
+        }
+        /*
+         * Create a new iterator if:
+         *  - the pool is empty,
+         *  - or the iterator obtained from the pool is closed,
+         *  - or the iterator can't refresh.
+         */
+<span class="nc" id="L99">        iter = this.createIterator();</span>
+        try {
+<span class="nc" id="L101">            iter.status();</span>
+<span class="nc" id="L102">            return iter;</span>
+<span class="nc" id="L103">        } catch (RocksDBException e) {</span>
+<span class="nc" id="L104">            this.closeIterator(iter);</span>
+<span class="nc" id="L105">            throw new BackendException(e);</span>
+        }
+    }
+
+    private void releaseIterator(RocksIterator iter) {
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        assert iter.isOwningHandle();</span>
+<span class="nc" id="L111">        boolean added = this.pool.offer(iter);</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (!added) {</span>
+            // Really close iterator if the pool is full
+<span class="nc" id="L114">            LOG.debug(&quot;Really close iterator {} since the pool is full({})&quot;,</span>
+<span class="nc" id="L115">                      iter, this.pool.size());</span>
+<span class="nc" id="L116">            this.closeIterator(iter);</span>
+        } else {
+            // Not sure whether it needs to refresh
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            assert this.refreshIterator(iter);</span>
+        }
+<span class="nc" id="L121">    }</span>
+
+    private boolean refreshIterator(RocksIterator iter) {
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        if (iter.isOwningHandle()) {</span>
+            try {
+<span class="nc" id="L126">                iter.refresh();</span>
+<span class="nc" id="L127">                return true;</span>
+<span class="nc" id="L128">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L129">                LOG.warn(&quot;Can't refresh RocksIterator: {}&quot;, e.getMessage(), e);</span>
+            }
+        }
+<span class="nc" id="L132">        return false;</span>
+    }
+
+    private RocksIterator createIterator() {
+<span class="nc" id="L136">        RocksIterator iter = this.rocksdb.newIterator(this.cfh);</span>
+<span class="nc" id="L137">        LOG.debug(&quot;Create iterator: {}&quot;, iter);</span>
+<span class="nc" id="L138">        return iter;</span>
+    }
+
+    private void closeIterator(RocksIterator iter) {
+<span class="nc" id="L142">        LOG.debug(&quot;Really close iterator {}&quot;, iter);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (iter.isOwningHandle()) {</span>
+<span class="nc" id="L144">            iter.close();</span>
+        }
+<span class="nc" id="L146">    }</span>
+
+<span class="nc" id="L148">    protected final class ReusedRocksIterator {</span>
+
+        private static final boolean REUSING_ENABLED = false;
+        private final RocksIterator iterator;
+        private boolean closed;
+
+<span class="nc" id="L154">        public ReusedRocksIterator() {</span>
+<span class="nc" id="L155">            this.closed = false;</span>
+            if (REUSING_ENABLED) {
+                this.iterator = allocIterator();
+            } else {
+<span class="nc" id="L159">                this.iterator = createIterator();</span>
+            }
+<span class="nc" id="L161">        }</span>
+
+        public RocksIterator iterator() {
+<span class="nc bnc" id="L164" title="All 2 branches missed.">            assert !this.closed;</span>
+<span class="nc" id="L165">            return this.iterator;</span>
+        }
+
+        public void close() {
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            if (this.closed) {</span>
+<span class="nc" id="L170">                return;</span>
+            }
+<span class="nc" id="L172">            this.closed = true;</span>
+
+            if (REUSING_ENABLED) {
+                releaseIterator(this.iterator);
+            } else {
+<span class="nc" id="L177">                closeIterator(this.iterator);</span>
+            }
+<span class="nc" id="L179">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

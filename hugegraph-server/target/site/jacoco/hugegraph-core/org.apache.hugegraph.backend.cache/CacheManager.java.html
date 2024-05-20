@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CacheManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.cache</a> &gt; <span class="el_source">CacheManager.java</span></div><h1>CacheManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.cache;
+
+import java.util.Collections;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Timer;
+import java.util.TimerTask;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+
+public class CacheManager {
+
+<span class="nc" id="L36">    private static final Logger LOG = Log.logger(CacheManager.class);</span>
+
+<span class="nc" id="L38">    private static final CacheManager INSTANCE = new CacheManager();</span>
+
+    // Check the cache expiration every 30s by default
+    private static final long TIMER_TICK_PERIOD = 30;
+    // Log if tick cost time &gt; 1000ms
+    private static final long LOG_TICK_COST_TIME = 1000L;
+
+    private final Map&lt;String, Cache&lt;Id, ?&gt;&gt; caches;
+    private final Timer timer;
+
+    public static CacheManager instance() {
+<span class="nc" id="L49">        return INSTANCE;</span>
+    }
+
+    public static boolean cacheEnableMetrics(String name, boolean enabled) {
+<span class="nc" id="L53">        Cache&lt;Id, ?&gt; cache = INSTANCE.caches.get(name);</span>
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        E.checkArgument(cache != null,</span>
+                        &quot;Not found cache named '%s'&quot;, name);
+<span class="nc" id="L56">        return cache.enableMetrics(enabled);</span>
+    }
+
+<span class="nc" id="L59">    private CacheManager() {</span>
+<span class="nc" id="L60">        this.caches = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L61">        this.timer = new Timer(&quot;cache-expirer&quot;, true);</span>
+
+<span class="nc" id="L63">        this.scheduleTimer(TIMER_TICK_PERIOD);</span>
+<span class="nc" id="L64">    }</span>
+
+    private TimerTask scheduleTimer(float period) {
+<span class="nc" id="L67">        TimerTask task = new TimerTask() {</span>
+            @Override
+            public void run() {
+                try {
+                    for (Entry&lt;String, Cache&lt;Id, Object&gt;&gt; entry :
+<span class="nc bnc" id="L72" title="All 2 branches missed.">                         caches().entrySet()) {</span>
+<span class="nc" id="L73">                        this.tick(entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L74">                    }</span>
+<span class="nc" id="L75">                } catch (Throwable e) {</span>
+<span class="nc" id="L76">                    LOG.warn(&quot;An exception occurred when running tick&quot;, e);</span>
+<span class="nc" id="L77">                }</span>
+<span class="nc" id="L78">            }</span>
+
+            private void tick(String name, Cache&lt;Id, Object&gt; cache) {
+<span class="nc" id="L81">                long start = System.currentTimeMillis();</span>
+<span class="nc" id="L82">                long items = cache.tick();</span>
+<span class="nc" id="L83">                long cost = System.currentTimeMillis() - start;</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">                if (cost &gt; LOG_TICK_COST_TIME) {</span>
+<span class="nc" id="L85">                    LOG.info(&quot;Cache '{}' expired {} items cost {}ms &gt; {}ms &quot; +</span>
+<span class="nc" id="L86">                             &quot;(size {}, expire {}ms)&quot;, name, items, cost,</span>
+<span class="nc" id="L87">                             LOG_TICK_COST_TIME, cache.size(), cache.expire());</span>
+                }
+<span class="nc" id="L89">                LOG.debug(&quot;Cache '{}' expiration tick cost {}ms&quot;, name, cost);</span>
+<span class="nc" id="L90">            }</span>
+        };
+
+        // Schedule task with the period in seconds
+<span class="nc" id="L94">        this.timer.schedule(task, 0, (long) (period * 1000.0));</span>
+
+<span class="nc" id="L96">        return task;</span>
+    }
+
+    public &lt;V&gt; Map&lt;String, Cache&lt;Id, V&gt;&gt; caches() {
+        @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+<span class="nc" id="L101">        Map&lt;String, Cache&lt;Id, V&gt;&gt; caches = (Map) this.caches;</span>
+<span class="nc" id="L102">        return Collections.unmodifiableMap(caches);</span>
+    }
+
+    public &lt;V&gt; Cache&lt;Id, V&gt; cache(String name) {
+<span class="nc" id="L106">        return this.cache(name, RamCache.DEFAULT_SIZE);</span>
+    }
+
+    public &lt;V&gt; Cache&lt;Id, V&gt; cache(String name, long capacity) {
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (!this.caches.containsKey(name)) {</span>
+<span class="nc" id="L111">            this.caches.putIfAbsent(name, new RamCache(capacity));</span>
+<span class="nc" id="L112">            LOG.info(&quot;Init RamCache for '{}' with capacity {}&quot;,</span>
+<span class="nc" id="L113">                     name, capacity);</span>
+        }
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L116">        Cache&lt;Id, V&gt; cache = (Cache&lt;Id, V&gt;) this.caches.get(name);</span>
+<span class="nc" id="L117">        E.checkArgument(cache instanceof RamCache,</span>
+<span class="nc" id="L118">                        &quot;Invalid cache implement: %s&quot;, cache.getClass());</span>
+<span class="nc" id="L119">        return cache;</span>
+    }
+
+    public &lt;V&gt; Cache&lt;Id, V&gt; offheapCache(HugeGraph graph, String name,
+                                         long capacity, long avgElemSize) {
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        if (!this.caches.containsKey(name)) {</span>
+<span class="nc" id="L125">            OffheapCache cache = new OffheapCache(graph, capacity, avgElemSize);</span>
+<span class="nc" id="L126">            this.caches.putIfAbsent(name, cache);</span>
+<span class="nc" id="L127">            LOG.info(&quot;Init OffheapCache for '{}' with capacity {}&quot;,</span>
+<span class="nc" id="L128">                     name, capacity);</span>
+        }
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L131">        Cache&lt;Id, V&gt; cache = (Cache&lt;Id, V&gt;) this.caches.get(name);</span>
+<span class="nc" id="L132">        E.checkArgument(cache instanceof OffheapCache,</span>
+<span class="nc" id="L133">                        &quot;Invalid cache implement: %s&quot;, cache.getClass());</span>
+<span class="nc" id="L134">        return cache;</span>
+    }
+
+    public &lt;V&gt; Cache&lt;Id, V&gt; levelCache(HugeGraph graph, String name,
+                                       long capacity1, long capacity2,
+                                       long avgElemSize) {
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        if (!this.caches.containsKey(name)) {</span>
+<span class="nc" id="L141">            RamCache cache1 = new RamCache(capacity1);</span>
+<span class="nc" id="L142">            OffheapCache cache2 = new OffheapCache(graph, capacity2,</span>
+                                                   avgElemSize);
+<span class="nc" id="L144">            this.caches.putIfAbsent(name, new LevelCache(cache1, cache2));</span>
+<span class="nc" id="L145">            LOG.info(&quot;Init LevelCache for '{}' with capacity {}:{}&quot;,</span>
+<span class="nc" id="L146">                     name, capacity1, capacity2);</span>
+        }
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L149">        Cache&lt;Id, V&gt; cache = (Cache&lt;Id, V&gt;) this.caches.get(name);</span>
+<span class="nc" id="L150">        E.checkArgument(cache instanceof LevelCache,</span>
+<span class="nc" id="L151">                        &quot;Invalid cache implement: %s&quot;, cache.getClass());</span>
+<span class="nc" id="L152">        return cache;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

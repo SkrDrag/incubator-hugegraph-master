@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Int2IntsMap.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util.collection</a> &gt; <span class="el_source">Int2IntsMap.java</span></div><h1>Int2IntsMap.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util.collection;
+
+import org.eclipse.collections.api.iterator.IntIterator;
+import org.eclipse.collections.impl.map.mutable.primitive.IntIntHashMap;
+
+/**
+ * TODO: move to common-module
+ */
+public class Int2IntsMap {
+
+    private static final int INIT_KEY_CAPACITY = 16;
+    private static final int CHUNK_SIZE = 10;
+    private static final int EXPANSION_FACTOR = 2;
+
+    private static final int OFFSET_NEXT_FREE = 0;
+    private static final int OFFSET_SIZE = 1;
+    private static final int OFFSET_FIRST_CHUNK_DATA = 2;
+
+    /*
+     *  chunkMap              chunkTable
+     *
+     *   --------              ---------------
+     *  | 1 | 0  |---------&gt;0 |      33       | nextFree (free entry pointer)
+     *  | 2 | 10 |-----+    1 |      19       | size (values count of key)
+     *  | 3 | 40 |---+ |    2 |   int data    |
+     *  | . | .  |   | |    3 |   int data    |
+     *  | x | y  |   | |    . |     ...       | point to nextFreeChunk
+     *   --------    | |    9 |      20       |-----------------+
+     *               | |       ---------------                  |
+     *               | +--&gt;10 |     13        | nextFree        |
+     *               |     11 |      1        | size            |
+     *               |     12 |   int data    |                 |
+     *               |     13 |      0        |                 |
+     *               |      . |     ...       |                 |
+     *               |     19 |      0        |                 |
+     *               |         ---------------                  |
+     *               |     20 |   int data    |&lt;----------------+
+     *               |     21 |   int data    |
+     *               |     22 |   int data    |
+     *               |     23 |   int data    |
+     *               |      . |     ...       | point to nextFreeChunk
+     *               |     29 |      30       |-----------------+
+     *               |         ---------------                  |
+     *               |     30 |   int data    |&lt;----------------+
+     *               |     31 |   int data    |
+     *               |     32 |   int data    |
+     *               |     33 |      0        |
+     *               |      . |     ...       |
+     *               |     39 |      0        |
+     *               |         ---------------
+     *               +----&gt;40 |      48       | nextFree
+     *                     41 |       6       | size
+     *                     42 |   int data    |
+     *                     43 |   int data    |
+     *                      . |     ...       |
+     *                     47 |   int data    |
+     *                     48 |      0        |
+     *                     49 |      0        |
+     *                         ---------------
+     *                     50 |     ...       |
+     *                        |     ...       |
+     *                        |     ...       |
+     *                        |     ...       |
+     */
+
+    private final IntIntHashMap chunkMap;
+    private int[] chunkTable;
+
+    private int nextFreeChunk;
+
+<span class="nc" id="L88">    public Int2IntsMap() {</span>
+<span class="nc" id="L89">        this.chunkMap = new IntIntHashMap(INIT_KEY_CAPACITY);</span>
+<span class="nc" id="L90">        this.chunkTable = new int[INIT_KEY_CAPACITY * CHUNK_SIZE];</span>
+<span class="nc" id="L91">        this.nextFreeChunk = 0;</span>
+<span class="nc" id="L92">    }</span>
+
+    public void add(int key, int value) {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        if (this.chunkMap.containsKey(key)) {</span>
+<span class="nc" id="L96">            int firstChunk = this.chunkMap.get(key);</span>
+            /*
+             * The nextFree represent the position where the next element
+             * will be located.
+             */
+<span class="nc" id="L101">            int nextFree = this.chunkTable[firstChunk + OFFSET_NEXT_FREE];</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">            if (!this.endOfChunk(nextFree)) {</span>
+<span class="nc" id="L103">                this.chunkTable[nextFree] = value;</span>
+<span class="nc" id="L104">                this.chunkTable[firstChunk + OFFSET_NEXT_FREE]++;</span>
+            } else {
+                /*
+                 * If the nextFree points to the end of last chunk,
+                 * allocate a new chunk and let the nextFree point to
+                 * the start of new allocated chunk.
+                 */
+<span class="nc" id="L111">                this.ensureCapacity();</span>
+
+<span class="nc" id="L113">                int lastEntryOfChunk = nextFree;</span>
+<span class="nc" id="L114">                this.chunkTable[lastEntryOfChunk] = this.nextFreeChunk;</span>
+
+<span class="nc" id="L116">                nextFree = this.nextFreeChunk;</span>
+<span class="nc" id="L117">                this.chunkTable[nextFree] = value;</span>
+<span class="nc" id="L118">                this.chunkTable[firstChunk + OFFSET_NEXT_FREE] = nextFree + 1;</span>
+
+                // Update next block
+<span class="nc" id="L121">                this.nextFreeChunk += CHUNK_SIZE;</span>
+            }
+<span class="nc" id="L123">            this.chunkTable[firstChunk + OFFSET_SIZE]++;</span>
+<span class="nc" id="L124">        } else {</span>
+            // New key, allocate 1st chunk and init
+<span class="nc" id="L126">            this.ensureCapacity();</span>
+
+            // Allocate 1st chunk
+<span class="nc" id="L129">            this.chunkMap.put(key, this.nextFreeChunk);</span>
+
+            // Init first chunk
+<span class="nc" id="L132">            int firstChunk = this.nextFreeChunk;</span>
+<span class="nc" id="L133">            int nextFree = firstChunk + OFFSET_FIRST_CHUNK_DATA;</span>
+<span class="nc" id="L134">            this.chunkTable[firstChunk + OFFSET_NEXT_FREE] = nextFree + 1;</span>
+<span class="nc" id="L135">            this.chunkTable[firstChunk + OFFSET_SIZE] = 1;</span>
+<span class="nc" id="L136">            this.chunkTable[nextFree] = value;</span>
+
+            // Update next block
+<span class="nc" id="L139">            this.nextFreeChunk += CHUNK_SIZE;</span>
+        }
+<span class="nc" id="L141">    }</span>
+
+    public boolean containsKey(int key) {
+<span class="nc" id="L144">        return this.chunkMap.containsKey(key);</span>
+    }
+
+    public int[] getValues(int key) {
+<span class="nc" id="L148">        int firstChunk = this.chunkMap.getIfAbsent(key, -1);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">        if (firstChunk == -1) {</span>
+<span class="nc" id="L150">            return org.apache.hugegraph.util.collection.IntIterator.EMPTY_INTS;</span>
+        }
+
+<span class="nc" id="L153">        int size = this.chunkTable[firstChunk + OFFSET_SIZE];</span>
+<span class="nc" id="L154">        int[] values = new int[size];</span>
+<span class="nc" id="L155">        int position = firstChunk + OFFSET_FIRST_CHUNK_DATA;</span>
+<span class="nc" id="L156">        int i = 0;</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        while (i &lt; size) {</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">            if (!this.endOfChunk(position)) {</span>
+<span class="nc" id="L159">                values[i++] = this.chunkTable[position++];</span>
+            } else {
+<span class="nc" id="L161">                position = this.chunkTable[position];</span>
+            }
+        }
+<span class="nc" id="L164">        return values;</span>
+    }
+
+    public IntIterator keys() {
+<span class="nc" id="L168">        return this.chunkMap.keySet().intIterator();</span>
+    }
+
+    public int size() {
+<span class="nc" id="L172">        return this.chunkMap.size();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L177">        int capacity = (this.size() + 1) * 64;</span>
+<span class="nc" id="L178">        StringBuilder sb = new StringBuilder(capacity);</span>
+<span class="nc" id="L179">        sb.append(&quot;{&quot;);</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        for (IntIterator iter = this.keys(); iter.hasNext();) {</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">            if (sb.length() &gt; 1) {</span>
+<span class="nc" id="L182">                sb.append(&quot;, &quot;);</span>
+            }
+<span class="nc" id="L184">            int key = iter.next();</span>
+<span class="nc" id="L185">            sb.append(key).append(&quot;: [&quot;);</span>
+<span class="nc" id="L186">            int[] values = this.getValues(key);</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">            for (int i = 0; i &lt; values.length; i++) {</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">                if (i &gt; 0) {</span>
+<span class="nc" id="L189">                    sb.append(&quot;, &quot;);</span>
+                }
+<span class="nc" id="L191">                sb.append(values[i]);</span>
+            }
+<span class="nc" id="L193">            sb.append(&quot;]&quot;);</span>
+<span class="nc" id="L194">        }</span>
+<span class="nc" id="L195">        sb.append(&quot;}&quot;);</span>
+<span class="nc" id="L196">        return sb.toString();</span>
+    }
+
+    private boolean endOfChunk(int position) {
+        // The last entry of chunk is next chunk pointer
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        return (position + 1) % CHUNK_SIZE == 0;</span>
+    }
+
+    private void ensureCapacity() {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (this.nextFreeChunk &gt;= this.chunkTable.length) {</span>
+<span class="nc" id="L206">            this.expand();</span>
+        }
+<span class="nc" id="L208">    }</span>
+
+    private void expand() {
+<span class="nc" id="L211">        int currentSize = this.chunkTable.length;</span>
+<span class="nc" id="L212">        int[] newTable = new int[currentSize * EXPANSION_FACTOR];</span>
+<span class="nc" id="L213">        System.arraycopy(this.chunkTable, 0, newTable, 0, currentSize);</span>
+<span class="nc" id="L214">        this.chunkTable = newTable;</span>
+<span class="nc" id="L215">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

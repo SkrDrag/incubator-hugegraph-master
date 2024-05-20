@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="8.45">
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\API.java">
+<error line="52" severity="info" message="本行字符数 108个，最多：100个。" source="com.puppycrawl.tools.checkstyle.checks.sizes.LineLengthCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\cypher\CypherClient.java">
+<error line="23" column="43" severity="info" message="不应使用 &apos;.*&apos; 形式的导入 - org.apache.tinkerpop.gremlin.driver.* 。" source="com.puppycrawl.tools.checkstyle.checks.imports.AvoidStarImportCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\gremlin\GremlinAPI.java">
+<error line="33" column="8" severity="info" message="无用导入 - org.apache.hugegraph.api.filter.RedirectFilter 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\metrics\MetricsAPI.java">
+<error line="364" column="78" severity="info" message="该行之后有多于1个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\profile\WhiteIpListAPI.java">
+<error line="79" severity="info" message="本行字符数 109个，最多：100个。" source="com.puppycrawl.tools.checkstyle.checks.sizes.LineLengthCheck"/>
+<error line="140" severity="info" message="本行字符数 113个，最多：100个。" source="com.puppycrawl.tools.checkstyle.checks.sizes.LineLengthCheck"/>
+<error line="154" column="21" severity="info" message="&apos;+&apos; 应在前一行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.OperatorWrapCheck"/>
+<error line="155" column="21" severity="info" message="&apos;+&apos; 应在前一行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.OperatorWrapCheck"/>
+<error line="156" column="21" severity="info" message="&apos;+&apos; 应在前一行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.OperatorWrapCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\traversers\CustomizedCrosspointsAPI.java">
+<error line="115" column="62" severity="info" message="该行之后有多于1个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\traversers\CustomTaskManager.java">
+<error line="36" severity="info" message="Prohibit invoking System.out.println in source code !" source="com.puppycrawl.tools.checkstyle.checks.regexp.RegexpSinglelineCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\traversers\EdgeExistenceAPI.java">
+<error line="28" column="8" severity="info" message="无用导入 - org.apache.hugegraph.structure.HugeVertex 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\traversers\graphcomputeAPI.java">
+<error line="3" column="1" severity="info" message="&apos;/*&apos; 前只应有一个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+<error line="24" column="15" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.HugeTraverser.NO_LIMIT 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="26" column="8" severity="info" message="无用导入 - java.util.Collections 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="27" column="8" severity="info" message="无用导入 - java.util.HashSet 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="28" column="8" severity="info" message="无用导入 - java.util.Iterator 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="29" column="8" severity="info" message="无用导入 - java.util.List 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="31" column="8" severity="info" message="无用导入 - java.util.concurrent.ExecutorService 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="32" column="8" severity="info" message="无用导入 - java.util.concurrent.Executors 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="39" column="8" severity="info" message="无用导入 - org.apache.hugegraph.backend.query.QueryResults 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="41" column="8" severity="info" message="无用导入 - org.apache.hugegraph.structure.HugeVertex 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="42" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.HugeTraverser 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="43" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.KneighborTraverser 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="44" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.kneighbor 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="45" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.KneighborManager 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="46" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.records.KneighborRecords 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="47" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.steps.Steps 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="48" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.test 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="50" column="8" severity="info" message="无用导入 - org.apache.hugegraph.util.E 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="52" column="8" severity="info" message="无用导入 - org.apache.tinkerpop.gremlin.structure.Edge 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="56" column="8" severity="info" message="无用导入 - com.fasterxml.jackson.annotation.JsonProperty 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="57" column="8" severity="info" message="无用导入 - com.google.common.collect.ImmutableList 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="62" column="8" severity="info" message="无用导入 - jakarta.ws.rs.Consumes 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="65" column="8" severity="info" message="无用导入 - jakarta.ws.rs.POST 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="71" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.kkneighbor 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="78" column="14" severity="info" message="Type name &apos;graphcomputeAPI&apos; must match pattern &apos;^[A-Z][a-zA-Z0-9]*$&apos;." source="com.puppycrawl.tools.checkstyle.checks.naming.TypeNameCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\traversers\kkneighborAPI.java">
+<error line="22" column="15" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.HugeTraverser.NO_LIMIT 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="24" column="8" severity="info" message="无用导入 - java.util.Collections 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="25" column="8" severity="info" message="无用导入 - java.util.HashSet 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="26" column="8" severity="info" message="无用导入 - java.util.Iterator 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="27" column="8" severity="info" message="无用导入 - java.util.List 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="36" column="8" severity="info" message="无用导入 - org.apache.hugegraph.backend.query.QueryResults 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="38" column="8" severity="info" message="无用导入 - org.apache.hugegraph.structure.HugeVertex 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="39" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.HugeTraverser 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="40" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.KneighborTraverser 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="43" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.records.KneighborRecords 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="44" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.steps.Steps 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="45" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.test 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="47" column="8" severity="info" message="无用导入 - org.apache.hugegraph.util.E 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="49" column="8" severity="info" message="无用导入 - org.apache.tinkerpop.gremlin.structure.Edge 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="54" column="8" severity="info" message="无用导入 - com.google.common.collect.ImmutableList 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="59" column="8" severity="info" message="无用导入 - jakarta.ws.rs.Consumes 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="62" column="8" severity="info" message="无用导入 - jakarta.ws.rs.POST 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="68" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.kkneighbor 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="71" column="1" severity="info" message="&apos;CLASS_DEF&apos; 前只应有一个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+<error line="74" column="14" severity="info" message="Type name &apos;kkneighborAPI&apos; must match pattern &apos;^[A-Z][a-zA-Z0-9]*$&apos;." source="com.puppycrawl.tools.checkstyle.checks.naming.TypeNameCheck"/>
+<error line="104" column="44" severity="info" message="该行之后有多于1个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+<error line="110" column="39" severity="info" message="该行之后有多于1个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+<error line="117" column="13" severity="info" message="WhitespaceAround: &apos;=&apos; is not followed by whitespace. Empty blocks may only be represented as {} when not part of a multi-block statement (4.1.3)" source="com.puppycrawl.tools.checkstyle.checks.whitespace.WhitespaceAroundCheck"/>
+<error line="117" column="13" severity="info" message="WhitespaceAround: &apos;=&apos; is not preceded with whitespace." source="com.puppycrawl.tools.checkstyle.checks.whitespace.WhitespaceAroundCheck"/>
+<error line="118" column="41" severity="info" message="该行之后有多于1个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+<error line="121" column="67" severity="info" message="该行之后有多于1个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+<error line="130" column="9" severity="info" message="WhitespaceAround: &apos;try&apos; is not followed by whitespace. Empty blocks may only be represented as {} when not part of a multi-block statement (4.1.3)" source="com.puppycrawl.tools.checkstyle.checks.whitespace.WhitespaceAroundCheck"/>
+<error line="130" column="45" severity="info" message="WhitespaceAround: &apos;{&apos; is not preceded with whitespace." source="com.puppycrawl.tools.checkstyle.checks.whitespace.WhitespaceAroundCheck"/>
+<error line="141" column="1" severity="info" message="注释应与第142行代码同样缩进8个缩进符，而不是0个。" source="com.puppycrawl.tools.checkstyle.checks.indentation.CommentsIndentationCheck"/>
+<error line="235" column="1" severity="info" message="注释应与第237行代码同样缩进4个缩进符，而不是0个。" source="com.puppycrawl.tools.checkstyle.checks.indentation.CommentsIndentationCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\traversers\KneighborAPI.java">
+<error line="41" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.test 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\traversers\KoutAPI.java">
+<error line="84" column="54" severity="info" message="Parameter name &apos;count_only&apos; must match pattern &apos;^[a-z]([a-zA-Z0-9]*)?$&apos;." source="com.puppycrawl.tools.checkstyle.checks.naming.ParameterNameCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\api\traversers\testAPI.java">
+<error line="2" column="1" severity="info" message="“import”之前应该有一个空白行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+<error line="4" column="15" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.HugeTraverser.NO_LIMIT 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="6" column="8" severity="info" message="无用导入 - java.util.Collections 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="7" column="8" severity="info" message="无用导入 - java.util.HashSet 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="8" column="8" severity="info" message="无用导入 - java.util.Iterator 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="9" column="8" severity="info" message="无用导入 - java.util.List 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="16" column="8" severity="info" message="无用导入 - org.apache.hugegraph.backend.query.QueryResults 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="18" column="8" severity="info" message="无用导入 - org.apache.hugegraph.structure.HugeVertex 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="19" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.HugeTraverser 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="20" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.KneighborTraverser 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="22" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.records.KneighborRecords 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="23" column="8" severity="info" message="无用导入 - org.apache.hugegraph.traversal.algorithm.steps.Steps 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="24" column="8" severity="info" message="无用导入 - org.apache.hugegraph.type.define.Directions 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="25" column="8" severity="info" message="无用导入 - org.apache.hugegraph.util.E 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="26" column="8" severity="info" message="无用导入 - org.apache.hugegraph.util.Log 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="28" column="8" severity="info" message="无用导入 - org.apache.tinkerpop.gremlin.structure.Edge 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="29" column="8" severity="info" message="无用导入 - org.slf4j.Logger 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="33" column="8" severity="info" message="无用导入 - com.google.common.collect.ImmutableList 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="34" column="8" severity="info" message="无用导入 - com.google.common.collect.ImmutableMap 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="38" column="8" severity="info" message="无用导入 - jakarta.ws.rs.Consumes 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="41" column="8" severity="info" message="无用导入 - jakarta.ws.rs.POST 。" source="com.puppycrawl.tools.checkstyle.checks.imports.UnusedImportsCheck"/>
+<error line="47" column="1" severity="info" message="“CLASS_DEF”之前应该有一个空白行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+<error line="50" column="14" severity="info" message="Type name &apos;testAPI&apos; must match pattern &apos;^[A-Z][a-zA-Z0-9]*$&apos;." source="com.puppycrawl.tools.checkstyle.checks.naming.TypeNameCheck"/>
+<error line="50" column="42" severity="info" message="WhitespaceAround: &apos;{&apos; is not preceded with whitespace." source="com.puppycrawl.tools.checkstyle.checks.whitespace.WhitespaceAroundCheck"/>
+<error line="75" column="58" severity="info" message="该行之后有多于1个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+<error line="94" column="1" severity="info" message="注释应与第95行代码同样缩进8个缩进符，而不是0个。" source="com.puppycrawl.tools.checkstyle.checks.indentation.CommentsIndentationCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\auth\HugeFactoryAuthProxy.java">
+<error line="311" severity="info" message="Prohibit invoking System.out.println in source code !" source="com.puppycrawl.tools.checkstyle.checks.regexp.RegexpSinglelineCheck"/>
+<error line="319" severity="info" message="Prohibit invoking System.out.println in source code !" source="com.puppycrawl.tools.checkstyle.checks.regexp.RegexpSinglelineCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\auth\HugeGraphAuthProxy.java">
+<error line="1703" column="36" severity="info" message="方法 &apos;clone&apos; 应调用 &apos;super.clone&apos;。" source="com.puppycrawl.tools.checkstyle.checks.coding.SuperCloneCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\auth\StandardAuthenticator.java">
+<error line="94" severity="info" message="Prohibit invoking System.out.println in source code !" source="com.puppycrawl.tools.checkstyle.checks.regexp.RegexpSinglelineCheck"/>
+<error line="104" severity="info" message="Prohibit invoking System.out.println in source code !" source="com.puppycrawl.tools.checkstyle.checks.regexp.RegexpSinglelineCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\core\GraphManager.java">
+<error line="351" column="5" severity="info" message="&apos;METHOD_DEF&apos; 前只应有一个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\metrics\MetricsUtil.java">
+<error line="67" column="5" severity="info" message="&apos;METHOD_DEF&apos; 前只应有一个空行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\metrics\SlowQueryLog.java">
+<error line="17" column="1" severity="info" message="“package”之前应该有一个空白行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.EmptyLineSeparatorCheck"/>
+</file>
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-api\src\main\java\org\apache\hugegraph\opencypher\CypherOpProcessor.java">
+<error line="50" column="17" severity="info" message="不应使用 &apos;.*&apos; 形式的导入 - java.util.* 。" source="com.puppycrawl.tools.checkstyle.checks.imports.AvoidStarImportCheck"/>
+<error line="99" column="33" severity="info" message="名称 &apos;logger&apos; 必须匹配表达式： &apos;^[A-Z][A-Z0-9]*(_[A-Z0-9]+)*$&apos; 。" source="com.puppycrawl.tools.checkstyle.checks.naming.ConstantNameCheck"/>
+<error line="220" column="30" severity="info" message="&apos;?&apos; 应在前一行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.OperatorWrapCheck"/>
+<error line="305" column="16" severity="info" message="&apos;+&apos; 应在前一行。" source="com.puppycrawl.tools.checkstyle.checks.whitespace.OperatorWrapCheck"/>
+</file>
+</checkstyle>

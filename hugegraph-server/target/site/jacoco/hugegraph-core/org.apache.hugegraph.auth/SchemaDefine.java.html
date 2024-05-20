@@ -1,0 +1,310 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SchemaDefine.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">SchemaDefine.java</span></div><h1>SchemaDefine.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.io.Serializable;
+import java.util.Date;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.auth.HugeTarget.P;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.Nameable;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Graph.Hidden;
+import org.apache.tinkerpop.gremlin.structure.Property;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.VertexProperty;
+
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.util.E;
+
+public abstract class SchemaDefine {
+
+    protected final HugeGraphParams graph;
+    protected final String label;
+
+<span class="nc" id="L50">    public SchemaDefine(HugeGraphParams graph, String label) {</span>
+<span class="nc" id="L51">        this.graph = graph;</span>
+<span class="nc" id="L52">        this.label = label;</span>
+<span class="nc" id="L53">    }</span>
+
+    public abstract void initSchemaIfNeeded();
+
+    protected SchemaManager schema() {
+<span class="nc" id="L58">        return this.graph.graph().schema();</span>
+    }
+
+    protected boolean existVertexLabel(String label) {
+<span class="nc" id="L62">        return this.graph.graph().existsVertexLabel(label);</span>
+    }
+
+    protected boolean existEdgeLabel(String label) {
+<span class="nc" id="L66">        return this.graph.graph().existsEdgeLabel(label);</span>
+    }
+
+    protected String createPropertyKey(String name) {
+<span class="nc" id="L70">        return this.createPropertyKey(name, DataType.TEXT);</span>
+    }
+
+    protected String createPropertyKey(String name, DataType dataType) {
+<span class="nc" id="L74">        return this.createPropertyKey(name, dataType, Cardinality.SINGLE);</span>
+    }
+
+    protected String createPropertyKey(String name, DataType dataType,
+                                       Cardinality cardinality) {
+<span class="nc" id="L79">        SchemaManager schema = this.schema();</span>
+<span class="nc" id="L80">        PropertyKey propertyKey = schema.propertyKey(name)</span>
+<span class="nc" id="L81">                                        .dataType(dataType)</span>
+<span class="nc" id="L82">                                        .cardinality(cardinality)</span>
+<span class="nc" id="L83">                                        .build();</span>
+<span class="nc" id="L84">        this.graph.schemaTransaction().addPropertyKey(propertyKey);</span>
+<span class="nc" id="L85">        return name;</span>
+    }
+
+    protected String[] initProperties(List&lt;String&gt; props) {
+<span class="nc" id="L89">        String label = this.label;</span>
+<span class="nc" id="L90">        props.add(createPropertyKey(hideField(label, AuthElement.CREATE),</span>
+                                    DataType.DATE));
+<span class="nc" id="L92">        props.add(createPropertyKey(hideField(label, AuthElement.UPDATE),</span>
+                                    DataType.DATE));
+<span class="nc" id="L94">        props.add(createPropertyKey(hideField(label, AuthElement.CREATOR)));</span>
+
+<span class="nc" id="L96">        return props.toArray(new String[0]);</span>
+    }
+
+    protected IndexLabel createRangeIndex(VertexLabel label, String field) {
+<span class="nc" id="L100">        SchemaManager schema = this.schema();</span>
+<span class="nc" id="L101">        String name = Hidden.hide(label + &quot;-index-by-&quot; + field);</span>
+<span class="nc" id="L102">        IndexLabel indexLabel = schema.indexLabel(name).range()</span>
+<span class="nc" id="L103">                                      .on(HugeType.VERTEX_LABEL, this.label)</span>
+<span class="nc" id="L104">                                      .by(field)</span>
+<span class="nc" id="L105">                                      .build();</span>
+<span class="nc" id="L106">        this.graph.schemaTransaction().addIndexLabel(label, indexLabel);</span>
+<span class="nc" id="L107">        return indexLabel;</span>
+    }
+
+    protected static String hideField(String label, String key) {
+<span class="nc" id="L111">        return label + &quot;_&quot; + key;</span>
+    }
+
+    protected static String unhideField(String label, String key) {
+<span class="nc" id="L115">        return Hidden.unHide(label) + &quot;_&quot; + key;</span>
+    }
+
+    public abstract static class AuthElement implements Serializable {
+
+        private static final long serialVersionUID = 8746691160192814973L;
+
+        protected static final String CREATE = &quot;create&quot;;
+        protected static final String UPDATE = &quot;update&quot;;
+        protected static final String CREATOR = &quot;creator&quot;;
+
+        protected Id id;
+        protected Date create;
+        protected Date update;
+        protected String creator;
+
+<span class="nc" id="L131">        public AuthElement() {</span>
+<span class="nc" id="L132">            this.create = new Date();</span>
+<span class="nc" id="L133">            this.update = this.create;</span>
+<span class="nc" id="L134">        }</span>
+
+        public Id id() {
+<span class="nc" id="L137">            return this.id;</span>
+        }
+
+        public void id(Id id) {
+<span class="nc" id="L141">            this.id = id;</span>
+<span class="nc" id="L142">        }</span>
+
+        public String idString() {
+<span class="nc" id="L145">            return Hidden.unHide(this.label()) + &quot;(&quot; + this.id + &quot;)&quot;;</span>
+        }
+
+        public Date create() {
+<span class="nc" id="L149">            return this.create;</span>
+        }
+
+        public void create(Date create) {
+<span class="nc" id="L153">            this.create = create;</span>
+<span class="nc" id="L154">        }</span>
+
+        public Date update() {
+<span class="nc" id="L157">            return this.update;</span>
+        }
+
+        public void update(Date update) {
+<span class="nc" id="L161">            this.update = update;</span>
+<span class="nc" id="L162">        }</span>
+
+        public void onUpdate() {
+<span class="nc" id="L165">            this.update = new Date();</span>
+<span class="nc" id="L166">        }</span>
+
+        public String creator() {
+<span class="nc" id="L169">            return this.creator;</span>
+        }
+
+        public void creator(String creator) {
+<span class="nc" id="L173">            this.creator = creator;</span>
+<span class="nc" id="L174">        }</span>
+
+        protected Map&lt;String, Object&gt; asMap(Map&lt;String, Object&gt; map) {
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            E.checkState(this.create != null,</span>
+                         &quot;Property %s time can't be null&quot;, CREATE);
+<span class="nc bnc" id="L179" title="All 2 branches missed.">            E.checkState(this.update != null,</span>
+                         &quot;Property %s time can't be null&quot;, UPDATE);
+<span class="nc bnc" id="L181" title="All 2 branches missed.">            E.checkState(this.creator != null,</span>
+                         &quot;Property %s can't be null&quot;, CREATOR);
+
+<span class="nc bnc" id="L184" title="All 2 branches missed.">            if (this.id != null) {</span>
+                // The id is null when creating
+<span class="nc" id="L186">                map.put(Hidden.unHide(P.ID), this.id);</span>
+            }
+
+<span class="nc" id="L189">            map.put(unhideField(this.label(), CREATE), this.create);</span>
+<span class="nc" id="L190">            map.put(unhideField(this.label(), UPDATE), this.update);</span>
+<span class="nc" id="L191">            map.put(unhideField(this.label(), CREATOR), this.creator);</span>
+
+<span class="nc" id="L193">            return map;</span>
+        }
+
+        protected boolean property(String key, Object value) {
+<span class="nc" id="L197">            E.checkNotNull(key, &quot;property key&quot;);</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">            if (key.equals(hideField(this.label(), CREATE))) {</span>
+<span class="nc" id="L199">                this.create = (Date) value;</span>
+<span class="nc" id="L200">                return true;</span>
+            }
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (key.equals(hideField(this.label(), UPDATE))) {</span>
+<span class="nc" id="L203">                this.update = (Date) value;</span>
+<span class="nc" id="L204">                return true;</span>
+            }
+<span class="nc bnc" id="L206" title="All 2 branches missed.">            if (key.equals(hideField(this.label(), CREATOR))) {</span>
+<span class="nc" id="L207">                this.creator = (String) value;</span>
+<span class="nc" id="L208">                return true;</span>
+            }
+<span class="nc" id="L210">            return false;</span>
+        }
+
+        protected Object[] asArray(List&lt;Object&gt; list) {
+<span class="nc bnc" id="L214" title="All 2 branches missed.">            E.checkState(this.create != null,</span>
+                         &quot;Property %s time can't be null&quot;, CREATE);
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            E.checkState(this.update != null,</span>
+                         &quot;Property %s time can't be null&quot;, UPDATE);
+<span class="nc bnc" id="L218" title="All 2 branches missed.">            E.checkState(this.creator != null,</span>
+                         &quot;Property %s can't be null&quot;, CREATOR);
+
+<span class="nc" id="L221">            list.add(hideField(this.label(), CREATE));</span>
+<span class="nc" id="L222">            list.add(this.create);</span>
+
+<span class="nc" id="L224">            list.add(hideField(this.label(), UPDATE));</span>
+<span class="nc" id="L225">            list.add(this.update);</span>
+
+<span class="nc" id="L227">            list.add(hideField(this.label(), CREATOR));</span>
+<span class="nc" id="L228">            list.add(this.creator);</span>
+
+<span class="nc" id="L230">            return list.toArray();</span>
+        }
+
+        public abstract ResourceType type();
+
+        public abstract String label();
+
+        public abstract Map&lt;String, Object&gt; asMap();
+
+        protected abstract Object[] asArray();
+    }
+
+    // NOTE: travis-ci fails if class Entity implements Nameable
+<span class="nc" id="L243">    public abstract static class Entity extends AuthElement</span>
+                           implements org.apache.hugegraph.type.Nameable {
+
+        private static final long serialVersionUID = 4113319546914811762L;
+
+        public static &lt;T extends Entity&gt; T fromVertex(Vertex vertex, T entity) {
+<span class="nc" id="L249">            E.checkArgument(vertex.label().equals(entity.label()),</span>
+                            &quot;Illegal vertex label '%s' for entity '%s'&quot;,
+<span class="nc" id="L251">                            vertex.label(), entity.label());</span>
+<span class="nc" id="L252">            entity.id((Id) vertex.id());</span>
+<span class="nc" id="L253">            for (Iterator&lt;VertexProperty&lt;Object&gt;&gt; iter = vertex.properties();</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">                 iter.hasNext();) {</span>
+<span class="nc" id="L255">                VertexProperty&lt;Object&gt; prop = iter.next();</span>
+<span class="nc" id="L256">                entity.property(prop.key(), prop.value());</span>
+<span class="nc" id="L257">            }</span>
+<span class="nc" id="L258">            return entity;</span>
+        }
+
+        @Override
+        public String idString() {
+<span class="nc" id="L263">            String label = Hidden.unHide(this.label());</span>
+<span class="nc" id="L264">            String name = this.name();</span>
+<span class="nc" id="L265">            StringBuilder sb = new StringBuilder(label.length() +</span>
+<span class="nc" id="L266">                                                 name.length() + 2);</span>
+<span class="nc" id="L267">            sb.append(label).append(&quot;(&quot;).append(name).append(&quot;)&quot;);</span>
+<span class="nc" id="L268">            return sb.toString();</span>
+        }
+    }
+
+<span class="nc" id="L272">    public abstract static class Relationship extends AuthElement {</span>
+
+        private static final long serialVersionUID = -1406157381685832493L;
+
+        public abstract String sourceLabel();
+
+        public abstract String targetLabel();
+
+        public abstract Id source();
+
+        public abstract Id target();
+
+        public static &lt;T extends Relationship&gt; T fromEdge(Edge edge,
+                                                          T relationship) {
+<span class="nc" id="L286">            E.checkArgument(edge.label().equals(relationship.label()),</span>
+                            &quot;Illegal edge label '%s' for relationship '%s'&quot;,
+<span class="nc" id="L288">                            edge.label(), relationship.label());</span>
+<span class="nc" id="L289">            relationship.id((Id) edge.id());</span>
+<span class="nc" id="L290">            for (Iterator&lt;Property&lt;Object&gt;&gt; iter = edge.properties();</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">                 iter.hasNext();) {</span>
+<span class="nc" id="L292">                Property&lt;Object&gt; prop = iter.next();</span>
+<span class="nc" id="L293">                relationship.property(prop.key(), prop.value());</span>
+<span class="nc" id="L294">            }</span>
+<span class="nc" id="L295">            return relationship;</span>
+        }
+
+        @Override
+        public String idString() {
+<span class="nc" id="L300">            String label = Hidden.unHide(this.label());</span>
+<span class="nc" id="L301">            StringBuilder sb = new StringBuilder(label.length() +</span>
+<span class="nc" id="L302">                                                 this.source().length() +</span>
+<span class="nc" id="L303">                                                 this.target().length() + 4);</span>
+<span class="nc" id="L304">            sb.append(label).append(&quot;(&quot;).append(this.source())</span>
+<span class="nc" id="L305">              .append(&quot;-&gt;&quot;).append(this.target()).append(&quot;)&quot;);</span>
+<span class="nc" id="L306">            return sb.toString();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BatchAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.graph</a> &gt; <span class="el_source">BatchAPI.java</span></div><h1>BatchAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.graph;
+
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.tinkerpop.gremlin.structure.Element;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.define.Checkable;
+import org.apache.hugegraph.define.UpdateStrategy;
+import org.apache.hugegraph.metrics.MetricsUtil;
+import org.apache.hugegraph.server.RestServer;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.Meter;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class BatchAPI extends API {
+
+<span class="nc" id="L45">    private static final Logger LOG = Log.logger(BatchAPI.class);</span>
+
+    // NOTE: VertexAPI and EdgeAPI should share a counter
+<span class="nc" id="L48">    private static final AtomicInteger BATCH_WRITE_THREADS = new AtomicInteger(0);</span>
+
+    static {
+<span class="nc" id="L51">        MetricsUtil.registerGauge(RestServer.class, &quot;batch-write-threads&quot;,</span>
+<span class="nc" id="L52">                                  () -&gt; BATCH_WRITE_THREADS.intValue());</span>
+<span class="nc" id="L53">    }</span>
+
+    private final Meter batchMeter;
+
+<span class="nc" id="L57">    public BatchAPI() {</span>
+<span class="nc" id="L58">        this.batchMeter = MetricsUtil.registerMeter(this.getClass(),</span>
+                                                    &quot;batch-commit&quot;);
+<span class="nc" id="L60">    }</span>
+
+    public &lt;R&gt; R commit(HugeConfig config, HugeGraph g, int size,
+                        Callable&lt;R&gt; callable) {
+<span class="nc" id="L64">        int maxWriteThreads = config.get(ServerOptions.MAX_WRITE_THREADS);</span>
+<span class="nc" id="L65">        int writingThreads = BATCH_WRITE_THREADS.incrementAndGet();</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        if (writingThreads &gt; maxWriteThreads) {</span>
+<span class="nc" id="L67">            BATCH_WRITE_THREADS.decrementAndGet();</span>
+<span class="nc" id="L68">            throw new HugeException(&quot;The rest server is too busy to write&quot;);</span>
+        }
+
+<span class="nc" id="L71">        LOG.debug(&quot;The batch writing threads is {}&quot;, BATCH_WRITE_THREADS);</span>
+        try {
+<span class="nc" id="L73">            R result = commit(g, callable);</span>
+<span class="nc" id="L74">            this.batchMeter.mark(size);</span>
+<span class="nc" id="L75">            return result;</span>
+        } finally {
+<span class="nc" id="L77">            BATCH_WRITE_THREADS.decrementAndGet();</span>
+        }
+    }
+
+    @JsonIgnoreProperties(value = {&quot;type&quot;})
+<span class="nc" id="L82">    protected abstract static class JsonElement implements Checkable {</span>
+
+        @JsonProperty(&quot;id&quot;)
+        public Object id;
+        @JsonProperty(&quot;label&quot;)
+        public String label;
+        @JsonProperty(&quot;properties&quot;)
+        public Map&lt;String, Object&gt; properties;
+        @JsonProperty(&quot;type&quot;)
+        public String type;
+
+        @Override
+        public abstract void checkCreate(boolean isBatch);
+
+        @Override
+        public abstract void checkUpdate();
+
+        protected abstract Object[] properties();
+    }
+
+    protected void updateExistElement(JsonElement oldElement,
+                                      JsonElement newElement,
+                                      Map&lt;String, UpdateStrategy&gt; strategies) {
+<span class="nc bnc" id="L105" title="All 2 branches missed.">        if (oldElement == null) {</span>
+<span class="nc" id="L106">            return;</span>
+        }
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        E.checkArgument(newElement != null, &quot;The json element can't be null&quot;);</span>
+
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        for (Map.Entry&lt;String, UpdateStrategy&gt; kv : strategies.entrySet()) {</span>
+<span class="nc" id="L111">            String key = kv.getKey();</span>
+<span class="nc" id="L112">            UpdateStrategy updateStrategy = kv.getValue();</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">            if (oldElement.properties.get(key) != null &amp;&amp;</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">                newElement.properties.get(key) != null) {</span>
+<span class="nc" id="L115">                Object value = updateStrategy.checkAndUpdateProperty(</span>
+<span class="nc" id="L116">                               oldElement.properties.get(key),</span>
+<span class="nc" id="L117">                               newElement.properties.get(key));</span>
+<span class="nc" id="L118">                newElement.properties.put(key, value);</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            } else if (oldElement.properties.get(key) != null &amp;&amp;</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">                       newElement.properties.get(key) == null) {</span>
+                // If new property is null &amp; old is present, use old property
+<span class="nc" id="L122">                newElement.properties.put(key, oldElement.properties.get(key));</span>
+            }
+<span class="nc" id="L124">        }</span>
+<span class="nc" id="L125">    }</span>
+
+    protected void updateExistElement(HugeGraph g,
+                                      Element oldElement,
+                                      JsonElement newElement,
+                                      Map&lt;String, UpdateStrategy&gt; strategies) {
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        if (oldElement == null) {</span>
+<span class="nc" id="L132">            return;</span>
+        }
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        E.checkArgument(newElement != null, &quot;The json element can't be null&quot;);</span>
+
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        for (Map.Entry&lt;String, UpdateStrategy&gt; kv : strategies.entrySet()) {</span>
+<span class="nc" id="L137">            String key = kv.getKey();</span>
+<span class="nc" id="L138">            UpdateStrategy updateStrategy = kv.getValue();</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">            if (oldElement.property(key).isPresent() &amp;&amp;</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">                newElement.properties.get(key) != null) {</span>
+<span class="nc" id="L141">                Object value = updateStrategy.checkAndUpdateProperty(</span>
+<span class="nc" id="L142">                               oldElement.property(key).value(),</span>
+<span class="nc" id="L143">                               newElement.properties.get(key));</span>
+<span class="nc" id="L144">                value = g.propertyKey(key).validValueOrThrow(value);</span>
+<span class="nc" id="L145">                newElement.properties.put(key, value);</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">            } else if (oldElement.property(key).isPresent() &amp;&amp;</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">                       newElement.properties.get(key) == null) {</span>
+                // If new property is null &amp; old is present, use old property
+<span class="nc" id="L149">                newElement.properties.put(key, oldElement.value(key));</span>
+            }
+<span class="nc" id="L151">        }</span>
+<span class="nc" id="L152">    }</span>
+
+    protected static void updateProperties(HugeElement element,
+                                           JsonElement jsonElement,
+                                           boolean append) {
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; e : jsonElement.properties.entrySet()) {</span>
+<span class="nc" id="L158">            String key = e.getKey();</span>
+<span class="nc" id="L159">            Object value = e.getValue();</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">            if (append) {</span>
+<span class="nc" id="L161">                element.property(key, value);</span>
+            } else {
+<span class="nc" id="L163">                element.property(key).remove();</span>
+            }
+<span class="nc" id="L165">        }</span>
+<span class="nc" id="L166">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

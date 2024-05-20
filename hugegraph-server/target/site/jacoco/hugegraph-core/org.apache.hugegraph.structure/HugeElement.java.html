@@ -1,0 +1,552 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeElement.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.structure</a> &gt; <span class="el_source">HugeElement.java</span></div><h1>HugeElement.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.structure;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.function.Supplier;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.Idfiable;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.collection.CollectionFactory;
+import org.apache.tinkerpop.gremlin.structure.Element;
+import org.apache.tinkerpop.gremlin.structure.Property;
+import org.apache.tinkerpop.gremlin.structure.T;
+import org.apache.tinkerpop.gremlin.structure.util.ElementHelper;
+import org.eclipse.collections.api.iterator.IntIterator;
+import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
+
+public abstract class HugeElement implements Element, GraphType, Idfiable, Comparable&lt;HugeElement&gt; {
+
+<span class="nc" id="L57">    private static final MutableIntObjectMap&lt;HugeProperty&lt;?&gt;&gt; EMPTY_MAP =</span>
+<span class="nc" id="L58">                         CollectionFactory.newIntObjectMap();</span>
+    private static final int MAX_PROPERTIES = BytesBuffer.UINT16_MAX;
+
+    private final HugeGraph graph;
+    private MutableIntObjectMap&lt;HugeProperty&lt;?&gt;&gt; properties;
+    // TODO: move into properties to keep small object
+    private long expiredTime;
+
+    private boolean removed;
+    private boolean fresh;
+    private boolean propLoaded;
+    private boolean defaultValueUpdated;
+
+<span class="nc" id="L71">    public HugeElement(final HugeGraph graph) {</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        E.checkArgument(graph != null, &quot;HugeElement graph can't be null&quot;);</span>
+<span class="nc" id="L73">        this.graph = graph;</span>
+<span class="nc" id="L74">        this.properties = EMPTY_MAP;</span>
+<span class="nc" id="L75">        this.expiredTime = 0L;</span>
+<span class="nc" id="L76">        this.removed = false;</span>
+<span class="nc" id="L77">        this.fresh = false;</span>
+<span class="nc" id="L78">        this.propLoaded = true;</span>
+<span class="nc" id="L79">        this.defaultValueUpdated = false;</span>
+<span class="nc" id="L80">    }</span>
+
+    public abstract SchemaLabel schemaLabel();
+
+    protected abstract GraphTransaction tx();
+
+    protected abstract &lt;V&gt; HugeProperty&lt;V&gt; newProperty(PropertyKey pk, V val);
+
+    protected abstract &lt;V&gt; void onUpdateProperty(Cardinality cardinality,
+                                                 HugeProperty&lt;V&gt; prop);
+
+    protected abstract boolean ensureFilledProperties(boolean throwIfNotExist);
+
+    protected void updateToDefaultValueIfNone() {
+<span class="nc bnc" id="L94" title="All 4 branches missed.">        if (this.fresh() || this.defaultValueUpdated) {</span>
+<span class="nc" id="L95">            return;</span>
+        }
+<span class="nc" id="L97">        this.defaultValueUpdated = true;</span>
+        // Set default value if needed
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        for (Id pkeyId : this.schemaLabel().properties()) {</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            if (this.properties.containsKey(intFromId(pkeyId))) {</span>
+<span class="nc" id="L101">                continue;</span>
+            }
+<span class="nc" id="L103">            PropertyKey pkey = this.graph().propertyKey(pkeyId);</span>
+<span class="nc" id="L104">            Object value = pkey.defaultValue();</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">            if (value != null) {</span>
+<span class="nc" id="L106">                this.setProperty(this.newProperty(pkey, value));</span>
+            }
+<span class="nc" id="L108">        }</span>
+<span class="nc" id="L109">        this.defaultValueUpdated = true;</span>
+<span class="nc" id="L110">    }</span>
+
+    @Override
+    public HugeGraph graph() {
+<span class="nc" id="L114">        return this.graph;</span>
+    }
+
+    protected void removed(boolean removed) {
+<span class="nc" id="L118">        this.removed = removed;</span>
+<span class="nc" id="L119">    }</span>
+
+    public boolean removed() {
+<span class="nc" id="L122">        return this.removed;</span>
+    }
+
+    protected void fresh(boolean fresh) {
+<span class="nc" id="L126">        this.fresh = fresh;</span>
+<span class="nc" id="L127">    }</span>
+
+    public boolean fresh() {
+<span class="nc" id="L130">        return this.fresh;</span>
+    }
+
+    public boolean isPropLoaded() {
+<span class="nc" id="L134">        return this.propLoaded;</span>
+    }
+
+    protected void propLoaded() {
+<span class="nc" id="L138">        this.propLoaded = true;</span>
+<span class="nc" id="L139">    }</span>
+
+    public void propNotLoaded() {
+<span class="nc" id="L142">        this.propLoaded = false;</span>
+<span class="nc" id="L143">    }</span>
+
+    public void forceLoad() {
+<span class="nc" id="L146">        this.ensureFilledProperties(false);</span>
+<span class="nc" id="L147">    }</span>
+
+    public void committed() {
+<span class="nc" id="L150">        this.fresh = false;</span>
+        // Set expired time
+<span class="nc" id="L152">        this.setExpiredTimeIfNeeded();</span>
+<span class="nc" id="L153">    }</span>
+
+    public void setExpiredTimeIfNeeded() {
+<span class="nc" id="L156">        SchemaLabel label = this.schemaLabel();</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        if (label.ttl() == 0L) {</span>
+<span class="nc" id="L158">            return;</span>
+        }
+<span class="nc" id="L160">        long now = this.graph.now();</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        if (SchemaLabel.NONE_ID.equals(label.ttlStartTime())) {</span>
+<span class="nc" id="L162">            this.expiredTime(now + label.ttl());</span>
+<span class="nc" id="L163">            return;</span>
+        }
+<span class="nc" id="L165">        Date date = this.getPropertyValue(label.ttlStartTime());</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (date == null) {</span>
+<span class="nc" id="L167">            this.expiredTime(now + label.ttl());</span>
+<span class="nc" id="L168">            return;</span>
+        }
+<span class="nc" id="L170">        long expired = date.getTime() + label.ttl();</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        E.checkArgument(expired &gt; now,</span>
+                        &quot;The expired time '%s' of '%s' is prior to now: %s&quot;,
+<span class="nc" id="L173">                        new Date(expired), this, now);</span>
+<span class="nc" id="L174">        this.expiredTime(expired);</span>
+<span class="nc" id="L175">    }</span>
+
+    public long expiredTime() {
+<span class="nc" id="L178">        return this.expiredTime;</span>
+    }
+
+    public void expiredTime(long expiredTime) {
+<span class="nc" id="L182">        this.expiredTime = expiredTime;</span>
+<span class="nc" id="L183">    }</span>
+
+    public boolean expired() {
+<span class="nc bnc" id="L186" title="All 4 branches missed.">        return 0L &lt; this.expiredTime &amp;&amp; this.expiredTime &lt; this.graph.now();</span>
+    }
+
+    public long ttl() {
+<span class="nc bnc" id="L190" title="All 4 branches missed.">        if (this.expiredTime == 0L || this.expiredTime &lt; this.graph.now()) {</span>
+<span class="nc" id="L191">            return 0L;</span>
+        }
+<span class="nc" id="L193">        return this.expiredTime - this.graph.now();</span>
+    }
+
+    public boolean hasTtl() {
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        return this.schemaLabel().ttl() &gt; 0L;</span>
+    }
+
+    public Set&lt;Id&gt; getPropertyKeys() {
+<span class="nc" id="L201">        Set&lt;Id&gt; propKeys = InsertionOrderUtil.newSet();</span>
+<span class="nc" id="L202">        IntIterator keys = this.properties.keysView().intIterator();</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        while (keys.hasNext()) {</span>
+<span class="nc" id="L204">            propKeys.add(IdGenerator.of(keys.next()));</span>
+        }
+<span class="nc" id="L206">        return propKeys;</span>
+    }
+
+    public Collection&lt;HugeProperty&lt;?&gt;&gt; getProperties() {
+<span class="nc" id="L210">        return this.properties.values();</span>
+    }
+
+    public Collection&lt;HugeProperty&lt;?&gt;&gt; getFilledProperties() {
+<span class="nc" id="L214">        this.ensureFilledProperties(true);</span>
+<span class="nc" id="L215">        return this.getProperties();</span>
+    }
+
+    public Map&lt;Id, Object&gt; getPropertiesMap() {
+<span class="nc" id="L219">        Map&lt;Id, Object&gt; props = InsertionOrderUtil.newMap();</span>
+<span class="nc bnc" id="L220" title="All 2 branches missed.">        for (HugeProperty&lt;?&gt; prop : this.properties.values()) {</span>
+<span class="nc" id="L221">            props.put(prop.propertyKey().id(), prop.value());</span>
+<span class="nc" id="L222">        }</span>
+        // TODO: return MutableIntObjectMap&lt;Object&gt; for this method?
+<span class="nc" id="L224">        return props;</span>
+    }
+
+    public Collection&lt;HugeProperty&lt;?&gt;&gt; getAggregateProperties() {
+<span class="nc" id="L228">        List&lt;HugeProperty&lt;?&gt;&gt; aggrProps = InsertionOrderUtil.newList();</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        for (HugeProperty&lt;?&gt; prop : this.properties.values()) {</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">            if (prop.type().isAggregateProperty()) {</span>
+<span class="nc" id="L231">                aggrProps.add(prop);</span>
+            }
+<span class="nc" id="L233">        }</span>
+<span class="nc" id="L234">        return aggrProps;</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public &lt;V&gt; HugeProperty&lt;V&gt; getProperty(Id key) {
+<span class="nc" id="L239">        return (HugeProperty&lt;V&gt;) this.properties.get(intFromId(key));</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public &lt;V&gt; V getPropertyValue(Id key) {
+<span class="nc" id="L244">        HugeProperty&lt;?&gt; prop = this.properties.get(intFromId(key));</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (prop == null) {</span>
+<span class="nc" id="L246">            return null;</span>
+        }
+<span class="nc" id="L248">        return (V) prop.value();</span>
+    }
+
+    public boolean hasProperty(Id key) {
+<span class="nc" id="L252">        return this.properties.containsKey(intFromId(key));</span>
+    }
+
+    public boolean hasProperties() {
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        return this.properties.size() &gt; 0;</span>
+    }
+
+    public int sizeOfProperties() {
+<span class="nc" id="L260">        return this.properties.size();</span>
+    }
+
+    public int sizeOfSubProperties() {
+<span class="nc" id="L264">        int size = 0;</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">        for (HugeProperty&lt;?&gt; p : this.properties.values()) {</span>
+<span class="nc" id="L266">            size++;</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">            if (p.propertyKey().cardinality() != Cardinality.SINGLE &amp;&amp;</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">                p.value() instanceof Collection) {</span>
+<span class="nc" id="L269">                size += ((Collection&lt;?&gt;) p.value()).size();</span>
+            }
+<span class="nc" id="L271">        }</span>
+<span class="nc" id="L272">        return size;</span>
+    }
+
+    @Watched(prefix = &quot;element&quot;)
+    public &lt;V&gt; HugeProperty&lt;?&gt; setProperty(HugeProperty&lt;V&gt; prop) {
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        if (this.properties == EMPTY_MAP) {</span>
+<span class="nc" id="L278">            this.properties = CollectionFactory.newIntObjectMap();</span>
+        }
+<span class="nc" id="L280">        PropertyKey pkey = prop.propertyKey();</span>
+
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        E.checkArgument(this.properties.containsKey(intFromId(pkey.id())) ||</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">                        this.properties.size() &lt; MAX_PROPERTIES,</span>
+                        &quot;Exceeded the maximum number of properties&quot;);
+<span class="nc" id="L285">        return this.properties.put(intFromId(pkey.id()), prop);</span>
+    }
+
+    public &lt;V&gt; HugeProperty&lt;?&gt; removeProperty(Id key) {
+<span class="nc" id="L289">        return this.properties.remove(intFromId(key));</span>
+    }
+
+    public &lt;V&gt; HugeProperty&lt;V&gt; addProperty(PropertyKey pkey, V value) {
+<span class="nc" id="L293">        return this.addProperty(pkey, value, false);</span>
+    }
+
+    @Watched(prefix = &quot;element&quot;)
+    public &lt;V&gt; HugeProperty&lt;V&gt; addProperty(PropertyKey pkey, V value,
+                                           boolean notify) {
+<span class="nc" id="L299">        HugeProperty&lt;V&gt; prop = null;</span>
+<span class="nc bnc" id="L300" title="All 4 branches missed.">        switch (pkey.cardinality()) {</span>
+            case SINGLE:
+<span class="nc" id="L302">                prop = this.newProperty(pkey, value);</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">                if (notify) {</span>
+                    /*
+                     * NOTE: this method should be called before setProperty()
+                     * because tx need to delete index without the new property
+                     */
+<span class="nc" id="L308">                    this.onUpdateProperty(pkey.cardinality(), prop);</span>
+                }
+<span class="nc" id="L310">                this.setProperty(prop);</span>
+<span class="nc" id="L311">                break;</span>
+            case SET:
+<span class="nc" id="L313">                prop = this.addProperty(pkey, value, HashSet::new);</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">                if (notify) {</span>
+<span class="nc" id="L315">                    this.onUpdateProperty(pkey.cardinality(), prop);</span>
+                }
+                break;
+            case LIST:
+<span class="nc" id="L319">                prop = this.addProperty(pkey, value, ArrayList::new);</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">                if (notify) {</span>
+<span class="nc" id="L321">                    this.onUpdateProperty(pkey.cardinality(), prop);</span>
+                }
+                break;
+            default:
+<span class="nc" id="L325">                assert false;</span>
+                break;
+        }
+<span class="nc" id="L328">        return prop;</span>
+    }
+
+    @Watched(prefix = &quot;element&quot;)
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+    private &lt;V&gt; HugeProperty&lt;V&gt; addProperty(PropertyKey pkey, V value,
+                                            Supplier&lt;Collection&lt;V&gt;&gt; supplier) {
+<span class="nc bnc" id="L335" title="All 2 branches missed.">        assert pkey.cardinality().multiple();</span>
+        HugeProperty&lt;Collection&lt;V&gt;&gt; property;
+<span class="nc bnc" id="L337" title="All 2 branches missed.">        if (this.hasProperty(pkey.id())) {</span>
+<span class="nc" id="L338">            property = this.getProperty(pkey.id());</span>
+        } else {
+<span class="nc" id="L340">            property = this.newProperty(pkey, supplier.get());</span>
+<span class="nc" id="L341">            this.setProperty(property);</span>
+        }
+
+        Collection&lt;V&gt; values;
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (pkey.cardinality() == Cardinality.SET) {</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">            if (value instanceof Set) {</span>
+<span class="nc" id="L347">                values = (Set&lt;V&gt;) value;</span>
+            } else {
+<span class="nc" id="L349">                values = CollectionUtil.toSet(value);</span>
+            }
+        } else {
+<span class="nc bnc" id="L352" title="All 2 branches missed.">            assert pkey.cardinality() == Cardinality.LIST;</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">            if (value instanceof List) {</span>
+<span class="nc" id="L354">                values = (List&lt;V&gt;) value;</span>
+            } else {
+<span class="nc" id="L356">                values = CollectionUtil.toList(value);</span>
+            }
+        }
+<span class="nc" id="L359">        property.value().addAll(pkey.validValueOrThrow(values));</span>
+
+        // Any better ways?
+<span class="nc" id="L362">        return (HugeProperty) property;</span>
+    }
+
+    public void resetProperties() {
+<span class="nc" id="L366">        this.properties = CollectionFactory.newIntObjectMap();</span>
+<span class="nc" id="L367">        this.propLoaded = false;</span>
+<span class="nc" id="L368">    }</span>
+
+    protected void copyProperties(HugeElement element) {
+<span class="nc bnc" id="L371" title="All 2 branches missed.">        if (element.properties == EMPTY_MAP) {</span>
+<span class="nc" id="L372">            this.properties = EMPTY_MAP;</span>
+        } else {
+<span class="nc" id="L374">            this.properties = CollectionFactory.newIntObjectMap(</span>
+                              element.properties);
+        }
+<span class="nc" id="L377">        this.propLoaded = true;</span>
+<span class="nc" id="L378">    }</span>
+
+    public HugeElement copyAsFresh() {
+<span class="nc" id="L381">        HugeElement elem = this.copy();</span>
+<span class="nc" id="L382">        elem.fresh = true;</span>
+<span class="nc" id="L383">        return elem;</span>
+    }
+
+    public abstract HugeElement copy();
+
+    public abstract Object sysprop(HugeKeys key);
+
+    @Override
+    public boolean equals(Object obj) {
+<span class="nc bnc" id="L392" title="All 2 branches missed.">        if (!(obj instanceof Element)) {</span>
+<span class="nc" id="L393">            return false;</span>
+        }
+
+<span class="nc" id="L396">        Element other = (Element) obj;</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">        if (this.id() == null) {</span>
+<span class="nc" id="L398">            return false;</span>
+        }
+
+<span class="nc" id="L401">        return this.id().equals(other.id());</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc bnc" id="L406" title="All 2 branches missed.">        E.checkState(this.id() != null, &quot;Element id can't be null&quot;);</span>
+<span class="nc" id="L407">        return ElementHelper.hashCode(this);</span>
+    }
+
+    @Override
+    public int compareTo(HugeElement o) {
+<span class="nc" id="L412">        return this.id().compareTo(o.id());</span>
+    }
+
+    /**
+     * Classify parameter list(pairs) from call request
+     * @param keyValues The property key-value pair of the vertex or edge
+     * @return          Key-value pairs that are classified and processed
+     */
+    @Watched(prefix = &quot;element&quot;)
+    public static final ElementKeys classifyKeys(Object... keyValues) {
+<span class="nc" id="L422">        ElementKeys elemKeys = new ElementKeys();</span>
+
+<span class="nc bnc" id="L424" title="All 2 branches missed.">        if ((keyValues.length &amp; 1) == 1) {</span>
+<span class="nc" id="L425">            throw Element.Exceptions.providedKeyValuesMustBeAMultipleOfTwo();</span>
+        }
+<span class="nc bnc" id="L427" title="All 2 branches missed.">        for (int i = 0; i &lt; keyValues.length; i = i + 2) {</span>
+<span class="nc" id="L428">            Object key = keyValues[i];</span>
+<span class="nc" id="L429">            Object val = keyValues[i + 1];</span>
+
+<span class="nc bnc" id="L431" title="All 4 branches missed.">            if (!(key instanceof String) &amp;&amp; !(key instanceof T)) {</span>
+<span class="nc" id="L432">                throw Element.Exceptions.providedKeyValuesMustHaveALegalKeyOnEvenIndices();</span>
+            }
+<span class="nc bnc" id="L434" title="All 2 branches missed.">            if (val == null) {</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">                if (T.label.equals(key)) {</span>
+<span class="nc" id="L436">                    throw Element.Exceptions.labelCanNotBeNull();</span>
+                }
+                // Ignore null value for tinkerpop test compatibility
+                continue;
+            }
+
+<span class="nc bnc" id="L442" title="All 2 branches missed.">            if (key.equals(T.id)) {</span>
+<span class="nc" id="L443">                elemKeys.id = val;</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">            } else if (key.equals(T.label)) {</span>
+<span class="nc" id="L445">                elemKeys.label = val;</span>
+            } else {
+<span class="nc" id="L447">                elemKeys.keys.add(key.toString());</span>
+            }
+        }
+<span class="nc" id="L450">        return elemKeys;</span>
+    }
+
+    public static final Id getIdValue(HugeType type, Object idValue) {
+<span class="nc bnc" id="L454" title="All 2 branches missed.">        assert type.isGraph();</span>
+<span class="nc" id="L455">        Id id = getIdValue(idValue);</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">        if (type.isVertex()) {</span>
+<span class="nc" id="L457">            return id;</span>
+        } else {
+<span class="nc bnc" id="L459" title="All 4 branches missed.">            if (id == null || id instanceof EdgeId) {</span>
+<span class="nc" id="L460">                return id;</span>
+            }
+<span class="nc" id="L462">            return EdgeId.parse(id.asString());</span>
+        }
+    }
+
+    @Watched(prefix = &quot;element&quot;)
+    protected static Id getIdValue(Object idValue) {
+<span class="nc bnc" id="L468" title="All 2 branches missed.">        if (idValue == null) {</span>
+<span class="nc" id="L469">            return null;</span>
+        }
+
+<span class="nc bnc" id="L472" title="All 2 branches missed.">        if (idValue instanceof String) {</span>
+            // String id
+<span class="nc" id="L474">            return IdGenerator.of((String) idValue);</span>
+<span class="nc bnc" id="L475" title="All 2 branches missed.">        } else if (idValue instanceof Number) {</span>
+            // Long id
+<span class="nc" id="L477">            return IdGenerator.of(((Number) idValue).longValue());</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">        } else if (idValue instanceof UUID) {</span>
+            // UUID id
+<span class="nc" id="L480">            return IdGenerator.of((UUID) idValue);</span>
+<span class="nc bnc" id="L481" title="All 2 branches missed.">        } else if (idValue instanceof Id) {</span>
+            // Id itself
+<span class="nc" id="L483">            return (Id) idValue;</span>
+<span class="nc bnc" id="L484" title="All 2 branches missed.">        } else if (idValue instanceof Element) {</span>
+            // Element
+<span class="nc" id="L486">            return (Id) ((Element) idValue).id();</span>
+        }
+
+        // Throw if error type
+<span class="nc" id="L490">        throw new UnsupportedOperationException(String.format(</span>
+                  &quot;Invalid element id: %s(%s)&quot;,
+<span class="nc" id="L492">                  idValue, idValue.getClass().getSimpleName()));</span>
+    }
+
+    @Watched(prefix = &quot;element&quot;)
+    public static final Object getLabelValue(Object... keyValues) {
+<span class="nc" id="L497">        Object labelValue = null;</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">        for (int i = 0; i &lt; keyValues.length; i = i + 2) {</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">            if (keyValues[i].equals(T.label)) {</span>
+<span class="nc" id="L500">                labelValue = keyValues[i + 1];</span>
+<span class="nc bnc" id="L501" title="All 4 branches missed.">                E.checkArgument(labelValue instanceof String ||</span>
+                                labelValue instanceof VertexLabel,
+                                &quot;Expect a string or a VertexLabel object &quot; +
+                                &quot;as the vertex label argument, but got: '%s'&quot;,
+                                labelValue);
+<span class="nc bnc" id="L506" title="All 2 branches missed.">                if (labelValue instanceof String) {</span>
+<span class="nc" id="L507">                    ElementHelper.validateLabel((String) labelValue);</span>
+                }
+                break;
+            }
+        }
+<span class="nc" id="L512">        return labelValue;</span>
+    }
+
+    public static int intFromId(Id id) {
+<span class="nc" id="L516">        E.checkArgument(id instanceof IdGenerator.LongId,</span>
+<span class="nc" id="L517">                        &quot;Can't get number from %s(%s)&quot;, id, id.getClass());</span>
+<span class="nc" id="L518">        return ((IdGenerator.LongId) id).intValue();</span>
+    }
+
+<span class="nc" id="L521">    public static final class ElementKeys {</span>
+
+<span class="nc" id="L523">        private Object label = null;</span>
+<span class="nc" id="L524">        private Object id = null;</span>
+<span class="nc" id="L525">        private Set&lt;String&gt; keys = new HashSet&lt;&gt;();</span>
+
+        public Object label() {
+<span class="nc" id="L528">            return this.label;</span>
+        }
+
+        public void label(Object label) {
+<span class="nc" id="L532">            this.label = label;</span>
+<span class="nc" id="L533">        }</span>
+
+        public Object id() {
+<span class="nc" id="L536">            return this.id;</span>
+        }
+
+        public void id(Object id) {
+<span class="nc" id="L540">            this.id = id;</span>
+<span class="nc" id="L541">        }</span>
+
+        public Set&lt;String&gt; keys() {
+<span class="nc" id="L544">            return this.keys;</span>
+        }
+
+        public void keys(Set&lt;String&gt; keys) {
+<span class="nc" id="L548">            this.keys = keys;</span>
+<span class="nc" id="L549">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

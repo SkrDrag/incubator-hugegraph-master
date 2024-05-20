@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WhereBuilder.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-mysql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.mysql</a> &gt; <span class="el_source">WhereBuilder.java</span></div><h1>WhereBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.mysql;
+
+import java.util.List;
+
+import org.apache.hugegraph.backend.query.Condition.RelationType;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.util.E;
+
+public class WhereBuilder {
+
+    private StringBuilder builder;
+
+    public WhereBuilder() {
+<span class="nc" id="L31">        this(true);</span>
+<span class="nc" id="L32">    }</span>
+
+<span class="nc" id="L34">    public WhereBuilder(boolean startWithWhere) {</span>
+<span class="nc bnc" id="L35" title="All 2 branches missed.">        if (startWithWhere) {</span>
+<span class="nc" id="L36">            this.builder = new StringBuilder(&quot; WHERE &quot;);</span>
+        } else {
+<span class="nc" id="L38">            this.builder = new StringBuilder(&quot; &quot;);</span>
+        }
+<span class="nc" id="L40">    }</span>
+
+    public WhereBuilder relation(String key, RelationType type, Object value) {
+<span class="nc" id="L43">        String operator = null;</span>
+<span class="nc bnc" id="L44" title="All 8 branches missed.">        switch (type) {</span>
+            case EQ:
+<span class="nc" id="L46">                operator = &quot;=&quot;;</span>
+<span class="nc" id="L47">                break;</span>
+            case NEQ:
+<span class="nc" id="L49">                operator = &quot;!=&quot;;</span>
+<span class="nc" id="L50">                break;</span>
+            case GT:
+<span class="nc" id="L52">                operator = &quot;&gt;&quot;;</span>
+<span class="nc" id="L53">                break;</span>
+            case GTE:
+<span class="nc" id="L55">                operator = &quot;&gt;=&quot;;</span>
+<span class="nc" id="L56">                break;</span>
+            case LT:
+<span class="nc" id="L58">                operator = &quot;&lt;&quot;;</span>
+<span class="nc" id="L59">                break;</span>
+            case LTE:
+<span class="nc" id="L61">                operator = &quot;&lt;=&quot;;</span>
+<span class="nc" id="L62">                break;</span>
+            case IN:
+                @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L65">                List&lt;Object&gt; values = (List&lt;Object&gt;) value;</span>
+<span class="nc" id="L66">                this.in(key, values);</span>
+<span class="nc" id="L67">                break;</span>
+            case CONTAINS_VALUE:
+            case CONTAINS_KEY:
+            case SCAN:
+            default:
+<span class="nc" id="L72">                throw new NotSupportException(&quot;relation '%s'&quot;, type);</span>
+        }
+<span class="nc bnc" id="L74" title="All 2 branches missed.">        if (operator != null) {</span>
+<span class="nc" id="L75">            this.builder.append(key);</span>
+<span class="nc" id="L76">            this.builder.append(operator);</span>
+<span class="nc" id="L77">            this.builder.append(wrapStringIfNeeded(value));</span>
+        }
+<span class="nc" id="L79">        return this;</span>
+    }
+
+    /**
+     * Concat as: cond1 and cond2...
+     * @return WhereBuilder
+     */
+    public WhereBuilder and() {
+<span class="nc" id="L87">        this.builder.append(&quot; AND &quot;);</span>
+<span class="nc" id="L88">        return this;</span>
+    }
+
+    /**
+     * Concat as: key1 op ? and key2 op ?...
+     * @param keys the keys to be concatted with value
+     * @param operator the operator to link every key and value pair
+     * @return WhereBuilder
+     */
+    public WhereBuilder and(List&lt;String&gt; keys, String operator) {
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        for (int i = 0, n = keys.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L99">            this.builder.append(keys.get(i));</span>
+<span class="nc" id="L100">            this.builder.append(operator);</span>
+<span class="nc" id="L101">            this.builder.append(&quot;?&quot;);</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">            if (i != n - 1) {</span>
+<span class="nc" id="L103">                this.builder.append(&quot; AND &quot;);</span>
+            }
+        }
+<span class="nc" id="L106">        return this;</span>
+    }
+
+    /**
+     * Concat as: key1 = value1 and key2 = value2...
+     * @param keys the keys to be concatted with values according to the
+     *             same index
+     * @param values the values to be concatted with every keys according to
+     *               the same index
+     * @return WhereBuilder
+     */
+    public WhereBuilder and(List&lt;String&gt; keys, List&lt;Object&gt; values) {
+<span class="nc" id="L118">        return this.and(keys, &quot;=&quot;, values);</span>
+    }
+
+    /**
+     * Concat as: key1 op value1 and key2 op value2...
+     * @param keys the keys to be concatted with values according to the
+     *             same index
+     * @param operator the operator to link every key and value pair
+     * @param values the values to be concatted with every keys according to
+     *               the same index
+     * @return WhereBuilder
+     */
+    public WhereBuilder and(List&lt;String&gt; keys,
+                            String operator,
+                            List&lt;Object&gt; values) {
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        E.checkArgument(keys.size() == values.size(),</span>
+                        &quot;The size of keys '%s' is not equal with &quot; +
+                        &quot;values size '%s'&quot;,
+<span class="nc" id="L136">                        keys.size(), values.size());</span>
+
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        for (int i = 0, n = keys.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L139">            this.builder.append(keys.get(i));</span>
+<span class="nc" id="L140">            this.builder.append(operator);</span>
+<span class="nc" id="L141">            this.builder.append(wrapStringIfNeeded(values.get(i)));</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">            if (i != n - 1) {</span>
+<span class="nc" id="L143">                this.builder.append(&quot; AND &quot;);</span>
+            }
+        }
+<span class="nc" id="L146">        return this;</span>
+    }
+
+    /**
+     * Concat as: key1 op1 value1 and key2 op2 value2...
+     * @param keys the keys to be concatted with values according to the
+     *             same index
+     * @param operators the operators to link every key and value pair
+     *                  according to the same index
+     * @param values the values to be concatted with every keys according to
+     *               the same index
+     * @return WhereBuilder
+     */
+    public WhereBuilder and(List&lt;String&gt; keys,
+                            List&lt;String&gt; operators,
+                            List&lt;Object&gt; values) {
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        E.checkArgument(keys.size() == operators.size(),</span>
+                        &quot;The size of keys '%s' is not equal with &quot; +
+                        &quot;operators size '%s'&quot;,
+<span class="nc" id="L165">                        keys.size(), operators.size());</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        E.checkArgument(keys.size() == values.size(),</span>
+                        &quot;The size of keys '%s' is not equal with &quot; +
+                        &quot;values size '%s'&quot;,
+<span class="nc" id="L169">                        keys.size(), values.size());</span>
+
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        for (int i = 0, n = keys.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L172">            this.builder.append(keys.get(i));</span>
+<span class="nc" id="L173">            this.builder.append(operators.get(i));</span>
+<span class="nc" id="L174">            this.builder.append(wrapStringIfNeeded(values.get(i)));</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">            if (i != n - 1) {</span>
+<span class="nc" id="L176">                this.builder.append(&quot; AND &quot;);</span>
+            }
+        }
+<span class="nc" id="L179">        return this;</span>
+    }
+
+    /**
+     * Concat as: clause1 and clause2...
+     * @param clauses the clauses to be concatted with 'AND' operator
+     * @return WhereBuilder
+     */
+    public WhereBuilder and(List&lt;StringBuilder&gt; clauses) {
+<span class="nc bnc" id="L188" title="All 4 branches missed.">        E.checkArgument(clauses != null &amp;&amp; !clauses.isEmpty(),</span>
+                        &quot;The clauses can't be empty&quot;);
+
+<span class="nc" id="L191">        int size = clauses.size();</span>
+<span class="nc" id="L192">        int i = 0;</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        for (StringBuilder clause : clauses) {</span>
+<span class="nc" id="L194">            this.builder.append(clause);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if (++i != size) {</span>
+<span class="nc" id="L196">                this.builder.append(&quot; AND &quot;);</span>
+            }
+<span class="nc" id="L198">        }</span>
+<span class="nc" id="L199">        return this;</span>
+    }
+
+    /**
+     * Concat as: key in (value1, value2...)
+     * @param key the key to be concatted with 'IN' operator
+     * @param values the values to be concated with ',' and wrapped by '()'
+     * @return WhereBuilder
+     */
+    public WhereBuilder in(String key, List&lt;Object&gt; values) {
+<span class="nc" id="L209">        this.builder.append(key).append(&quot; IN (&quot;);</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        for (int i = 0, n = values.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L211">            this.builder.append(wrapStringIfNeeded(values.get(i)));</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            if (i != n - 1) {</span>
+<span class="nc" id="L213">                this.builder.append(&quot;, &quot;);</span>
+            }
+        }
+<span class="nc" id="L216">        this.builder.append(&quot;)&quot;);</span>
+<span class="nc" id="L217">        return this;</span>
+    }
+
+    /**
+     * Concat as: (key1, key2...keyn) {@code &gt;=} (val1, val2...valn)
+     * @param keys the keys to be concatted with {@code &gt;=} operator
+     * @param values the values to be concatted with {@code &gt;=} operator
+     * @return WhereBuilder
+     */
+    public WhereBuilder gte(List&lt;String&gt; keys, List&lt;Object&gt; values) {
+<span class="nc bnc" id="L227" title="All 2 branches missed.">        E.checkArgument(keys.size() == values.size(),</span>
+                        &quot;The size of keys '%s' is not equal with &quot; +
+                        &quot;values size '%s'&quot;,
+<span class="nc" id="L230">                        keys.size(), values.size());</span>
+<span class="nc" id="L231">        this.builder.append(&quot;(&quot;);</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        for (int i = 0, n = keys.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L233">            this.builder.append(keys.get(i));</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">            if (i != n - 1) {</span>
+<span class="nc" id="L235">                this.builder.append(&quot;, &quot;);</span>
+            }
+        }
+<span class="nc" id="L238">        this.builder.append(&quot;) &gt;= (&quot;);</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        for (int i = 0, n = values.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L240">            this.builder.append(wrapStringIfNeeded(values.get(i)));</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            if (i != n - 1) {</span>
+<span class="nc" id="L242">                this.builder.append(&quot;, &quot;);</span>
+            }
+        }
+<span class="nc" id="L245">        this.builder.append(&quot;)&quot;);</span>
+<span class="nc" id="L246">        return this;</span>
+    }
+
+    public WhereBuilder gte(String key, Object value) {
+<span class="nc" id="L250">        this.builder.append(&quot; &quot;)</span>
+<span class="nc" id="L251">                    .append(key)</span>
+<span class="nc" id="L252">                    .append(&quot; &gt;= &quot;)</span>
+<span class="nc" id="L253">                    .append(wrapStringIfNeeded(value))</span>
+<span class="nc" id="L254">                    .append(&quot; &quot;);</span>
+<span class="nc" id="L255">        return this;</span>
+    }
+
+    public WhereBuilder lt(String key, Object value) {
+<span class="nc" id="L259">        this.builder.append(&quot; &quot;)</span>
+<span class="nc" id="L260">                    .append(key)</span>
+<span class="nc" id="L261">                    .append(&quot; &lt; &quot;)</span>
+<span class="nc" id="L262">                    .append(wrapStringIfNeeded(value))</span>
+<span class="nc" id="L263">                    .append(&quot; &quot;);</span>
+<span class="nc" id="L264">        return this;</span>
+    }
+
+    public StringBuilder build() {
+<span class="nc" id="L268">        return this.builder;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L273">        return this.builder.toString();</span>
+    }
+
+    protected String wrapStringIfNeeded(Object value) {
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        if (value instanceof String) {</span>
+<span class="nc" id="L278">            return this.escapeAndWrapString((String) value);</span>
+        } else {
+<span class="nc" id="L280">            return String.valueOf(value);</span>
+        }
+    }
+
+    protected String escapeAndWrapString(String value) {
+<span class="nc" id="L285">        return MysqlUtil.escapeAndWrapString(value);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

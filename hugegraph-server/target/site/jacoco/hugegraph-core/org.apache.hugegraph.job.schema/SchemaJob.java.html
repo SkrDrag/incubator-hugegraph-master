@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SchemaJob.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.schema</a> &gt; <span class="el_source">SchemaJob.java</span></div><h1>SchemaJob.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.schema;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.hugegraph.job.SysJob;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.type.HugeType;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+
+<span class="nc" id="L34">public abstract class SchemaJob extends SysJob&lt;Object&gt; {</span>
+
+    public static final String REMOVE_SCHEMA = &quot;remove_schema&quot;;
+    public static final String REBUILD_INDEX = &quot;rebuild_index&quot;;
+    public static final String CREATE_INDEX = &quot;create_index&quot;;
+    public static final String CREATE_OLAP = &quot;create_olap&quot;;
+    public static final String CLEAR_OLAP = &quot;clear_olap&quot;;
+    public static final String REMOVE_OLAP = &quot;remove_olap&quot;;
+
+<span class="nc" id="L43">    protected static final Logger LOG = Log.logger(SchemaJob.class);</span>
+
+    private static final String SPLITOR = &quot;:&quot;;
+
+    protected HugeType schemaType() {
+<span class="nc" id="L48">        String name = this.task().name();</span>
+<span class="nc" id="L49">        String[] parts = name.split(SPLITOR, 3);</span>
+<span class="nc bnc" id="L50" title="All 4 branches missed.">        E.checkState(parts.length == 3 &amp;&amp; parts[0] != null,</span>
+                     &quot;Task name should be formatted to String &quot; +
+                     &quot;'TYPE:ID:NAME', but got '%s'&quot;, name);
+
+<span class="nc" id="L54">        return HugeType.valueOf(parts[0]);</span>
+    }
+
+    protected Id schemaId() {
+<span class="nc" id="L58">        String name = this.task().name();</span>
+<span class="nc" id="L59">        String[] parts = name.split(SPLITOR, 3);</span>
+<span class="nc bnc" id="L60" title="All 4 branches missed.">        E.checkState(parts.length == 3 &amp;&amp; parts[1] != null,</span>
+                     &quot;Task name should be formatted to String &quot; +
+                     &quot;'TYPE:ID:NAME', but got '%s'&quot;, name);
+<span class="nc" id="L63">        return IdGenerator.of(Long.valueOf(parts[1]));</span>
+    }
+
+    protected String schemaName() {
+<span class="nc" id="L67">        String name = this.task().name();</span>
+<span class="nc" id="L68">        String[] parts = name.split(SPLITOR, 3);</span>
+<span class="nc bnc" id="L69" title="All 4 branches missed.">        E.checkState(parts.length == 3 &amp;&amp; parts[2] != null,</span>
+                     &quot;Task name should be formatted to String &quot; +
+                     &quot;'TYPE:ID:NAME', but got '%s'&quot;, name);
+<span class="nc" id="L72">        return parts[2];</span>
+    }
+
+    public static String formatTaskName(HugeType type, Id id, String name) {
+<span class="nc" id="L76">        E.checkNotNull(type, &quot;schema type&quot;);</span>
+<span class="nc" id="L77">        E.checkNotNull(id, &quot;schema id&quot;);</span>
+<span class="nc" id="L78">        E.checkNotNull(name, &quot;schema name&quot;);</span>
+<span class="nc" id="L79">        return String.join(SPLITOR, type.toString(), id.asString(), name);</span>
+    }
+
+    /**
+     * Use reflection to call SchemaTransaction.removeSchema(),
+     * which is protected
+     * @param tx        The remove operation actual executer
+     * @param schema    the schema to be removed
+     */
+    protected static void removeSchema(SchemaTransaction tx,
+                                       SchemaElement schema) {
+        try {
+<span class="nc" id="L91">            Method method = SchemaTransaction.class</span>
+<span class="nc" id="L92">                            .getDeclaredMethod(&quot;removeSchema&quot;,</span>
+                                               SchemaElement.class);
+<span class="nc" id="L94">            method.setAccessible(true);</span>
+<span class="nc" id="L95">            method.invoke(tx, schema);</span>
+<span class="nc" id="L96">        } catch (NoSuchMethodException | IllegalAccessException |</span>
+                 InvocationTargetException e) {
+<span class="nc" id="L98">            throw new AssertionError(</span>
+                      &quot;Can't call SchemaTransaction.removeSchema()&quot;, e);
+<span class="nc" id="L100">        }</span>
+
+<span class="nc" id="L102">    }</span>
+
+    /**
+     * Use reflection to call SchemaTransaction.updateSchema(),
+     * which is protected
+     * @param tx        The update operation actual execute
+     * @param schema    the schema to be updated
+     */
+    protected static void updateSchema(SchemaTransaction tx,
+                                       SchemaElement schema) {
+        try {
+<span class="nc" id="L113">            Method method = SchemaTransaction.class</span>
+<span class="nc" id="L114">                            .getDeclaredMethod(&quot;updateSchema&quot;,</span>
+                                               SchemaElement.class);
+<span class="nc" id="L116">            method.setAccessible(true);</span>
+<span class="nc" id="L117">            method.invoke(tx, schema);</span>
+<span class="nc" id="L118">        } catch (NoSuchMethodException | IllegalAccessException |</span>
+                 InvocationTargetException e) {
+<span class="nc" id="L120">            throw new AssertionError(</span>
+                      &quot;Can't call SchemaTransaction.updateSchema()&quot;, e);
+<span class="nc" id="L122">        }</span>
+<span class="nc" id="L123">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

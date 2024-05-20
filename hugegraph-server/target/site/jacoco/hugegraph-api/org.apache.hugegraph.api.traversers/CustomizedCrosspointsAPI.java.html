@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CustomizedCrosspointsAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">CustomizedCrosspointsAPI.java</span></div><h1>CustomizedCrosspointsAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_CAPACITY;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_PATHS_LIMIT;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.traversal.algorithm.CustomizedCrosspointsTraverser;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/traversers/customizedcrosspoints&quot;)
+@Singleton
+@Tag(name = &quot;CustomizedCrosspointsAPI&quot;)
+<span class="nc" id="L61">public class CustomizedCrosspointsAPI extends API {</span>
+
+<span class="nc" id="L63">    private static final Logger LOG = Log.logger(CustomizedCrosspointsAPI.class);</span>
+
+    private static List&lt;CustomizedCrosspointsTraverser.PathPattern&gt; pathPatterns(
+            HugeGraph graph, CrosspointsRequest request) {
+<span class="nc" id="L67">        int stepSize = request.pathPatterns.size();</span>
+<span class="nc" id="L68">        List&lt;CustomizedCrosspointsTraverser.PathPattern&gt; pathPatterns = new ArrayList&lt;&gt;(stepSize);</span>
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        for (PathPattern pattern : request.pathPatterns) {</span>
+<span class="nc" id="L70">            CustomizedCrosspointsTraverser.PathPattern pathPattern =</span>
+                    new CustomizedCrosspointsTraverser.PathPattern();
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            for (Step step : pattern.steps) {</span>
+<span class="nc" id="L73">                pathPattern.add(step.jsonToStep(graph));</span>
+<span class="nc" id="L74">            }</span>
+<span class="nc" id="L75">            pathPatterns.add(pathPattern);</span>
+<span class="nc" id="L76">        }</span>
+<span class="nc" id="L77">        return pathPatterns;</span>
+    }
+
+    @POST
+    @Timed
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String post(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       CrosspointsRequest request) {
+<span class="nc" id="L87">        E.checkArgumentNotNull(request,</span>
+                               &quot;The crosspoints request body can't be null&quot;);
+<span class="nc" id="L89">        E.checkArgumentNotNull(request.sources,</span>
+                               &quot;The sources of crosspoints request &quot; +
+                               &quot;can't be null&quot;);
+<span class="nc bnc" id="L92" title="All 2 branches missed.">        E.checkArgument(request.pathPatterns != null &amp;&amp;</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">                        !request.pathPatterns.isEmpty(),</span>
+                        &quot;The steps of crosspoints request can't be empty&quot;);
+
+<span class="nc" id="L96">        LOG.debug(&quot;Graph [{}] get customized crosspoints from source vertex &quot; +</span>
+                  &quot;'{}', with path_pattern '{}', with path '{}', with_vertex &quot; +
+                  &quot;'{}', capacity '{}', limit '{}' and with_edge '{}'&quot;,
+<span class="nc" id="L99">                  graph, request.sources, request.pathPatterns, request.withPath,</span>
+<span class="nc" id="L100">                  request.withVertex, request.capacity, request.limit, request.withEdge);</span>
+
+<span class="nc" id="L102">        ApiMeasurer measure = new ApiMeasurer();</span>
+
+<span class="nc" id="L104">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L105">        Iterator&lt;Vertex&gt; sources = request.sources.vertices(g);</span>
+
+<span class="nc" id="L107">        CustomizedCrosspointsTraverser traverser =</span>
+                new CustomizedCrosspointsTraverser(g);
+
+<span class="nc" id="L110">        List&lt;CustomizedCrosspointsTraverser.PathPattern&gt; patterns = pathPatterns(g, request);</span>
+<span class="nc" id="L111">        CustomizedCrosspointsTraverser.CrosspointsPaths paths =</span>
+<span class="nc" id="L112">                traverser.crosspointsPaths(sources, patterns, request.capacity, request.limit);</span>
+
+<span class="nc" id="L114">        measure.addIterCount(traverser.vertexIterCounter.get(),</span>
+<span class="nc" id="L115">                             traverser.edgeIterCounter.get());</span>
+
+
+        Iterator&lt;?&gt; iterVertex;
+<span class="nc" id="L119">        Set&lt;Id&gt; vertexIds = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (request.withPath) {</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            for (HugeTraverser.Path path : paths.paths()) {</span>
+<span class="nc" id="L122">                vertexIds.addAll(path.vertices());</span>
+<span class="nc" id="L123">            }</span>
+        } else {
+<span class="nc" id="L125">            vertexIds = paths.crosspoints();</span>
+        }
+<span class="nc bnc" id="L127" title="All 4 branches missed.">        if (request.withVertex &amp;&amp; !vertexIds.isEmpty()) {</span>
+<span class="nc" id="L128">            iterVertex = g.vertices(vertexIds.toArray());</span>
+<span class="nc" id="L129">            measure.addIterCount(vertexIds.size(), 0L);</span>
+        } else {
+<span class="nc" id="L131">            iterVertex = vertexIds.iterator();</span>
+        }
+
+<span class="nc" id="L134">        Iterator&lt;?&gt; iterEdge = Collections.emptyIterator();</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        if (request.withPath) {</span>
+<span class="nc" id="L136">            Set&lt;Edge&gt; edges = traverser.edgeResults().getEdges(paths.paths());</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            if (request.withEdge) {</span>
+<span class="nc" id="L138">                iterEdge = edges.iterator();</span>
+            } else {
+<span class="nc" id="L140">                iterEdge = HugeTraverser.EdgeRecord.getEdgeIds(edges).iterator();</span>
+            }
+        }
+
+<span class="nc" id="L144">        return manager.serializer(g, measure.measures())</span>
+<span class="nc" id="L145">                      .writeCrosspoints(paths, iterVertex,</span>
+                                        iterEdge, request.withPath);
+    }
+
+<span class="nc" id="L149">    private static class CrosspointsRequest {</span>
+
+        @JsonProperty(&quot;sources&quot;)
+        public Vertices sources;
+        @JsonProperty(&quot;path_patterns&quot;)
+        public List&lt;PathPattern&gt; pathPatterns;
+<span class="nc" id="L155">        @JsonProperty(&quot;capacity&quot;)</span>
+<span class="nc" id="L156">        public long capacity = Long.parseLong(DEFAULT_CAPACITY);</span>
+<span class="nc" id="L157">        @JsonProperty(&quot;limit&quot;)</span>
+<span class="nc" id="L158">        public int limit = Integer.parseInt(DEFAULT_PATHS_LIMIT);</span>
+<span class="nc" id="L159">        @JsonProperty(&quot;with_path&quot;)</span>
+        public boolean withPath = false;
+<span class="nc" id="L161">        @JsonProperty(&quot;with_vertex&quot;)</span>
+        public boolean withVertex = false;
+<span class="nc" id="L163">        @JsonProperty(&quot;with_edge&quot;)</span>
+        public boolean withEdge = false;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L168">            return String.format(&quot;CrosspointsRequest{sourceVertex=%s,&quot; +</span>
+                                 &quot;pathPatterns=%s,withPath=%s,withVertex=%s,&quot; +
+                                 &quot;capacity=%s,limit=%s,withEdge=%s}&quot;, this.sources,
+<span class="nc" id="L171">                                 this.pathPatterns, this.withPath, this.withVertex,</span>
+<span class="nc" id="L172">                                 this.capacity, this.limit, this.withEdge);</span>
+        }
+    }
+
+    private static class PathPattern {
+
+        @JsonProperty(&quot;steps&quot;)
+        public List&lt;Step&gt; steps;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L183">            return String.format(&quot;PathPattern{steps=%s&quot;, this.steps);</span>
+        }
+    }
+
+<span class="nc" id="L187">    private static class Step {</span>
+
+        @JsonProperty(&quot;direction&quot;)
+        public Directions direction;
+        @JsonProperty(&quot;labels&quot;)
+        public List&lt;String&gt; labels;
+        @JsonProperty(&quot;properties&quot;)
+        public Map&lt;String, Object&gt; properties;
+<span class="nc" id="L195">        @JsonAlias(&quot;degree&quot;)</span>
+        @JsonProperty(&quot;max_degree&quot;)
+<span class="nc" id="L197">        public long maxDegree = Long.parseLong(DEFAULT_MAX_DEGREE);</span>
+<span class="nc" id="L198">        @JsonProperty(&quot;skip_degree&quot;)</span>
+        public long skipDegree = 0L;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L203">            return String.format(&quot;Step{direction=%s,labels=%s,properties=%s,&quot; +</span>
+                                 &quot;maxDegree=%s,skipDegree=%s}&quot;,
+                                 this.direction, this.labels, this.properties,
+<span class="nc" id="L206">                                 this.maxDegree, this.skipDegree);</span>
+        }
+
+        private CustomizedCrosspointsTraverser.Step jsonToStep(HugeGraph g) {
+<span class="nc" id="L210">            return new CustomizedCrosspointsTraverser.Step(g, this.direction,</span>
+                                                           this.labels,
+                                                           this.properties,
+                                                           this.maxDegree,
+                                                           this.skipDegree);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

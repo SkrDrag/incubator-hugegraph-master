@@ -1,0 +1,660 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GraphManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.core</a> &gt; <span class="el_source">GraphManager.java</span></div><h1>GraphManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.core;
+
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.commons.configuration2.PropertiesConfiguration;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hugegraph.HugeFactory;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.auth.AuthManager;
+import org.apache.hugegraph.auth.HugeAuthenticator;
+import org.apache.hugegraph.auth.HugeFactoryAuthProxy;
+import org.apache.hugegraph.auth.HugeGraphAuthProxy;
+import org.apache.hugegraph.auth.StandardAuthenticator;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.cache.Cache;
+import org.apache.hugegraph.backend.cache.CacheManager;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.store.BackendStoreInfo;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.config.TypedOption;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.masterelection.GlobalMasterInfo;
+import org.apache.hugegraph.masterelection.RoleElectionOptions;
+import org.apache.hugegraph.masterelection.RoleElectionStateMachine;
+import org.apache.hugegraph.masterelection.StandardRoleListener;
+import org.apache.hugegraph.metrics.MetricsUtil;
+import org.apache.hugegraph.metrics.ServerReporter;
+import org.apache.hugegraph.rpc.RpcClientProvider;
+import org.apache.hugegraph.rpc.RpcConsumerConfig;
+import org.apache.hugegraph.rpc.RpcProviderConfig;
+import org.apache.hugegraph.rpc.RpcServer;
+import org.apache.hugegraph.serializer.JsonSerializer;
+import org.apache.hugegraph.serializer.Serializer;
+import org.apache.hugegraph.server.RestServer;
+import org.apache.hugegraph.task.TaskManager;
+import org.apache.hugegraph.testutil.Whitebox;
+import org.apache.hugegraph.type.define.NodeRole;
+import org.apache.hugegraph.util.ConfigUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Events;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.server.auth.AuthenticationException;
+import org.apache.tinkerpop.gremlin.server.util.MetricManager;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.Transaction;
+import org.apache.tinkerpop.gremlin.structure.util.GraphFactory;
+import org.slf4j.Logger;
+
+import com.alipay.sofa.rpc.config.ServerConfig;
+
+public final class GraphManager {
+
+<span class="nc" id="L81">    private static final Logger LOG = Log.logger(GraphManager.class);</span>
+
+    private final String graphsDir;
+    private final Map&lt;String, Graph&gt; graphs;
+    private final HugeAuthenticator authenticator;
+    private final RpcServer rpcServer;
+    private final RpcClientProvider rpcClient;
+
+    private RoleElectionStateMachine roleStateMachine;
+    private GlobalMasterInfo globalNodeRoleInfo;
+
+    private final HugeConfig conf;
+    private final EventHub eventHub;
+
+<span class="nc" id="L95">    public GraphManager(HugeConfig conf, EventHub hub) {</span>
+<span class="nc" id="L96">        this.graphsDir = conf.get(ServerOptions.GRAPHS);</span>
+<span class="nc" id="L97">        this.graphs = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L98">        this.authenticator = HugeAuthenticator.loadAuthenticator(conf);</span>
+<span class="nc" id="L99">        this.rpcServer = new RpcServer(conf);</span>
+<span class="nc" id="L100">        this.rpcClient = new RpcClientProvider(conf);</span>
+
+<span class="nc" id="L102">        this.roleStateMachine = null;</span>
+<span class="nc" id="L103">        this.globalNodeRoleInfo = new GlobalMasterInfo();</span>
+
+<span class="nc" id="L105">        this.eventHub = hub;</span>
+<span class="nc" id="L106">        this.conf = conf;</span>
+<span class="nc" id="L107">    }</span>
+
+    public void init() {
+<span class="nc" id="L110">        E.checkArgument(this.graphs.isEmpty(),</span>
+                        &quot;GraphManager has been initialized before&quot;);
+<span class="nc" id="L112">        this.listenChanges();</span>
+
+<span class="nc" id="L114">        this.loadGraphs(ConfigUtil.scanGraphsDir(this.graphsDir));</span>
+
+        // Start RPC-Server for raft-rpc/auth-rpc/cache-notify-rpc...
+<span class="nc" id="L117">        this.startRpcServer();</span>
+
+        // Raft will load snapshot firstly then launch election and replay log
+<span class="nc" id="L120">        this.waitGraphsReady();</span>
+
+<span class="nc" id="L122">        this.checkBackendVersionOrExit(this.conf);</span>
+<span class="nc" id="L123">        this.serverStarted(this.conf);</span>
+
+<span class="nc" id="L125">        this.addMetrics(this.conf);</span>
+<span class="nc" id="L126">    }</span>
+
+    public void loadGraphs(Map&lt;String, String&gt; graphConfs) {
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        for (Map.Entry&lt;String, String&gt; conf : graphConfs.entrySet()) {</span>
+<span class="nc" id="L130">            String name = conf.getKey();</span>
+<span class="nc" id="L131">            String graphConfPath = conf.getValue();</span>
+<span class="nc" id="L132">            HugeFactory.checkGraphName(name, &quot;rest-server.properties&quot;);</span>
+            try {
+<span class="nc" id="L134">                this.loadGraph(name, graphConfPath);</span>
+<span class="nc" id="L135">            } catch (Throwable e) {</span>
+<span class="nc" id="L136">                LOG.error(&quot;Graph '{}' can't be loaded: '{}'&quot;,</span>
+                          name, graphConfPath, e);
+<span class="nc" id="L138">            }</span>
+<span class="nc" id="L139">        }</span>
+<span class="nc" id="L140">    }</span>
+
+    public HugeGraph cloneGraph(String name, String newName, String configText) {
+        /*
+         * 0. check and modify params
+         * 1. create graph instance
+         * 2. init backend store
+         * 3. inject graph and traversal source into gremlin server context
+         * 4. inject graph into rest server context
+         */
+<span class="nc" id="L150">        HugeGraph cloneGraph = this.graph(name);</span>
+<span class="nc" id="L151">        E.checkArgumentNotNull(cloneGraph,</span>
+                               &quot;The clone graph '%s' doesn't exist&quot;, name);
+<span class="nc" id="L153">        E.checkArgument(StringUtils.isNotEmpty(newName),</span>
+                        &quot;The graph name can't be null or empty&quot;);
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        E.checkArgument(!this.graphs().contains(newName),</span>
+                        &quot;The graph '%s' has existed&quot;, newName);
+
+<span class="nc" id="L158">        HugeConfig cloneConfig = cloneGraph.cloneConfig(newName);</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(configText)) {</span>
+<span class="nc" id="L160">            PropertiesConfiguration propConfig = ConfigUtil.buildConfig(</span>
+                                                 configText);
+            // Use the passed config to overwrite the old one
+<span class="nc" id="L163">            propConfig.getKeys().forEachRemaining(key -&gt; {</span>
+<span class="nc" id="L164">                cloneConfig.setProperty(key, propConfig.getProperty(key));</span>
+<span class="nc" id="L165">            });</span>
+<span class="nc" id="L166">            this.checkOptions(cloneConfig);</span>
+        }
+
+<span class="nc" id="L169">        return this.createGraph(cloneConfig, newName);</span>
+    }
+
+    public HugeGraph createGraph(String name, String configText) {
+<span class="nc" id="L173">        E.checkArgument(this.conf.get(ServerOptions.ENABLE_DYNAMIC_CREATE_DROP),</span>
+                        &quot;Not allowed to create graph '%s' dynamically, &quot; +
+                        &quot;please set `enable_dynamic_create_drop` to true.&quot;,
+                        name);
+<span class="nc" id="L177">        E.checkArgument(StringUtils.isNotEmpty(name),</span>
+                        &quot;The graph name can't be null or empty&quot;);
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        E.checkArgument(!this.graphs().contains(name),</span>
+                        &quot;The graph name '%s' has existed&quot;, name);
+
+<span class="nc" id="L182">        PropertiesConfiguration propConfig = ConfigUtil.buildConfig(configText);</span>
+<span class="nc" id="L183">        HugeConfig config = new HugeConfig(propConfig);</span>
+<span class="nc" id="L184">        this.checkOptions(config);</span>
+
+<span class="nc" id="L186">        return this.createGraph(config, name);</span>
+    }
+
+    public void dropGraph(String name) {
+<span class="nc" id="L190">        HugeGraph graph = this.graph(name);</span>
+<span class="nc" id="L191">        E.checkArgument(this.conf.get(ServerOptions.ENABLE_DYNAMIC_CREATE_DROP),</span>
+                        &quot;Not allowed to drop graph '%s' dynamically, &quot; +
+                        &quot;please set `enable_dynamic_create_drop` to true.&quot;,
+                        name);
+<span class="nc" id="L195">        E.checkArgumentNotNull(graph, &quot;The graph '%s' doesn't exist&quot;, name);</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        E.checkArgument(this.graphs.size() &gt; 1,</span>
+                        &quot;The graph '%s' is the only one, not allowed to delete&quot;,
+                        name);
+
+<span class="nc" id="L200">        this.dropGraph(graph);</span>
+
+        // Let gremlin server and rest server context remove graph
+<span class="nc" id="L203">        this.notifyAndWaitEvent(Events.GRAPH_DROP, graph);</span>
+<span class="nc" id="L204">    }</span>
+
+    public Set&lt;String&gt; graphs() {
+<span class="nc" id="L207">        return Collections.unmodifiableSet(this.graphs.keySet());</span>
+    }
+
+    public HugeGraph graph(String name) {
+<span class="nc" id="L211">        Graph graph = this.graphs.get(name);</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        if (graph == null) {</span>
+<span class="nc" id="L213">            return null;</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">        } else if (graph instanceof HugeGraph) {</span>
+<span class="nc" id="L215">            return (HugeGraph) graph;</span>
+        }
+<span class="nc" id="L217">        throw new NotSupportException(&quot;graph instance of %s&quot;, graph.getClass());</span>
+    }
+
+    public Serializer serializer(Graph g) {
+<span class="nc" id="L221">        return JsonSerializer.instance();</span>
+    }
+
+    public Serializer serializer(Graph g, Map&lt;String, Object&gt; apiMeasure) {
+<span class="nc" id="L225">        return JsonSerializer.instance(apiMeasure);</span>
+    }
+
+    public void rollbackAll() {
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        for (Graph graph : this.graphs.values()) {</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">            if (graph.features().graph().supportsTransactions() &amp;&amp;</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">                graph.tx().isOpen()) {</span>
+<span class="nc" id="L232">                graph.tx().rollback();</span>
+            }
+<span class="nc" id="L234">        }</span>
+<span class="nc" id="L235">    }</span>
+
+    public void rollback(final Set&lt;String&gt; graphSourceNamesToCloseTxOn) {
+<span class="nc" id="L238">        closeTx(graphSourceNamesToCloseTxOn, Transaction.Status.ROLLBACK);</span>
+<span class="nc" id="L239">    }</span>
+
+    public void commitAll() {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        for (Graph graph : this.graphs.values()) {</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">            if (graph.features().graph().supportsTransactions() &amp;&amp;</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">                graph.tx().isOpen()) {</span>
+<span class="nc" id="L245">                graph.tx().commit();</span>
+            }
+<span class="nc" id="L247">        }</span>
+<span class="nc" id="L248">    }</span>
+
+    public void commit(final Set&lt;String&gt; graphSourceNamesToCloseTxOn) {
+<span class="nc" id="L251">        closeTx(graphSourceNamesToCloseTxOn, Transaction.Status.COMMIT);</span>
+<span class="nc" id="L252">    }</span>
+
+    public boolean requireAuthentication() {
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        if (this.authenticator == null) {</span>
+<span class="nc" id="L256">            return false;</span>
+        }
+<span class="nc" id="L258">        return this.authenticator.requireAuthentication();</span>
+    }
+
+    public HugeAuthenticator.User authenticate(Map&lt;String, String&gt; credentials)
+                                               throws AuthenticationException {
+<span class="nc" id="L263">        return this.authenticator().authenticate(credentials);</span>
+    }
+
+    public AuthManager authManager() {
+<span class="nc" id="L267">        return this.authenticator().authManager();</span>
+    }
+
+    public GlobalMasterInfo globalNodeRoleInfo() {
+<span class="nc" id="L271">        return this.globalNodeRoleInfo;</span>
+    }
+
+    public void close() {
+<span class="nc bnc" id="L275" title="All 2 branches missed.">        for (Graph graph : this.graphs.values()) {</span>
+            try {
+<span class="nc" id="L277">                graph.close();</span>
+<span class="nc" id="L278">            } catch (Throwable e) {</span>
+<span class="nc" id="L279">                LOG.warn(&quot;Failed to close graph '{}'&quot;, graph, e);</span>
+<span class="nc" id="L280">            }</span>
+<span class="nc" id="L281">        }</span>
+<span class="nc" id="L282">        this.destroyRpcServer();</span>
+<span class="nc" id="L283">        this.unlistenChanges();</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">        if (this.roleStateMachine != null) {</span>
+<span class="nc" id="L285">            this.roleStateMachine.shutdown();</span>
+        }
+<span class="nc" id="L287">    }</span>
+
+    private void startRpcServer() {
+<span class="nc bnc" id="L290" title="All 2 branches missed.">        if (!this.rpcServer.enabled()) {</span>
+<span class="nc" id="L291">            LOG.info(&quot;RpcServer is not enabled, skip starting rpc service&quot;);</span>
+<span class="nc" id="L292">            return;</span>
+        }
+
+<span class="nc" id="L295">        RpcProviderConfig serverConfig = this.rpcServer.config();</span>
+
+        // Start auth rpc service if authenticator enabled
+<span class="nc bnc" id="L298" title="All 2 branches missed.">        if (this.authenticator != null) {</span>
+<span class="nc" id="L299">            serverConfig.addService(AuthManager.class,</span>
+<span class="nc" id="L300">                                    this.authenticator.authManager());</span>
+        }
+
+        // Start graph rpc service if RPC_REMOTE_URL enabled
+<span class="nc bnc" id="L304" title="All 2 branches missed.">        if (this.rpcClient.enabled()) {</span>
+<span class="nc" id="L305">            RpcConsumerConfig clientConfig = this.rpcClient.config();</span>
+
+<span class="nc bnc" id="L307" title="All 2 branches missed.">            for (Graph graph : this.graphs.values()) {</span>
+<span class="nc" id="L308">                HugeGraph hugegraph = (HugeGraph) graph;</span>
+<span class="nc" id="L309">                hugegraph.registerRpcServices(serverConfig, clientConfig);</span>
+<span class="nc" id="L310">            }</span>
+        }
+
+        try {
+<span class="nc" id="L314">            this.rpcServer.exportAll();</span>
+<span class="nc" id="L315">        } catch (Throwable e) {</span>
+<span class="nc" id="L316">            this.rpcServer.destroy();</span>
+<span class="nc" id="L317">            throw e;</span>
+<span class="nc" id="L318">        }</span>
+<span class="nc" id="L319">    }</span>
+
+    private com.alipay.remoting.rpc.RpcServer remotingRpcServer() {
+<span class="nc" id="L322">        ServerConfig serverConfig = Whitebox.getInternalState(this.rpcServer,</span>
+                                                              &quot;serverConfig&quot;);
+<span class="nc" id="L324">        serverConfig.buildIfAbsent();</span>
+
+        // Start remote rpc server if none rpc services registered
+        // Note it goes here only when raft mode enabled
+<span class="nc bnc" id="L328" title="All 2 branches missed.">        if (!serverConfig.getServer().isStarted()) {</span>
+<span class="nc" id="L329">            serverConfig.getServer().start();</span>
+        }
+<span class="nc" id="L331">        return Whitebox.getInternalState(serverConfig.getServer(),</span>
+                                         &quot;remotingServer&quot;);
+    }
+
+    private void destroyRpcServer() {
+        try {
+<span class="nc" id="L337">            this.rpcClient.destroy();</span>
+        } finally {
+<span class="nc" id="L339">            this.rpcServer.destroy();</span>
+        }
+<span class="nc" id="L341">    }</span>
+
+    private HugeAuthenticator authenticator() {
+<span class="nc bnc" id="L344" title="All 2 branches missed.">        E.checkState(this.authenticator != null,</span>
+                     &quot;Unconfigured authenticator, please config &quot; +
+                     &quot;auth.authenticator option in rest-server.properties&quot;);
+<span class="nc" id="L347">        return this.authenticator;</span>
+    }
+
+
+    private void closeTx(final Set&lt;String&gt; graphSourceNamesToCloseTxOn,
+                         final Transaction.Status tx) {
+<span class="nc" id="L353">        final Set&lt;Graph&gt; graphsToCloseTxOn = new HashSet&lt;&gt;();</span>
+
+<span class="nc" id="L355">        graphSourceNamesToCloseTxOn.forEach(name -&gt; {</span>
+<span class="nc bnc" id="L356" title="All 2 branches missed.">            if (this.graphs.containsKey(name)) {</span>
+<span class="nc" id="L357">                graphsToCloseTxOn.add(this.graphs.get(name));</span>
+            }
+<span class="nc" id="L359">        });</span>
+
+<span class="nc" id="L361">        graphsToCloseTxOn.forEach(graph -&gt; {</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">            if (graph.features().graph().supportsTransactions() &amp;&amp;</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">                graph.tx().isOpen()) {</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">                if (tx == Transaction.Status.COMMIT) {</span>
+<span class="nc" id="L365">                    graph.tx().commit();</span>
+                } else {
+<span class="nc" id="L367">                    graph.tx().rollback();</span>
+                }
+            }
+<span class="nc" id="L370">        });</span>
+<span class="nc" id="L371">    }</span>
+
+    private void loadGraph(String name, String graphConfPath) {
+<span class="nc" id="L374">        HugeConfig config = new HugeConfig(graphConfPath);</span>
+
+        // Transfer `raft.group_peers` from server config to graph config
+<span class="nc" id="L377">        String raftGroupPeers = this.conf.get(ServerOptions.RAFT_GROUP_PEERS);</span>
+<span class="nc" id="L378">        config.addProperty(ServerOptions.RAFT_GROUP_PEERS.name(),</span>
+                           raftGroupPeers);
+<span class="nc" id="L380">        this.transferRoleWorkerConfig(config);</span>
+
+<span class="nc" id="L382">        Graph graph = GraphFactory.open(config);</span>
+<span class="nc" id="L383">        this.graphs.put(name, graph);</span>
+
+<span class="nc" id="L385">        HugeConfig graphConfig = (HugeConfig) graph.configuration();</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">        assert graphConfPath.equals(Objects.requireNonNull(graphConfig.file()).getPath());</span>
+
+<span class="nc" id="L388">        LOG.info(&quot;Graph '{}' was successfully configured via '{}'&quot;,</span>
+                 name, graphConfPath);
+
+<span class="nc bnc" id="L391" title="All 4 branches missed.">        if (this.requireAuthentication() &amp;&amp;</span>
+            !(graph instanceof HugeGraphAuthProxy)) {
+<span class="nc" id="L393">            LOG.warn(&quot;You may need to support access control for '{}' with {}&quot;,</span>
+                     graphConfPath, HugeFactoryAuthProxy.GRAPH_FACTORY);
+        }
+<span class="nc" id="L396">    }</span>
+
+    private void transferRoleWorkerConfig(HugeConfig config) {
+<span class="nc" id="L399">        config.addProperty(RoleElectionOptions.NODE_EXTERNAL_URL.name(),</span>
+<span class="nc" id="L400">                           this.conf.get(ServerOptions.REST_SERVER_URL));</span>
+<span class="nc" id="L401">        config.addProperty(RoleElectionOptions.BASE_TIMEOUT_MILLISECOND.name(),</span>
+<span class="nc" id="L402">                           this.conf.get(RoleElectionOptions.BASE_TIMEOUT_MILLISECOND));</span>
+<span class="nc" id="L403">        config.addProperty(RoleElectionOptions.EXCEEDS_FAIL_COUNT.name(),</span>
+<span class="nc" id="L404">                           this.conf.get(RoleElectionOptions.EXCEEDS_FAIL_COUNT));</span>
+<span class="nc" id="L405">        config.addProperty(RoleElectionOptions.RANDOM_TIMEOUT_MILLISECOND.name(),</span>
+<span class="nc" id="L406">                           this.conf.get(RoleElectionOptions.RANDOM_TIMEOUT_MILLISECOND));</span>
+<span class="nc" id="L407">        config.addProperty(RoleElectionOptions.HEARTBEAT_INTERVAL_SECOND.name(),</span>
+<span class="nc" id="L408">                           this.conf.get(RoleElectionOptions.HEARTBEAT_INTERVAL_SECOND));</span>
+<span class="nc" id="L409">        config.addProperty(RoleElectionOptions.MASTER_DEAD_TIMES.name(),</span>
+<span class="nc" id="L410">                           this.conf.get(RoleElectionOptions.MASTER_DEAD_TIMES));</span>
+<span class="nc" id="L411">    }</span>
+
+    private void waitGraphsReady() {
+<span class="nc bnc" id="L414" title="All 2 branches missed.">        if (!this.rpcServer.enabled()) {</span>
+<span class="nc" id="L415">            LOG.info(&quot;RpcServer is not enabled, skip wait graphs ready&quot;);</span>
+<span class="nc" id="L416">            return;</span>
+        }
+<span class="nc" id="L418">        com.alipay.remoting.rpc.RpcServer remotingRpcServer = this.remotingRpcServer();</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">        for (String graphName : this.graphs.keySet()) {</span>
+<span class="nc" id="L420">            HugeGraph graph = this.graph(graphName);</span>
+<span class="nc" id="L421">            graph.waitReady(remotingRpcServer);</span>
+<span class="nc" id="L422">        }</span>
+<span class="nc" id="L423">    }</span>
+
+    private void checkBackendVersionOrExit(HugeConfig config) {
+<span class="nc" id="L426">        LOG.info(&quot;Check backend version&quot;);</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">        for (String graph : this.graphs()) {</span>
+            // TODO: close tx from main thread
+<span class="nc" id="L429">            HugeGraph hugegraph = this.graph(graph);</span>
+<span class="nc bnc" id="L430" title="All 2 branches missed.">            assert hugegraph != null;</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">            if (!hugegraph.backendStoreFeatures().supportsPersistence()) {</span>
+<span class="nc" id="L432">                hugegraph.initBackend();</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">                if (this.requireAuthentication()) {</span>
+<span class="nc" id="L434">                    String token = config.get(ServerOptions.AUTH_ADMIN_TOKEN);</span>
+                    try {
+<span class="nc" id="L436">                        this.authenticator().initAdminUser(token);</span>
+<span class="nc" id="L437">                    } catch (Exception e) {</span>
+<span class="nc" id="L438">                        throw new BackendException(</span>
+                                  &quot;The backend store of '%s' can't &quot; +
+<span class="nc" id="L440">                                  &quot;initialize admin user&quot;, hugegraph.name());</span>
+<span class="nc" id="L441">                    }</span>
+                }
+            }
+<span class="nc" id="L444">            BackendStoreInfo info = hugegraph.backendStoreInfo();</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">            if (!info.exists()) {</span>
+<span class="nc" id="L446">                throw new BackendException(</span>
+                          &quot;The backend store of '%s' has not been initialized&quot;,
+<span class="nc" id="L448">                          hugegraph.name());</span>
+            }
+<span class="nc bnc" id="L450" title="All 2 branches missed.">            if (!info.checkVersion()) {</span>
+<span class="nc" id="L451">                throw new BackendException(</span>
+                          &quot;The backend store version is inconsistent&quot;);
+            }
+<span class="nc" id="L454">        }</span>
+<span class="nc" id="L455">    }</span>
+
+    private void serverStarted(HugeConfig config) {
+<span class="nc" id="L458">        String id = config.get(ServerOptions.SERVER_ID);</span>
+<span class="nc" id="L459">        String role = config.get(ServerOptions.SERVER_ROLE);</span>
+<span class="nc" id="L460">        E.checkArgument(StringUtils.isNotEmpty(id),</span>
+                        &quot;The server name can't be null or empty&quot;);
+<span class="nc" id="L462">        E.checkArgument(StringUtils.isNotEmpty(role),</span>
+                        &quot;The server role can't be null or empty&quot;);
+
+<span class="nc" id="L465">        NodeRole nodeRole = NodeRole.valueOf(role.toUpperCase());</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">        boolean supportRoleElection = !nodeRole.computer() &amp;&amp;</span>
+<span class="nc bnc" id="L467" title="All 2 branches missed.">                                      this.supportRoleElection();</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">        if (supportRoleElection) {</span>
+            // Init any server as Worker role, then do role election
+<span class="nc" id="L470">            nodeRole = NodeRole.WORKER;</span>
+        }
+
+<span class="nc" id="L473">        this.globalNodeRoleInfo.initNodeId(IdGenerator.of(id));</span>
+<span class="nc" id="L474">        this.globalNodeRoleInfo.initNodeRole(nodeRole);</span>
+
+<span class="nc bnc" id="L476" title="All 2 branches missed.">        for (String graph : this.graphs()) {</span>
+<span class="nc" id="L477">            HugeGraph hugegraph = this.graph(graph);</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">            assert hugegraph != null;</span>
+<span class="nc" id="L479">            hugegraph.serverStarted(this.globalNodeRoleInfo);</span>
+<span class="nc" id="L480">        }</span>
+
+<span class="nc bnc" id="L482" title="All 2 branches missed.">        if (supportRoleElection) {</span>
+<span class="nc" id="L483">            this.initRoleStateMachine();</span>
+        }
+<span class="nc" id="L485">    }</span>
+
+    private void initRoleStateMachine() {
+<span class="nc bnc" id="L488" title="All 2 branches missed.">        E.checkArgument(this.roleStateMachine == null,</span>
+                        &quot;Repeated initialization of role state worker&quot;);
+<span class="nc" id="L490">        this.globalNodeRoleInfo.supportElection(true);</span>
+<span class="nc" id="L491">        this.roleStateMachine = this.authenticator().graph().roleElectionStateMachine();</span>
+<span class="nc" id="L492">        StandardRoleListener listener = new StandardRoleListener(TaskManager.instance(),</span>
+                                                                 this.globalNodeRoleInfo);
+<span class="nc" id="L494">        this.roleStateMachine.start(listener);</span>
+<span class="nc" id="L495">    }</span>
+
+    private boolean supportRoleElection() {
+        try {
+<span class="nc bnc" id="L499" title="All 2 branches missed.">            if (!(this.authenticator() instanceof StandardAuthenticator)) {</span>
+<span class="nc" id="L500">                LOG.info(&quot;{} authenticator does not support role election currently&quot;,</span>
+<span class="nc" id="L501">                         this.authenticator().getClass().getSimpleName());</span>
+<span class="nc" id="L502">                return false;</span>
+            }
+<span class="nc" id="L504">            return true;</span>
+<span class="nc" id="L505">        } catch (IllegalStateException e) {</span>
+<span class="nc" id="L506">            LOG.info(&quot;{}, does not support role election currently&quot;, e.getMessage());</span>
+<span class="nc" id="L507">            return false;</span>
+        }
+    }
+
+    private void addMetrics(HugeConfig config) {
+<span class="nc" id="L512">        final MetricManager metric = MetricManager.INSTANCE;</span>
+        // Force to add server reporter
+<span class="nc" id="L514">        ServerReporter reporter = ServerReporter.instance(metric.getRegistry());</span>
+<span class="nc" id="L515">        reporter.start(60L, TimeUnit.SECONDS);</span>
+
+        // Add metrics for MAX_WRITE_THREADS
+<span class="nc" id="L518">        int maxWriteThreads = config.get(ServerOptions.MAX_WRITE_THREADS);</span>
+<span class="nc" id="L519">        MetricsUtil.registerGauge(RestServer.class, &quot;max-write-threads&quot;, () -&gt; {</span>
+<span class="nc" id="L520">            return maxWriteThreads;</span>
+        });
+
+        // Add metrics for caches
+        @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+<span class="nc" id="L525">        Map&lt;String, Cache&lt;?, ?&gt;&gt; caches = (Map) CacheManager.instance()</span>
+<span class="nc" id="L526">                                                            .caches();</span>
+<span class="nc" id="L527">        registerCacheMetrics(caches);</span>
+<span class="nc" id="L528">        final AtomicInteger lastCachesSize = new AtomicInteger(caches.size());</span>
+<span class="nc" id="L529">        MetricsUtil.registerGauge(Cache.class, &quot;instances&quot;, () -&gt; {</span>
+<span class="nc" id="L530">            int count = caches.size();</span>
+<span class="nc bnc" id="L531" title="All 2 branches missed.">            if (count != lastCachesSize.get()) {</span>
+                // Update if caches changed (effect in the next report period)
+<span class="nc" id="L533">                registerCacheMetrics(caches);</span>
+<span class="nc" id="L534">                lastCachesSize.set(count);</span>
+            }
+<span class="nc" id="L536">            return count;</span>
+        });
+
+        // Add metrics for task
+<span class="nc" id="L540">        MetricsUtil.registerGauge(TaskManager.class, &quot;workers&quot;, () -&gt; {</span>
+<span class="nc" id="L541">            return TaskManager.instance().workerPoolSize();</span>
+        });
+<span class="nc" id="L543">        MetricsUtil.registerGauge(TaskManager.class, &quot;pending-tasks&quot;, () -&gt; {</span>
+<span class="nc" id="L544">            return TaskManager.instance().pendingTasks();</span>
+        });
+<span class="nc" id="L546">    }</span>
+
+    private void listenChanges() {
+<span class="nc" id="L549">        this.eventHub.listen(Events.GRAPH_CREATE, event -&gt; {</span>
+<span class="nc" id="L550">            LOG.debug(&quot;RestServer accepts event '{}'&quot;, event.name());</span>
+<span class="nc" id="L551">            event.checkArgs(HugeGraph.class);</span>
+<span class="nc" id="L552">            HugeGraph graph = (HugeGraph) event.args()[0];</span>
+<span class="nc" id="L553">            this.graphs.put(graph.name(), graph);</span>
+<span class="nc" id="L554">            return null;</span>
+        });
+<span class="nc" id="L556">        this.eventHub.listen(Events.GRAPH_DROP, event -&gt; {</span>
+<span class="nc" id="L557">            LOG.debug(&quot;RestServer accepts event '{}'&quot;, event.name());</span>
+<span class="nc" id="L558">            event.checkArgs(HugeGraph.class);</span>
+<span class="nc" id="L559">            HugeGraph graph = (HugeGraph) event.args()[0];</span>
+<span class="nc" id="L560">            this.graphs.remove(graph.name());</span>
+<span class="nc" id="L561">            return null;</span>
+        });
+<span class="nc" id="L563">    }</span>
+
+    private void unlistenChanges() {
+<span class="nc" id="L566">        this.eventHub.unlisten(Events.GRAPH_CREATE);</span>
+<span class="nc" id="L567">        this.eventHub.unlisten(Events.GRAPH_DROP);</span>
+<span class="nc" id="L568">    }</span>
+
+    private void notifyAndWaitEvent(String event, HugeGraph graph) {
+<span class="nc" id="L571">        Future&lt;?&gt; future = this.eventHub.notify(event, graph);</span>
+        try {
+<span class="nc" id="L573">            future.get();</span>
+<span class="nc" id="L574">        } catch (Throwable e) {</span>
+<span class="nc" id="L575">            LOG.warn(&quot;Error when waiting for event execution: {}&quot;, event, e);</span>
+<span class="nc" id="L576">        }</span>
+<span class="nc" id="L577">    }</span>
+
+    private HugeGraph createGraph(HugeConfig config, String name) {
+<span class="nc" id="L580">        HugeGraph graph = null;</span>
+        try {
+            // Create graph instance
+<span class="nc" id="L583">            graph = (HugeGraph) GraphFactory.open(config);</span>
+
+            // Init graph and start it
+<span class="nc" id="L586">            graph.create(this.graphsDir, this.globalNodeRoleInfo);</span>
+<span class="nc" id="L587">        } catch (Throwable e) {</span>
+<span class="nc" id="L588">            LOG.error(&quot;Failed to create graph '{}' due to: {}&quot;,</span>
+<span class="nc" id="L589">                      name, e.getMessage(), e);</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">            if (graph != null) {</span>
+<span class="nc" id="L591">                this.dropGraph(graph);</span>
+            }
+<span class="nc" id="L593">            throw e;</span>
+<span class="nc" id="L594">        }</span>
+
+        // Let gremlin server and rest server add graph to context
+<span class="nc" id="L597">        this.notifyAndWaitEvent(Events.GRAPH_CREATE, graph);</span>
+
+<span class="nc" id="L599">        return graph;</span>
+    }
+
+    private void dropGraph(HugeGraph graph) {
+        // Clear data and config files
+<span class="nc" id="L604">        graph.drop();</span>
+
+        /*
+         * Will fill graph instance into HugeFactory.graphs after
+         * GraphFactory.open() succeed, remove it when graph drop
+         */
+<span class="nc" id="L610">        HugeFactory.remove(graph);</span>
+<span class="nc" id="L611">    }</span>
+
+    private void checkOptions(HugeConfig config) {
+        // The store cannot be the same as the existing graph
+<span class="nc" id="L615">        this.checkOptionUnique(config, CoreOptions.STORE);</span>
+        /*
+         * TODO: should check data path for rocksdb since can't use the same
+         * data path for different graphs, but it's not easy to check here.
+         */
+<span class="nc" id="L620">    }</span>
+
+    private void checkOptionUnique(HugeConfig config,
+                                   TypedOption&lt;?, ?&gt; option) {
+<span class="nc" id="L624">        Object incomingValue = config.get(option);</span>
+<span class="nc bnc" id="L625" title="All 2 branches missed.">        for (String graphName : this.graphs.keySet()) {</span>
+<span class="nc" id="L626">            HugeGraph graph = this.graph(graphName);</span>
+<span class="nc bnc" id="L627" title="All 2 branches missed.">            assert graph != null;</span>
+<span class="nc" id="L628">            Object existedValue = graph.option(option);</span>
+<span class="nc bnc" id="L629" title="All 2 branches missed.">            E.checkArgument(!incomingValue.equals(existedValue),</span>
+                            &quot;The value '%s' of option '%s' conflicts with &quot; +
+<span class="nc" id="L631">                            &quot;existed graph&quot;, incomingValue, option.name());</span>
+<span class="nc" id="L632">        }</span>
+<span class="nc" id="L633">    }</span>
+
+    private static void registerCacheMetrics(Map&lt;String, Cache&lt;?, ?&gt;&gt; caches) {
+<span class="nc" id="L636">        Set&lt;String&gt; names = MetricManager.INSTANCE.getRegistry().getNames();</span>
+<span class="nc bnc" id="L637" title="All 2 branches missed.">        for (Map.Entry&lt;String, Cache&lt;?, ?&gt;&gt; entry : caches.entrySet()) {</span>
+<span class="nc" id="L638">            String key = entry.getKey();</span>
+<span class="nc" id="L639">            Cache&lt;?, ?&gt; cache = entry.getValue();</span>
+
+<span class="nc" id="L641">            String hits = String.format(&quot;%s.%s&quot;, key, &quot;hits&quot;);</span>
+<span class="nc" id="L642">            String miss = String.format(&quot;%s.%s&quot;, key, &quot;miss&quot;);</span>
+<span class="nc" id="L643">            String exp = String.format(&quot;%s.%s&quot;, key, &quot;expire&quot;);</span>
+<span class="nc" id="L644">            String size = String.format(&quot;%s.%s&quot;, key, &quot;size&quot;);</span>
+<span class="nc" id="L645">            String cap = String.format(&quot;%s.%s&quot;, key, &quot;capacity&quot;);</span>
+
+            // Avoid registering multiple times
+<span class="nc bnc" id="L648" title="All 2 branches missed.">            if (names.stream().anyMatch(name -&gt; name.endsWith(hits))) {</span>
+<span class="nc" id="L649">                continue;</span>
+            }
+
+<span class="nc" id="L652">            MetricsUtil.registerGauge(Cache.class, hits, cache::hits);</span>
+<span class="nc" id="L653">            MetricsUtil.registerGauge(Cache.class, miss, cache::miss);</span>
+<span class="nc" id="L654">            MetricsUtil.registerGauge(Cache.class, exp, cache::expire);</span>
+<span class="nc" id="L655">            MetricsUtil.registerGauge(Cache.class, size, cache::size);</span>
+<span class="nc" id="L656">            MetricsUtil.registerGauge(Cache.class, cap, cache::capacity);</span>
+<span class="nc" id="L657">        }</span>
+<span class="nc" id="L658">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

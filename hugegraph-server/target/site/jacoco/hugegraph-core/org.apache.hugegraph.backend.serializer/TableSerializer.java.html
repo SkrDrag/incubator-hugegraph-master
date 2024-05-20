@@ -1,0 +1,712 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TableSerializer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.serializer</a> &gt; <span class="el_source">TableSerializer.java</span></div><h1>TableSerializer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.serializer;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.id.IdUtil;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeEdgeProperty;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeIndex;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.structure.HugeVertexProperty;
+import org.apache.hugegraph.type.define.AggregateType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.Frequency;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.type.define.IdStrategy;
+import org.apache.hugegraph.type.define.IndexType;
+import org.apache.hugegraph.type.define.SchemaStatus;
+import org.apache.hugegraph.type.define.SerialEnum;
+import org.apache.hugegraph.type.define.WriteType;
+import org.apache.hugegraph.util.E;
+
+<span class="nc" id="L64">public abstract class TableSerializer extends AbstractSerializer {</span>
+
+    public TableSerializer(HugeConfig config) {
+<span class="nc" id="L67">        super(config);</span>
+<span class="nc" id="L68">    }</span>
+
+    @Override
+    public TableBackendEntry newBackendEntry(HugeType type, Id id) {
+<span class="nc" id="L72">        return new TableBackendEntry(type, id);</span>
+    }
+
+    protected TableBackendEntry newBackendEntry(HugeElement e) {
+<span class="nc" id="L76">        return newBackendEntry(e.type(), e.id());</span>
+    }
+
+    protected TableBackendEntry newBackendEntry(SchemaElement e) {
+<span class="nc" id="L80">        return newBackendEntry(e.type(), e.id());</span>
+    }
+
+    protected TableBackendEntry newBackendEntry(HugeIndex index) {
+<span class="nc" id="L84">        return newBackendEntry(index.type(), index.id());</span>
+    }
+
+    protected abstract TableBackendEntry newBackendEntry(TableBackendEntry.Row row);
+
+    @Override
+    protected abstract TableBackendEntry convertEntry(BackendEntry backendEntry);
+
+    protected void formatProperty(HugeProperty&lt;?&gt; property,
+                                  TableBackendEntry.Row row) {
+<span class="nc" id="L94">        long pkid = property.propertyKey().id().asLong();</span>
+<span class="nc" id="L95">        row.column(HugeKeys.PROPERTIES, pkid, this.writeProperty(property));</span>
+<span class="nc" id="L96">    }</span>
+
+    protected void parseProperty(Id key, Object colValue, HugeElement owner) {
+        // Get PropertyKey by PropertyKey id
+<span class="nc" id="L100">        PropertyKey pkey = owner.graph().propertyKey(key);</span>
+
+        // Parse value
+<span class="nc" id="L103">        Object value = this.readProperty(pkey, colValue);</span>
+
+        // Set properties of vertex/edge
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        if (pkey.cardinality() == Cardinality.SINGLE) {</span>
+<span class="nc" id="L107">            owner.addProperty(pkey, value);</span>
+        } else {
+<span class="nc bnc" id="L109" title="All 2 branches missed.">            if (!(value instanceof Collection)) {</span>
+<span class="nc" id="L110">                throw new BackendException(</span>
+                          &quot;Invalid value of non-single property: %s&quot;, value);
+            }
+<span class="nc" id="L113">            owner.addProperty(pkey, value);</span>
+        }
+<span class="nc" id="L115">    }</span>
+
+    protected Object writeProperty(HugeProperty&lt;?&gt; property) {
+<span class="nc" id="L118">        return this.writeProperty(property.propertyKey(), property.value());</span>
+    }
+
+    protected Object writeProperty(PropertyKey propertyKey, Object value) {
+<span class="nc" id="L122">        return JsonUtil.toJson(value);</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected &lt;T&gt; T readProperty(PropertyKey pkey, Object value) {
+<span class="nc" id="L127">        Class&lt;T&gt; clazz = (Class&lt;T&gt;) pkey.implementClazz();</span>
+<span class="nc" id="L128">        T result = JsonUtil.fromJson(value.toString(), clazz);</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (pkey.cardinality() != Cardinality.SINGLE) {</span>
+<span class="nc" id="L130">            Collection&lt;?&gt; values = (Collection&lt;?&gt;) result;</span>
+<span class="nc" id="L131">            List&lt;Object&gt; newValues = new ArrayList&lt;&gt;(values.size());</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">            for (Object v : values) {</span>
+<span class="nc" id="L133">                newValues.add(JsonUtil.castNumber(v, pkey.dataType().clazz()));</span>
+<span class="nc" id="L134">            }</span>
+<span class="nc" id="L135">            result = (T) newValues;</span>
+        }
+<span class="nc" id="L137">        return result;</span>
+    }
+
+    protected TableBackendEntry.Row formatEdge(HugeEdge edge) {
+<span class="nc" id="L141">        EdgeId id = edge.idWithDirection();</span>
+<span class="nc" id="L142">        TableBackendEntry.Row row = new TableBackendEntry.Row(edge.type(), id);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (edge.hasTtl()) {</span>
+<span class="nc" id="L144">            row.ttl(edge.ttl());</span>
+<span class="nc" id="L145">            row.column(HugeKeys.EXPIRED_TIME, edge.expiredTime());</span>
+        }
+        // Id: ownerVertex + direction + edge-label + sortValues + otherVertex
+<span class="nc" id="L148">        row.column(HugeKeys.OWNER_VERTEX, this.writeId(id.ownerVertexId()));</span>
+<span class="nc" id="L149">        row.column(HugeKeys.DIRECTION, id.directionCode());</span>
+<span class="nc" id="L150">        row.column(HugeKeys.LABEL, id.edgeLabelId().asLong());</span>
+<span class="nc" id="L151">        row.column(HugeKeys.SORT_VALUES, id.sortValues());</span>
+<span class="nc" id="L152">        row.column(HugeKeys.OTHER_VERTEX, this.writeId(id.otherVertexId()));</span>
+
+<span class="nc" id="L154">        this.formatProperties(edge, row);</span>
+<span class="nc" id="L155">        return row;</span>
+    }
+
+    /**
+     * Parse an edge from a entry row
+     * @param row edge entry
+     * @param vertex null or the source vertex
+     * @param graph the HugeGraph context object
+     * @return the source vertex
+     */
+    protected HugeEdge parseEdge(TableBackendEntry.Row row,
+                                 HugeVertex vertex, HugeGraph graph) {
+<span class="nc" id="L167">        Object ownerVertexId = row.column(HugeKeys.OWNER_VERTEX);</span>
+<span class="nc" id="L168">        Number dir = row.column(HugeKeys.DIRECTION);</span>
+<span class="nc" id="L169">        boolean direction = EdgeId.isOutDirectionFromCode(dir.byteValue());</span>
+<span class="nc" id="L170">        Number label = row.column(HugeKeys.LABEL);</span>
+<span class="nc" id="L171">        String sortValues = row.column(HugeKeys.SORT_VALUES);</span>
+<span class="nc" id="L172">        Object otherVertexId = row.column(HugeKeys.OTHER_VERTEX);</span>
+<span class="nc" id="L173">        Number expiredTime = row.column(HugeKeys.EXPIRED_TIME);</span>
+
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (vertex == null) {</span>
+<span class="nc" id="L176">            Id ownerId = this.readId(ownerVertexId);</span>
+<span class="nc" id="L177">            vertex = new HugeVertex(graph, ownerId, VertexLabel.NONE);</span>
+        }
+
+<span class="nc" id="L180">        EdgeLabel edgeLabel = graph.edgeLabelOrNone(this.toId(label));</span>
+<span class="nc" id="L181">        Id otherId = this.readId(otherVertexId);</span>
+
+        // Construct edge
+<span class="nc" id="L184">        HugeEdge edge = HugeEdge.constructEdge(vertex, direction, edgeLabel,</span>
+                                               sortValues, otherId);
+
+        // Parse edge properties
+<span class="nc" id="L188">        this.parseProperties(edge, row);</span>
+
+        // The expired time is null when the edge is non-ttl
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        long expired = edge.hasTtl() ? expiredTime.longValue() : 0L;</span>
+<span class="nc" id="L192">        edge.expiredTime(expired);</span>
+
+<span class="nc" id="L194">        return edge;</span>
+    }
+
+    @Override
+    public BackendEntry writeVertex(HugeVertex vertex) {
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        if (vertex.olap()) {</span>
+<span class="nc" id="L200">            return this.writeOlapVertex(vertex);</span>
+        }
+<span class="nc" id="L202">        TableBackendEntry entry = newBackendEntry(vertex);</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        if (vertex.hasTtl()) {</span>
+<span class="nc" id="L204">            entry.ttl(vertex.ttl());</span>
+<span class="nc" id="L205">            entry.column(HugeKeys.EXPIRED_TIME, vertex.expiredTime());</span>
+        }
+<span class="nc" id="L207">        entry.column(HugeKeys.ID, this.writeId(vertex.id()));</span>
+<span class="nc" id="L208">        entry.column(HugeKeys.LABEL, vertex.schemaLabel().id().asLong());</span>
+        // Add all properties of a Vertex
+<span class="nc" id="L210">        this.formatProperties(vertex, entry.row());</span>
+<span class="nc" id="L211">        return entry;</span>
+    }
+
+    @Override
+    public BackendEntry writeVertexProperty(HugeVertexProperty&lt;?&gt; prop) {
+<span class="nc" id="L216">        HugeVertex vertex = prop.element();</span>
+<span class="nc" id="L217">        TableBackendEntry entry = newBackendEntry(vertex);</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        if (vertex.hasTtl()) {</span>
+<span class="nc" id="L219">            entry.ttl(vertex.ttl());</span>
+<span class="nc" id="L220">            entry.column(HugeKeys.EXPIRED_TIME, vertex.expiredTime());</span>
+        }
+<span class="nc" id="L222">        entry.subId(IdGenerator.of(prop.key()));</span>
+<span class="nc" id="L223">        entry.column(HugeKeys.ID, this.writeId(vertex.id()));</span>
+<span class="nc" id="L224">        entry.column(HugeKeys.LABEL, vertex.schemaLabel().id().asLong());</span>
+
+<span class="nc" id="L226">        this.formatProperty(prop, entry.row());</span>
+<span class="nc" id="L227">        return entry;</span>
+    }
+
+    @Override
+    public HugeVertex readVertex(HugeGraph graph, BackendEntry backendEntry) {
+<span class="nc" id="L232">        E.checkNotNull(graph, &quot;serializer graph&quot;);</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L234">            return null;</span>
+        }
+
+<span class="nc" id="L237">        TableBackendEntry entry = this.convertEntry(backendEntry);</span>
+<span class="nc bnc" id="L238" title="All 2 branches missed.">        assert entry.type().isVertex();</span>
+
+<span class="nc" id="L240">        Id id = this.readId(entry.column(HugeKeys.ID));</span>
+<span class="nc" id="L241">        Number label = entry.column(HugeKeys.LABEL);</span>
+<span class="nc" id="L242">        Number expiredTime = entry.column(HugeKeys.EXPIRED_TIME);</span>
+
+<span class="nc" id="L244">        VertexLabel vertexLabel = VertexLabel.NONE;</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (label != null) {</span>
+<span class="nc" id="L246">            vertexLabel = graph.vertexLabelOrNone(this.toId(label));</span>
+        }
+<span class="nc" id="L248">        HugeVertex vertex = new HugeVertex(graph, id, vertexLabel);</span>
+
+        // Parse all properties of a Vertex
+<span class="nc" id="L251">        this.parseProperties(vertex, entry.row());</span>
+        // Parse all edges of a Vertex
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        for (TableBackendEntry.Row edge : entry.subRows()) {</span>
+<span class="nc" id="L254">            this.parseEdge(edge, vertex, graph);</span>
+<span class="nc" id="L255">        }</span>
+        // The expired time is null when this is fake vertex of edge or non-ttl
+<span class="nc bnc" id="L257" title="All 2 branches missed.">        if (expiredTime != null) {</span>
+<span class="nc" id="L258">            vertex.expiredTime(expiredTime.longValue());</span>
+        }
+<span class="nc" id="L260">        return vertex;</span>
+    }
+
+    @Override
+    public BackendEntry writeEdge(HugeEdge edge) {
+<span class="nc" id="L265">        return newBackendEntry(this.formatEdge(edge));</span>
+    }
+
+    @Override
+    public BackendEntry writeEdgeProperty(HugeEdgeProperty&lt;?&gt; prop) {
+<span class="nc" id="L270">        HugeEdge edge = prop.element();</span>
+<span class="nc" id="L271">        EdgeId id = edge.idWithDirection();</span>
+<span class="nc" id="L272">        TableBackendEntry.Row row = new TableBackendEntry.Row(edge.type(), id);</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">        if (edge.hasTtl()) {</span>
+<span class="nc" id="L274">            row.ttl(edge.ttl());</span>
+<span class="nc" id="L275">            row.column(HugeKeys.EXPIRED_TIME, edge.expiredTime());</span>
+        }
+        // Id: ownerVertex + direction + edge-label + sortValues + otherVertex
+<span class="nc" id="L278">        row.column(HugeKeys.OWNER_VERTEX, this.writeId(id.ownerVertexId()));</span>
+<span class="nc" id="L279">        row.column(HugeKeys.DIRECTION, id.directionCode());</span>
+<span class="nc" id="L280">        row.column(HugeKeys.LABEL, id.edgeLabelId().asLong());</span>
+<span class="nc" id="L281">        row.column(HugeKeys.SORT_VALUES, id.sortValues());</span>
+<span class="nc" id="L282">        row.column(HugeKeys.OTHER_VERTEX, this.writeId(id.otherVertexId()));</span>
+
+        // Format edge property
+<span class="nc" id="L285">        this.formatProperty(prop, row);</span>
+
+<span class="nc" id="L287">        TableBackendEntry entry = newBackendEntry(row);</span>
+<span class="nc" id="L288">        entry.subId(IdGenerator.of(prop.key()));</span>
+<span class="nc" id="L289">        return entry;</span>
+    }
+
+    @Override
+    public HugeEdge readEdge(HugeGraph graph, BackendEntry backendEntry) {
+<span class="nc" id="L294">        E.checkNotNull(graph, &quot;serializer graph&quot;);</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L296">            return null;</span>
+        }
+
+<span class="nc" id="L299">        TableBackendEntry entry = this.convertEntry(backendEntry);</span>
+<span class="nc" id="L300">        return this.parseEdge(entry.row(), null, graph);</span>
+    }
+
+    @Override
+    public BackendEntry writeIndex(HugeIndex index) {
+<span class="nc" id="L305">        TableBackendEntry entry = newBackendEntry(index);</span>
+        /*
+         * When field-values is null and elementIds size is 0, it is
+         * meaningful for deletion of index data in secondary/range index.
+         */
+<span class="nc bnc" id="L310" title="All 4 branches missed.">        if (index.fieldValues() == null &amp;&amp; index.elementIds().size() == 0) {</span>
+<span class="nc" id="L311">            entry.column(HugeKeys.INDEX_LABEL_ID, index.indexLabel().longId());</span>
+        } else {
+<span class="nc" id="L313">            entry.column(HugeKeys.FIELD_VALUES, index.fieldValues());</span>
+<span class="nc" id="L314">            entry.column(HugeKeys.INDEX_LABEL_ID, index.indexLabel().longId());</span>
+<span class="nc" id="L315">            entry.column(HugeKeys.ELEMENT_IDS, this.writeId(index.elementId()));</span>
+<span class="nc" id="L316">            entry.subId(index.elementId());</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">            if (index.hasTtl()) {</span>
+<span class="nc" id="L318">                entry.ttl(index.ttl());</span>
+<span class="nc" id="L319">                entry.column(HugeKeys.EXPIRED_TIME, index.expiredTime());</span>
+            }
+        }
+<span class="nc" id="L322">        return entry;</span>
+    }
+
+    @Override
+    public HugeIndex readIndex(HugeGraph graph, ConditionQuery query,
+                               BackendEntry backendEntry) {
+<span class="nc" id="L328">        E.checkNotNull(graph, &quot;serializer graph&quot;);</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L330">            return null;</span>
+        }
+
+<span class="nc" id="L333">        TableBackendEntry entry = this.convertEntry(backendEntry);</span>
+
+<span class="nc" id="L335">        Object indexValues = entry.column(HugeKeys.FIELD_VALUES);</span>
+<span class="nc" id="L336">        Number indexLabelId = entry.column(HugeKeys.INDEX_LABEL_ID);</span>
+<span class="nc" id="L337">        Set&lt;Object&gt; elemIds = this.parseIndexElemIds(entry);</span>
+<span class="nc" id="L338">        Number expiredTime = entry.column(HugeKeys.EXPIRED_TIME);</span>
+
+<span class="nc" id="L340">        IndexLabel indexLabel = graph.indexLabel(this.toId(indexLabelId));</span>
+<span class="nc" id="L341">        HugeIndex index = new HugeIndex(graph, indexLabel);</span>
+<span class="nc" id="L342">        index.fieldValues(indexValues);</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">        long expired = index.hasTtl() ? expiredTime.longValue() : 0L;</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">        for (Object elemId : elemIds) {</span>
+<span class="nc" id="L345">            index.elementIds(this.readId(elemId), expired);</span>
+<span class="nc" id="L346">        }</span>
+<span class="nc" id="L347">        return index;</span>
+    }
+
+    @Override
+    public BackendEntry writeId(HugeType type, Id id) {
+<span class="nc" id="L352">        return newBackendEntry(type, id);</span>
+    }
+
+    @Override
+    protected Id writeQueryId(HugeType type, Id id) {
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        if (type.isEdge()) {</span>
+<span class="nc bnc" id="L358" title="All 2 branches missed.">            if (!(id instanceof EdgeId)) {</span>
+<span class="nc" id="L359">                id = EdgeId.parse(id.asString());</span>
+            }
+<span class="nc bnc" id="L361" title="All 2 branches missed.">        } else if (type.isGraph()) {</span>
+<span class="nc" id="L362">            id = IdGenerator.of(this.writeId(id));</span>
+        }
+<span class="nc" id="L364">        return id;</span>
+    }
+
+    @Override
+    protected Query writeQueryEdgeCondition(Query query) {
+<span class="nc" id="L369">        query = this.writeQueryCondition(query);</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">        return query.idsSize() == 0 ? query : null;</span>
+    }
+
+    @Override
+    protected Query writeQueryCondition(Query query) {
+<span class="nc" id="L375">        ConditionQuery result = (ConditionQuery) query;</span>
+        // No user-prop when serialize
+<span class="nc bnc" id="L377" title="All 2 branches missed.">        assert result.allSysprop();</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">        for (Condition.Relation r : result.relations()) {</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">            if (!r.value().equals(r.serialValue())) {</span>
+                // Has been serialized before (maybe share a query multi times)
+<span class="nc" id="L381">                continue;</span>
+            }
+<span class="nc" id="L383">            HugeKeys key = (HugeKeys) r.key();</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">            if (r.relation() == Condition.RelationType.IN) {</span>
+<span class="nc" id="L385">                E.checkArgument(r.value() instanceof List,</span>
+                                &quot;Expect list value for IN condition: %s&quot;, r);
+<span class="nc" id="L387">                List&lt;?&gt; values = (List&lt;?&gt;) r.value();</span>
+<span class="nc" id="L388">                List&lt;Object&gt; serializedValues = new ArrayList&lt;&gt;(values.size());</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">                for (Object v : values) {</span>
+<span class="nc" id="L390">                    serializedValues.add(this.serializeValue(key, v));</span>
+<span class="nc" id="L391">                }</span>
+<span class="nc" id="L392">                r.serialValue(serializedValues);</span>
+<span class="nc bnc" id="L393" title="All 2 branches missed.">            } else if (r.relation() == Condition.RelationType.CONTAINS_VALUE &amp;&amp;</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">                       query.resultType().isGraph()) {</span>
+<span class="nc" id="L395">                r.serialValue(this.writeProperty(null, r.value()));</span>
+            } else {
+<span class="nc" id="L397">                r.serialValue(this.serializeValue(key, r.value()));</span>
+            }
+<span class="nc" id="L399">        }</span>
+
+<span class="nc" id="L401">        return result;</span>
+    }
+
+    @Override
+    public BackendEntry writeVertexLabel(VertexLabel vertexLabel) {
+<span class="nc" id="L406">        TableBackendEntry entry = newBackendEntry(vertexLabel);</span>
+<span class="nc" id="L407">        entry.column(HugeKeys.ID, vertexLabel.id().asLong());</span>
+<span class="nc" id="L408">        entry.column(HugeKeys.NAME, vertexLabel.name());</span>
+<span class="nc" id="L409">        entry.column(HugeKeys.ID_STRATEGY, vertexLabel.idStrategy().code());</span>
+<span class="nc" id="L410">        entry.column(HugeKeys.PROPERTIES,</span>
+<span class="nc" id="L411">                     this.toLongSet(vertexLabel.properties()));</span>
+<span class="nc" id="L412">        entry.column(HugeKeys.PRIMARY_KEYS,</span>
+<span class="nc" id="L413">                     this.toLongList(vertexLabel.primaryKeys()));</span>
+<span class="nc" id="L414">        entry.column(HugeKeys.NULLABLE_KEYS,</span>
+<span class="nc" id="L415">                     this.toLongSet(vertexLabel.nullableKeys()));</span>
+<span class="nc" id="L416">        entry.column(HugeKeys.INDEX_LABELS,</span>
+<span class="nc" id="L417">                     this.toLongSet(vertexLabel.indexLabels()));</span>
+<span class="nc" id="L418">        this.writeEnableLabelIndex(vertexLabel, entry);</span>
+<span class="nc" id="L419">        this.writeUserdata(vertexLabel, entry);</span>
+<span class="nc" id="L420">        entry.column(HugeKeys.STATUS, vertexLabel.status().code());</span>
+<span class="nc" id="L421">        entry.column(HugeKeys.TTL, vertexLabel.ttl());</span>
+<span class="nc" id="L422">        entry.column(HugeKeys.TTL_START_TIME,</span>
+<span class="nc" id="L423">                     vertexLabel.ttlStartTime().asLong());</span>
+<span class="nc" id="L424">        return entry;</span>
+    }
+
+    @Override
+    public BackendEntry writeEdgeLabel(EdgeLabel edgeLabel) {
+<span class="nc" id="L429">        TableBackendEntry entry = newBackendEntry(edgeLabel);</span>
+<span class="nc" id="L430">        entry.column(HugeKeys.ID, edgeLabel.id().asLong());</span>
+<span class="nc" id="L431">        entry.column(HugeKeys.NAME, edgeLabel.name());</span>
+<span class="nc" id="L432">        entry.column(HugeKeys.FREQUENCY, edgeLabel.frequency().code());</span>
+<span class="nc" id="L433">        entry.column(HugeKeys.SOURCE_LABEL, edgeLabel.sourceLabel().asLong());</span>
+<span class="nc" id="L434">        entry.column(HugeKeys.TARGET_LABEL, edgeLabel.targetLabel().asLong());</span>
+<span class="nc" id="L435">        entry.column(HugeKeys.PROPERTIES,</span>
+<span class="nc" id="L436">                     this.toLongSet(edgeLabel.properties()));</span>
+<span class="nc" id="L437">        entry.column(HugeKeys.SORT_KEYS,</span>
+<span class="nc" id="L438">                     this.toLongList(edgeLabel.sortKeys()));</span>
+<span class="nc" id="L439">        entry.column(HugeKeys.NULLABLE_KEYS,</span>
+<span class="nc" id="L440">                     this.toLongSet(edgeLabel.nullableKeys()));</span>
+<span class="nc" id="L441">        entry.column(HugeKeys.INDEX_LABELS,</span>
+<span class="nc" id="L442">                     this.toLongSet(edgeLabel.indexLabels()));</span>
+<span class="nc" id="L443">        this.writeEnableLabelIndex(edgeLabel, entry);</span>
+<span class="nc" id="L444">        this.writeUserdata(edgeLabel, entry);</span>
+<span class="nc" id="L445">        entry.column(HugeKeys.STATUS, edgeLabel.status().code());</span>
+<span class="nc" id="L446">        entry.column(HugeKeys.TTL, edgeLabel.ttl());</span>
+<span class="nc" id="L447">        entry.column(HugeKeys.TTL_START_TIME,</span>
+<span class="nc" id="L448">                     edgeLabel.ttlStartTime().asLong());</span>
+<span class="nc" id="L449">        return entry;</span>
+    }
+
+    @Override
+    public BackendEntry writePropertyKey(PropertyKey propertyKey) {
+<span class="nc" id="L454">        TableBackendEntry entry = newBackendEntry(propertyKey);</span>
+<span class="nc" id="L455">        entry.column(HugeKeys.ID, propertyKey.id().asLong());</span>
+<span class="nc" id="L456">        entry.column(HugeKeys.NAME, propertyKey.name());</span>
+<span class="nc" id="L457">        entry.column(HugeKeys.DATA_TYPE, propertyKey.dataType().code());</span>
+<span class="nc" id="L458">        entry.column(HugeKeys.CARDINALITY, propertyKey.cardinality().code());</span>
+<span class="nc" id="L459">        entry.column(HugeKeys.AGGREGATE_TYPE,</span>
+<span class="nc" id="L460">                     propertyKey.aggregateType().code());</span>
+<span class="nc" id="L461">        entry.column(HugeKeys.WRITE_TYPE,</span>
+<span class="nc" id="L462">                     propertyKey.writeType().code());</span>
+<span class="nc" id="L463">        entry.column(HugeKeys.PROPERTIES,</span>
+<span class="nc" id="L464">                     this.toLongSet(propertyKey.properties()));</span>
+<span class="nc" id="L465">        this.writeUserdata(propertyKey, entry);</span>
+<span class="nc" id="L466">        entry.column(HugeKeys.STATUS, propertyKey.status().code());</span>
+<span class="nc" id="L467">        return entry;</span>
+    }
+
+    @Override
+    public VertexLabel readVertexLabel(HugeGraph graph,
+                                       BackendEntry backendEntry) {
+<span class="nc bnc" id="L473" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L474">            return null;</span>
+        }
+
+<span class="nc" id="L477">        TableBackendEntry entry = this.convertEntry(backendEntry);</span>
+
+<span class="nc" id="L479">        Number id = schemaColumn(entry, HugeKeys.ID);</span>
+<span class="nc" id="L480">        String name = schemaColumn(entry, HugeKeys.NAME);</span>
+<span class="nc" id="L481">        IdStrategy idStrategy = schemaEnum(entry, HugeKeys.ID_STRATEGY,</span>
+                                           IdStrategy.class);
+<span class="nc" id="L483">        Object properties = schemaColumn(entry, HugeKeys.PROPERTIES);</span>
+<span class="nc" id="L484">        Object primaryKeys = schemaColumn(entry, HugeKeys.PRIMARY_KEYS);</span>
+<span class="nc" id="L485">        Object nullableKeys = schemaColumn(entry, HugeKeys.NULLABLE_KEYS);</span>
+<span class="nc" id="L486">        Object indexLabels = schemaColumn(entry, HugeKeys.INDEX_LABELS);</span>
+<span class="nc" id="L487">        SchemaStatus status = schemaEnum(entry, HugeKeys.STATUS,</span>
+                                         SchemaStatus.class);
+<span class="nc" id="L489">        Number ttl = schemaColumn(entry, HugeKeys.TTL);</span>
+<span class="nc" id="L490">        Number ttlStartTime = schemaColumn(entry, HugeKeys.TTL_START_TIME);</span>
+
+<span class="nc" id="L492">        VertexLabel vertexLabel = new VertexLabel(graph, this.toId(id), name);</span>
+<span class="nc" id="L493">        vertexLabel.idStrategy(idStrategy);</span>
+<span class="nc" id="L494">        vertexLabel.properties(this.toIdArray(properties));</span>
+<span class="nc" id="L495">        vertexLabel.primaryKeys(this.toIdArray(primaryKeys));</span>
+<span class="nc" id="L496">        vertexLabel.nullableKeys(this.toIdArray(nullableKeys));</span>
+<span class="nc" id="L497">        vertexLabel.addIndexLabels(this.toIdArray(indexLabels));</span>
+<span class="nc" id="L498">        vertexLabel.status(status);</span>
+<span class="nc" id="L499">        vertexLabel.ttl(ttl.longValue());</span>
+<span class="nc" id="L500">        vertexLabel.ttlStartTime(this.toId(ttlStartTime));</span>
+<span class="nc" id="L501">        this.readEnableLabelIndex(vertexLabel, entry);</span>
+<span class="nc" id="L502">        this.readUserdata(vertexLabel, entry);</span>
+<span class="nc" id="L503">        return vertexLabel;</span>
+    }
+
+    @Override
+    public EdgeLabel readEdgeLabel(HugeGraph graph, BackendEntry backendEntry) {
+<span class="nc bnc" id="L508" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L509">            return null;</span>
+        }
+
+<span class="nc" id="L512">        TableBackendEntry entry = this.convertEntry(backendEntry);</span>
+
+<span class="nc" id="L514">        Number id = schemaColumn(entry, HugeKeys.ID);</span>
+<span class="nc" id="L515">        String name = schemaColumn(entry, HugeKeys.NAME);</span>
+<span class="nc" id="L516">        Frequency frequency = schemaEnum(entry, HugeKeys.FREQUENCY,</span>
+                                         Frequency.class);
+<span class="nc" id="L518">        Number sourceLabel = schemaColumn(entry, HugeKeys.SOURCE_LABEL);</span>
+<span class="nc" id="L519">        Number targetLabel = schemaColumn(entry, HugeKeys.TARGET_LABEL);</span>
+<span class="nc" id="L520">        Object sortKeys = schemaColumn(entry, HugeKeys.SORT_KEYS);</span>
+<span class="nc" id="L521">        Object nullableKeys = schemaColumn(entry, HugeKeys.NULLABLE_KEYS);</span>
+<span class="nc" id="L522">        Object properties = schemaColumn(entry, HugeKeys.PROPERTIES);</span>
+<span class="nc" id="L523">        Object indexLabels = schemaColumn(entry, HugeKeys.INDEX_LABELS);</span>
+<span class="nc" id="L524">        SchemaStatus status = schemaEnum(entry, HugeKeys.STATUS,</span>
+                                         SchemaStatus.class);
+<span class="nc" id="L526">        Number ttl = schemaColumn(entry, HugeKeys.TTL);</span>
+<span class="nc" id="L527">        Number ttlStartTime = schemaColumn(entry, HugeKeys.TTL_START_TIME);</span>
+
+<span class="nc" id="L529">        EdgeLabel edgeLabel = new EdgeLabel(graph, this.toId(id), name);</span>
+<span class="nc" id="L530">        edgeLabel.frequency(frequency);</span>
+<span class="nc" id="L531">        edgeLabel.sourceLabel(this.toId(sourceLabel));</span>
+<span class="nc" id="L532">        edgeLabel.targetLabel(this.toId(targetLabel));</span>
+<span class="nc" id="L533">        edgeLabel.properties(this.toIdArray(properties));</span>
+<span class="nc" id="L534">        edgeLabel.sortKeys(this.toIdArray(sortKeys));</span>
+<span class="nc" id="L535">        edgeLabel.nullableKeys(this.toIdArray(nullableKeys));</span>
+<span class="nc" id="L536">        edgeLabel.addIndexLabels(this.toIdArray(indexLabels));</span>
+<span class="nc" id="L537">        edgeLabel.status(status);</span>
+<span class="nc" id="L538">        edgeLabel.ttl(ttl.longValue());</span>
+<span class="nc" id="L539">        edgeLabel.ttlStartTime(this.toId(ttlStartTime));</span>
+<span class="nc" id="L540">        this.readEnableLabelIndex(edgeLabel, entry);</span>
+<span class="nc" id="L541">        this.readUserdata(edgeLabel, entry);</span>
+<span class="nc" id="L542">        return edgeLabel;</span>
+    }
+
+    @Override
+    public PropertyKey readPropertyKey(HugeGraph graph,
+                                       BackendEntry backendEntry) {
+<span class="nc bnc" id="L548" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L549">            return null;</span>
+        }
+
+<span class="nc" id="L552">        TableBackendEntry entry = this.convertEntry(backendEntry);</span>
+
+<span class="nc" id="L554">        Number id = schemaColumn(entry, HugeKeys.ID);</span>
+<span class="nc" id="L555">        String name = schemaColumn(entry, HugeKeys.NAME);</span>
+<span class="nc" id="L556">        DataType dataType = schemaEnum(entry, HugeKeys.DATA_TYPE,</span>
+                                       DataType.class);
+<span class="nc" id="L558">        Cardinality cardinality = schemaEnum(entry, HugeKeys.CARDINALITY,</span>
+                                             Cardinality.class);
+<span class="nc" id="L560">        AggregateType aggregateType = schemaEnum(entry, HugeKeys.AGGREGATE_TYPE,</span>
+                                                 AggregateType.class);
+<span class="nc" id="L562">        WriteType writeType = schemaEnumOrDefault(</span>
+                              entry, HugeKeys.WRITE_TYPE,
+                              WriteType.class, WriteType.OLTP);
+<span class="nc" id="L565">        Object properties = schemaColumn(entry, HugeKeys.PROPERTIES);</span>
+<span class="nc" id="L566">        SchemaStatus status = schemaEnum(entry, HugeKeys.STATUS,</span>
+                                         SchemaStatus.class);
+
+<span class="nc" id="L569">        PropertyKey propertyKey = new PropertyKey(graph, this.toId(id), name);</span>
+<span class="nc" id="L570">        propertyKey.dataType(dataType);</span>
+<span class="nc" id="L571">        propertyKey.cardinality(cardinality);</span>
+<span class="nc" id="L572">        propertyKey.aggregateType(aggregateType);</span>
+<span class="nc" id="L573">        propertyKey.writeType(writeType);</span>
+<span class="nc" id="L574">        propertyKey.properties(this.toIdArray(properties));</span>
+<span class="nc" id="L575">        propertyKey.status(status);</span>
+<span class="nc" id="L576">        this.readUserdata(propertyKey, entry);</span>
+<span class="nc" id="L577">        return propertyKey;</span>
+    }
+
+    @Override
+    public BackendEntry writeIndexLabel(IndexLabel indexLabel) {
+<span class="nc" id="L582">        TableBackendEntry entry = newBackendEntry(indexLabel);</span>
+<span class="nc" id="L583">        entry.column(HugeKeys.ID, indexLabel.id().asLong());</span>
+<span class="nc" id="L584">        entry.column(HugeKeys.NAME, indexLabel.name());</span>
+<span class="nc" id="L585">        entry.column(HugeKeys.BASE_TYPE, indexLabel.baseType().code());</span>
+<span class="nc" id="L586">        entry.column(HugeKeys.BASE_VALUE, indexLabel.baseValue().asLong());</span>
+<span class="nc" id="L587">        entry.column(HugeKeys.INDEX_TYPE, indexLabel.indexType().code());</span>
+<span class="nc" id="L588">        entry.column(HugeKeys.FIELDS,</span>
+<span class="nc" id="L589">                     this.toLongList(indexLabel.indexFields()));</span>
+<span class="nc" id="L590">        this.writeUserdata(indexLabel, entry);</span>
+<span class="nc" id="L591">        entry.column(HugeKeys.STATUS, indexLabel.status().code());</span>
+<span class="nc" id="L592">        return entry;</span>
+    }
+
+    @Override
+    public IndexLabel readIndexLabel(HugeGraph graph,
+                                     BackendEntry backendEntry) {
+<span class="nc bnc" id="L598" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L599">            return null;</span>
+        }
+
+<span class="nc" id="L602">        TableBackendEntry entry = this.convertEntry(backendEntry);</span>
+
+<span class="nc" id="L604">        Number id = schemaColumn(entry, HugeKeys.ID);</span>
+<span class="nc" id="L605">        String name = schemaColumn(entry, HugeKeys.NAME);</span>
+<span class="nc" id="L606">        HugeType baseType = schemaEnum(entry, HugeKeys.BASE_TYPE,</span>
+                                       HugeType.class);
+<span class="nc" id="L608">        Number baseValueId = schemaColumn(entry, HugeKeys.BASE_VALUE);</span>
+<span class="nc" id="L609">        IndexType indexType = schemaEnum(entry, HugeKeys.INDEX_TYPE,</span>
+                                         IndexType.class);
+<span class="nc" id="L611">        Object indexFields = schemaColumn(entry, HugeKeys.FIELDS);</span>
+<span class="nc" id="L612">        SchemaStatus status = schemaEnum(entry, HugeKeys.STATUS,</span>
+                                         SchemaStatus.class);
+
+<span class="nc" id="L615">        IndexLabel indexLabel = new IndexLabel(graph, this.toId(id), name);</span>
+<span class="nc" id="L616">        indexLabel.baseType(baseType);</span>
+<span class="nc" id="L617">        indexLabel.baseValue(this.toId(baseValueId));</span>
+<span class="nc" id="L618">        indexLabel.indexType(indexType);</span>
+<span class="nc" id="L619">        indexLabel.indexFields(this.toIdArray(indexFields));</span>
+<span class="nc" id="L620">        indexLabel.status(status);</span>
+<span class="nc" id="L621">        this.readUserdata(indexLabel, entry);</span>
+<span class="nc" id="L622">        return indexLabel;</span>
+    }
+
+    protected abstract Id toId(Number number);
+
+    protected abstract Id[] toIdArray(Object object);
+
+    protected abstract Object toLongSet(Collection&lt;Id&gt; ids);
+
+    protected abstract Object toLongList(Collection&lt;Id&gt; ids);
+
+    protected abstract Set&lt;Object&gt; parseIndexElemIds(TableBackendEntry entry);
+
+    protected abstract void formatProperties(HugeElement element,
+                                             TableBackendEntry.Row row);
+
+    protected abstract void parseProperties(HugeElement element,
+                                            TableBackendEntry.Row row);
+
+    protected Object writeId(Id id) {
+<span class="nc" id="L642">        return IdUtil.writeStoredString(id);</span>
+    }
+
+    protected Id readId(Object id) {
+<span class="nc" id="L646">        return IdUtil.readStoredString(id.toString());</span>
+    }
+
+    protected Object serializeValue(HugeKeys key, Object value) {
+<span class="nc bnc" id="L650" title="All 2 branches missed.">        if (value instanceof Directions) {</span>
+<span class="nc" id="L651">            value = ((Directions) value).type().code();</span>
+<span class="nc bnc" id="L652" title="All 2 branches missed.">        } else if (value instanceof Id) {</span>
+<span class="nc bnc" id="L653" title="All 4 branches missed.">            if (key == HugeKeys.OWNER_VERTEX || key == HugeKeys.OTHER_VERTEX) {</span>
+                // Serialize vertex id
+<span class="nc" id="L655">                value = this.writeId((Id) value);</span>
+            } else {
+                // Serialize other id value, like label id
+<span class="nc" id="L658">                value = ((Id) value).asObject();</span>
+            }
+        }
+
+<span class="nc" id="L662">        return value;</span>
+    }
+
+    protected void writeEnableLabelIndex(SchemaLabel schema,
+                                         TableBackendEntry entry) {
+<span class="nc" id="L667">        entry.column(HugeKeys.ENABLE_LABEL_INDEX, schema.enableLabelIndex());</span>
+<span class="nc" id="L668">    }</span>
+
+    protected void readEnableLabelIndex(SchemaLabel schema,
+                                        TableBackendEntry entry) {
+<span class="nc" id="L672">        Boolean enableLabelIndex = schemaColumn(entry,</span>
+                                                HugeKeys.ENABLE_LABEL_INDEX);
+<span class="nc" id="L674">        schema.enableLabelIndex(enableLabelIndex);</span>
+<span class="nc" id="L675">    }</span>
+
+    protected abstract void writeUserdata(SchemaElement schema,
+                                          TableBackendEntry entry);
+
+    protected abstract void readUserdata(SchemaElement schema,
+                                         TableBackendEntry entry);
+
+    private static &lt;T&gt; T schemaColumn(TableBackendEntry entry, HugeKeys key) {
+<span class="nc bnc" id="L684" title="All 2 branches missed.">        assert entry.type().isSchema();</span>
+
+<span class="nc" id="L686">        T value = entry.column(key);</span>
+<span class="nc bnc" id="L687" title="All 2 branches missed.">        E.checkState(value != null,</span>
+                     &quot;Not found key '%s' from entry %s&quot;, key, entry);
+<span class="nc" id="L689">        return value;</span>
+    }
+
+    private static &lt;T extends SerialEnum&gt; T schemaEnum(TableBackendEntry entry,
+                                                       HugeKeys key,
+                                                       Class&lt;T&gt; clazz) {
+<span class="nc" id="L695">        Number value = schemaColumn(entry, key);</span>
+<span class="nc" id="L696">        return SerialEnum.fromCode(clazz, value.byteValue());</span>
+    }
+
+    private static &lt;T extends SerialEnum&gt; T schemaEnumOrDefault(
+                                            TableBackendEntry entry,
+                                            HugeKeys key, Class&lt;T&gt; clazz,
+                                            T defaultValue) {
+<span class="nc bnc" id="L703" title="All 2 branches missed.">        assert entry.type().isSchema();</span>
+
+<span class="nc" id="L705">        Number value = entry.column(key);</span>
+<span class="nc bnc" id="L706" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L707">            return defaultValue;</span>
+        }
+<span class="nc" id="L709">        return SerialEnum.fromCode(clazz, value.byteValue());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CachedBackendStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.cache</a> &gt; <span class="el_source">CachedBackendStore.java</span></div><h1>CachedBackendStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.cache;
+
+import java.util.Iterator;
+
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.backend.store.SystemSchemaStore;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.StringEncoding;
+
+/**
+ * This class is unused now, just for debug or test
+ */
+public class CachedBackendStore implements BackendStore {
+
+<span class="nc" id="L39">    private BackendStore store = null;</span>
+<span class="nc" id="L40">    private Cache&lt;Id, Object&gt; cache = null;</span>
+
+<span class="nc" id="L42">    public CachedBackendStore(BackendStore store) {</span>
+<span class="nc" id="L43">        this.store = store;</span>
+<span class="nc" id="L44">        this.cache = CacheManager.instance().cache(&quot;store-&quot; + store());</span>
+        // Set expire 30s
+<span class="nc" id="L46">        this.cache.expire(30 * 1000L);</span>
+<span class="nc" id="L47">    }</span>
+
+    @Override
+    public String store() {
+<span class="nc" id="L51">        return this.store.store();</span>
+    }
+
+    @Override
+    public String storedVersion() {
+<span class="nc" id="L56">        return this.store.storedVersion();</span>
+    }
+
+    @Override
+    public String database() {
+<span class="nc" id="L61">        return this.store.database();</span>
+    }
+
+    @Override
+    public BackendStoreProvider provider() {
+<span class="nc" id="L66">        return this.store.provider();</span>
+    }
+
+    @Override
+    public SystemSchemaStore systemSchemaStore() {
+<span class="nc" id="L71">        return this.store.systemSchemaStore();</span>
+    }
+
+    @Override
+    public void open(HugeConfig config) {
+<span class="nc" id="L76">        this.store.open(config);</span>
+<span class="nc" id="L77">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L81">        this.store.close();</span>
+<span class="nc" id="L82">    }</span>
+
+    @Override
+    public boolean opened() {
+<span class="nc" id="L86">        return this.store.opened();</span>
+    }
+
+    @Override
+    public void init() {
+<span class="nc" id="L91">        this.store.init();</span>
+<span class="nc" id="L92">    }</span>
+
+    @Override
+    public void clear(boolean clearSpace) {
+<span class="nc" id="L96">        this.store.clear(clearSpace);</span>
+<span class="nc" id="L97">    }</span>
+
+    @Override
+    public boolean initialized() {
+<span class="nc" id="L101">        return this.store.initialized();</span>
+    }
+
+    @Override
+    public void truncate() {
+<span class="nc" id="L106">        this.store.truncate();</span>
+<span class="nc" id="L107">    }</span>
+
+    @Override
+    public void beginTx() {
+<span class="nc" id="L111">        this.store.beginTx();</span>
+<span class="nc" id="L112">    }</span>
+
+    @Override
+    public void commitTx() {
+<span class="nc" id="L116">        this.store.commitTx();</span>
+<span class="nc" id="L117">    }</span>
+
+    @Override
+    public void rollbackTx() {
+<span class="nc" id="L121">        this.store.rollbackTx();</span>
+<span class="nc" id="L122">    }</span>
+
+    @Override
+    public &lt;R&gt; R metadata(HugeType type, String meta, Object[] args) {
+<span class="nc" id="L126">        return this.store.metadata(type, meta, args);</span>
+    }
+
+    @Override
+    public BackendFeatures features() {
+<span class="nc" id="L131">        return this.store.features();</span>
+    }
+
+    @Override
+    public Id nextId(HugeType type) {
+<span class="nc" id="L136">        return this.store.nextId(type);</span>
+    }
+
+    @Override
+    public void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L141">        this.store.increaseCounter(type, increment);</span>
+<span class="nc" id="L142">    }</span>
+
+    @Override
+    public long getCounter(HugeType type) {
+<span class="nc" id="L146">        return this.store.getCounter(type);</span>
+    }
+
+    @Override
+    public boolean isSchemaStore() {
+<span class="nc" id="L151">        return this.store.isSchemaStore();</span>
+    }
+
+    @Override
+    public void mutate(BackendMutation mutation) {
+        // TODO: invalid cache, or set expire time at least
+<span class="nc" id="L157">        this.store.mutate(mutation);</span>
+<span class="nc" id="L158">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(Query query) {
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        if (query.empty()) {</span>
+<span class="nc" id="L164">            return this.store.query(query);</span>
+        }
+
+<span class="nc" id="L167">        QueryId id = new QueryId(query);</span>
+<span class="nc" id="L168">        Object result = this.cache.get(id);</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        if (result != null) {</span>
+<span class="nc" id="L170">            return (Iterator&lt;BackendEntry&gt;) result;</span>
+        } else {
+<span class="nc" id="L172">            Iterator&lt;BackendEntry&gt; rs = this.store.query(query);</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if (rs.hasNext()) {</span>
+<span class="nc" id="L174">                this.cache.update(id, rs);</span>
+            }
+<span class="nc" id="L176">            return rs;</span>
+        }
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+<span class="nc" id="L182">        return this.store.queryNumber(query);</span>
+    }
+
+    /**
+     * Query as an Id for cache
+     */
+    static class QueryId implements Id {
+
+        private String query;
+        private int hashCode;
+
+<span class="nc" id="L193">        public QueryId(Query q) {</span>
+<span class="nc" id="L194">            this.query = q.toString();</span>
+<span class="nc" id="L195">            this.hashCode = q.hashCode();</span>
+<span class="nc" id="L196">        }</span>
+
+        @Override
+        public IdType type() {
+<span class="nc" id="L200">            return IdType.UNKNOWN;</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L205">            return this.hashCode;</span>
+        }
+
+        @Override
+        public boolean equals(Object other) {
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            if (!(other instanceof QueryId)) {</span>
+<span class="nc" id="L211">                return false;</span>
+            }
+<span class="nc" id="L213">            return this.query.equals(((QueryId) other).query);</span>
+        }
+
+        @Override
+        public int compareTo(Id o) {
+<span class="nc" id="L218">            return this.query.compareTo(o.asString());</span>
+        }
+
+        @Override
+        public Object asObject() {
+<span class="nc" id="L223">            return this.query;</span>
+        }
+
+        @Override
+        public String asString() {
+<span class="nc" id="L228">            return this.query;</span>
+        }
+
+        @Override
+        public long asLong() {
+            // TODO: improve
+<span class="nc" id="L234">            return 0L;</span>
+        }
+
+        @Override
+        public byte[] asBytes() {
+<span class="nc" id="L239">            return StringEncoding.encode(this.query);</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L244">            return this.query;</span>
+        }
+
+        @Override
+        public int length() {
+<span class="nc" id="L249">            return this.query.length();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

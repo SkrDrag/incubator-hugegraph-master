@@ -1,0 +1,1313 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BinarySerializer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.serializer</a> &gt; <span class="el_source">BinarySerializer.java</span></div><h1>BinarySerializer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.serializer;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang.NotImplementedException;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumn;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.*;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.Condition.RangeConditions;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.IdPrefixQuery;
+import org.apache.hugegraph.backend.query.IdRangeQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.serializer.BinaryBackendEntry.BinaryId;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeEdgeProperty;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeIndex;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.structure.HugeVertexProperty;
+import org.apache.hugegraph.type.define.AggregateType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.Frequency;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.type.define.IdStrategy;
+import org.apache.hugegraph.type.define.IndexType;
+import org.apache.hugegraph.type.define.SchemaStatus;
+import org.apache.hugegraph.type.define.SerialEnum;
+import org.apache.hugegraph.type.define.WriteType;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.StringEncoding;
+
+<span class="nc" id="L72">public class BinarySerializer extends AbstractSerializer {</span>
+
+    /*
+     * Id is stored in column name if keyWithIdPrefix=true like RocksDB,
+     * else stored in rowkey like HBase.
+     */
+    private final boolean keyWithIdPrefix;
+    private final boolean indexWithIdPrefix;
+    private final boolean enablePartition;
+
+    public BinarySerializer() {
+<span class="nc" id="L83">        this(true, true, false);</span>
+<span class="nc" id="L84">    }</span>
+
+    public BinarySerializer(HugeConfig config) {
+<span class="nc" id="L87">        this(true, true, false);</span>
+<span class="nc" id="L88">    }</span>
+
+    public BinarySerializer(boolean keyWithIdPrefix,
+                            boolean indexWithIdPrefix,
+<span class="nc" id="L92">                            boolean enablePartition) {</span>
+<span class="nc" id="L93">        this.keyWithIdPrefix = keyWithIdPrefix;</span>
+<span class="nc" id="L94">        this.indexWithIdPrefix = indexWithIdPrefix;</span>
+<span class="nc" id="L95">        this.enablePartition = enablePartition;</span>
+<span class="nc" id="L96">    }</span>
+
+    @Override
+    protected BinaryBackendEntry newBackendEntry(HugeType type, Id id) {
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (type.isVertex()) {</span>
+<span class="nc" id="L101">            BytesBuffer buffer = BytesBuffer.allocate(2 + 1 + id.length());</span>
+<span class="nc" id="L102">            writePartitionedId(HugeType.VERTEX, id, buffer);</span>
+<span class="nc" id="L103">            return new BinaryBackendEntry(type, new BinaryId(buffer.bytes(), id));</span>
+        }
+
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        if (type.isEdge()) {</span>
+<span class="nc" id="L107">            E.checkState(id instanceof BinaryId,</span>
+                         &quot;Expect a BinaryId for BackendEntry with edge id&quot;);
+<span class="nc" id="L109">            return new BinaryBackendEntry(type, (BinaryId) id);</span>
+        }
+
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (type.isIndex()) {</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">            if (this.enablePartition) {</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">                if (type.isStringIndex()) {</span>
+                    // TODO: add string index partition
+                }
+<span class="nc bnc" id="L117" title="All 2 branches missed.">                if (type.isNumericIndex()) {</span>
+                    // TODO: add numeric index partition
+                }
+            }
+<span class="nc" id="L121">            BytesBuffer buffer = BytesBuffer.allocate(1 + id.length());</span>
+<span class="nc" id="L122">            byte[] idBytes = buffer.writeIndexId(id, type).bytes();</span>
+<span class="nc" id="L123">            return new BinaryBackendEntry(type, new BinaryId(idBytes, id));</span>
+        }
+
+<span class="nc" id="L126">        BytesBuffer buffer = BytesBuffer.allocate(1 + id.length());</span>
+<span class="nc" id="L127">        byte[] idBytes = buffer.writeId(id).bytes();</span>
+<span class="nc" id="L128">        return new BinaryBackendEntry(type, new BinaryId(idBytes, id));</span>
+    }
+
+    protected final BinaryBackendEntry newBackendEntry(HugeVertex vertex) {
+<span class="nc" id="L132">        return newBackendEntry(vertex.type(), vertex.id());</span>
+    }
+
+    protected final BinaryBackendEntry newBackendEntry(HugeEdge edge) {
+<span class="nc" id="L136">        BinaryId id = writeEdgeId(edge.idWithDirection());</span>
+<span class="nc" id="L137">        return newBackendEntry(edge.type(), id);</span>
+    }
+
+    protected final BinaryBackendEntry newBackendEntry(SchemaElement elem) {
+<span class="nc" id="L141">        return newBackendEntry(elem.type(), elem.id());</span>
+    }
+
+    @Override
+    protected BinaryBackendEntry convertEntry(BackendEntry entry) {
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        assert entry instanceof BinaryBackendEntry;</span>
+<span class="nc" id="L147">        return (BinaryBackendEntry) entry;</span>
+    }
+
+    protected byte[] formatSyspropName(Id id, HugeKeys col) {
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        int idLen = this.keyWithIdPrefix ? 1 + id.length() : 0;</span>
+<span class="nc" id="L152">        BytesBuffer buffer = BytesBuffer.allocate(idLen + 1 + 1);</span>
+<span class="nc" id="L153">        byte sysprop = HugeType.SYS_PROPERTY.code();</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (this.keyWithIdPrefix) {</span>
+<span class="nc" id="L155">            buffer.writeId(id);</span>
+        }
+<span class="nc" id="L157">        return buffer.write(sysprop).write(col.code()).bytes();</span>
+    }
+
+    protected byte[] formatSyspropName(BinaryId id, HugeKeys col) {
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        int idLen = this.keyWithIdPrefix ? id.length() : 0;</span>
+<span class="nc" id="L162">        BytesBuffer buffer = BytesBuffer.allocate(idLen + 1 + 1);</span>
+<span class="nc" id="L163">        byte sysprop = HugeType.SYS_PROPERTY.code();</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        if (this.keyWithIdPrefix) {</span>
+<span class="nc" id="L165">            buffer.write(id.asBytes());</span>
+        }
+<span class="nc" id="L167">        return buffer.write(sysprop).write(col.code()).bytes();</span>
+    }
+
+    protected BackendColumn formatLabel(HugeElement elem) {
+<span class="nc" id="L171">        BackendColumn col = new BackendColumn();</span>
+<span class="nc" id="L172">        col.name = this.formatSyspropName(elem.id(), HugeKeys.LABEL);</span>
+<span class="nc" id="L173">        Id label = elem.schemaLabel().id();</span>
+<span class="nc" id="L174">        BytesBuffer buffer = BytesBuffer.allocate(label.length() + 1);</span>
+<span class="nc" id="L175">        col.value = buffer.writeId(label).bytes();</span>
+<span class="nc" id="L176">        return col;</span>
+    }
+
+    protected byte[] formatPropertyName(HugeProperty&lt;?&gt; prop) {
+<span class="nc" id="L180">        Id id = prop.element().id();</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        int idLen = this.keyWithIdPrefix ? 1 + id.length() : 0;</span>
+<span class="nc" id="L182">        Id pkeyId = prop.propertyKey().id();</span>
+<span class="nc" id="L183">        BytesBuffer buffer = BytesBuffer.allocate(idLen + 2 + pkeyId.length());</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (this.keyWithIdPrefix) {</span>
+<span class="nc" id="L185">            buffer.writeId(id);</span>
+        }
+<span class="nc" id="L187">        buffer.write(prop.type().code());</span>
+<span class="nc" id="L188">        buffer.writeId(pkeyId);</span>
+<span class="nc" id="L189">        return buffer.bytes();</span>
+    }
+
+    protected BackendColumn formatProperty(HugeProperty&lt;?&gt; prop) {
+<span class="nc" id="L193">        BytesBuffer buffer = BytesBuffer.allocate(BytesBuffer.BUF_PROPERTY);</span>
+<span class="nc" id="L194">        buffer.writeProperty(prop.propertyKey(), prop.value());</span>
+<span class="nc" id="L195">        return BackendColumn.of(this.formatPropertyName(prop), buffer.bytes());</span>
+    }
+
+    protected void parseProperty(Id pkeyId, BytesBuffer buffer,
+                                 HugeElement owner) {
+<span class="nc" id="L200">        PropertyKey pkey = owner.graph().propertyKey(pkeyId);</span>
+
+        // Parse value
+<span class="nc" id="L203">        Object value = buffer.readProperty(pkey);</span>
+
+        // Set properties of vertex/edge
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        if (pkey.cardinality() == Cardinality.SINGLE) {</span>
+<span class="nc" id="L207">            owner.addProperty(pkey, value);</span>
+        } else {
+<span class="nc bnc" id="L209" title="All 2 branches missed.">            if (!(value instanceof Collection)) {</span>
+<span class="nc" id="L210">                throw new BackendException(</span>
+                          &quot;Invalid value of non-single property: %s&quot;, value);
+            }
+<span class="nc" id="L213">            owner.addProperty(pkey, value);</span>
+        }
+<span class="nc" id="L215">    }</span>
+
+    protected void formatProperties(Collection&lt;HugeProperty&lt;?&gt;&gt; props,
+                                    BytesBuffer buffer) {
+        // Write properties size
+<span class="nc" id="L220">        buffer.writeVInt(props.size());</span>
+
+        // Write properties data
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        for (HugeProperty&lt;?&gt; property : props) {</span>
+<span class="nc" id="L224">            PropertyKey pkey = property.propertyKey();</span>
+<span class="nc" id="L225">            buffer.writeVInt(SchemaElement.schemaId(pkey.id()));</span>
+<span class="nc" id="L226">            buffer.writeProperty(pkey, property.value());</span>
+<span class="nc" id="L227">        }</span>
+<span class="nc" id="L228">    }</span>
+
+    protected void parseProperties(BytesBuffer buffer, HugeElement owner) {
+<span class="nc" id="L231">        int size = buffer.readVInt();</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        assert size &gt;= 0;</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        for (int i = 0; i &lt; size; i++) {</span>
+<span class="nc" id="L234">            Id pkeyId = IdGenerator.of(buffer.readVInt());</span>
+<span class="nc" id="L235">            this.parseProperty(pkeyId, buffer, owner);</span>
+        }
+<span class="nc" id="L237">    }</span>
+
+    protected void formatExpiredTime(long expiredTime, BytesBuffer buffer) {
+<span class="nc" id="L240">        buffer.writeVLong(expiredTime);</span>
+<span class="nc" id="L241">    }</span>
+
+    protected void parseExpiredTime(BytesBuffer buffer, HugeElement element) {
+<span class="nc" id="L244">        element.expiredTime(buffer.readVLong());</span>
+<span class="nc" id="L245">    }</span>
+
+    protected byte[] formatEdgeValue(HugeEdge edge) {
+<span class="nc" id="L248">        int propsCount = edge.sizeOfProperties();</span>
+<span class="nc" id="L249">        BytesBuffer buffer = BytesBuffer.allocate(4 + 16 * propsCount);</span>
+
+        // Write edge id
+        //buffer.writeId(edge.id());
+
+        // Write edge properties
+<span class="nc" id="L255">        this.formatProperties(edge.getProperties(), buffer);</span>
+
+        // Write edge expired time if needed
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        if (edge.hasTtl()) {</span>
+<span class="nc" id="L259">            this.formatExpiredTime(edge.expiredTime(), buffer);</span>
+        }
+
+<span class="nc" id="L262">        return buffer.bytes();</span>
+    }
+
+    protected void parseEdge(BackendColumn col, HugeVertex vertex,
+                             HugeGraph graph) {
+        // owner-vertex + dir + edge-label + sort-values + other-vertex
+
+<span class="nc" id="L269">        BytesBuffer buffer = BytesBuffer.wrap(col.name);</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">        if (this.keyWithIdPrefix) {</span>
+            // Consume owner-vertex id
+<span class="nc" id="L272">            buffer.readId();</span>
+        }
+<span class="nc" id="L274">        byte type = buffer.read();</span>
+<span class="nc" id="L275">        Id labelId = buffer.readId();</span>
+<span class="nc" id="L276">        String sortValues = buffer.readStringWithEnding();</span>
+<span class="nc" id="L277">        Id otherVertexId = buffer.readId();</span>
+
+<span class="nc" id="L279">        boolean direction = EdgeId.isOutDirectionFromCode(type);</span>
+<span class="nc" id="L280">        EdgeLabel edgeLabel = graph.edgeLabelOrNone(labelId);</span>
+
+        // Construct edge
+<span class="nc" id="L283">        HugeEdge edge = HugeEdge.constructEdge(vertex, direction, edgeLabel,</span>
+                                               sortValues, otherVertexId);
+
+        // Parse edge-id + edge-properties
+<span class="nc" id="L287">        buffer = BytesBuffer.wrap(col.value);</span>
+
+        //Id id = buffer.readId();
+
+        // Parse edge properties
+<span class="nc" id="L292">        this.parseProperties(buffer, edge);</span>
+
+        // Parse edge expired time if needed
+<span class="nc bnc" id="L295" title="All 2 branches missed.">        if (edge.hasTtl()) {</span>
+<span class="nc" id="L296">            this.parseExpiredTime(buffer, edge);</span>
+        }
+<span class="nc" id="L298">    }</span>
+
+    protected void parseVertex(byte[] value, HugeVertex vertex) {
+<span class="nc" id="L301">        BytesBuffer buffer = BytesBuffer.wrap(value);</span>
+
+        // Parse vertex label
+<span class="nc" id="L304">        VertexLabel label = vertex.graph().vertexLabelOrNone(buffer.readId());</span>
+<span class="nc" id="L305">        vertex.correctVertexLabel(label);</span>
+
+        // Parse properties
+<span class="nc" id="L308">        this.parseProperties(buffer, vertex);</span>
+
+        // Parse vertex expired time if needed
+<span class="nc bnc" id="L311" title="All 2 branches missed.">        if (vertex.hasTtl()) {</span>
+<span class="nc" id="L312">            this.parseExpiredTime(buffer, vertex);</span>
+        }
+<span class="nc" id="L314">    }</span>
+
+    protected void parseColumn(BackendColumn col, HugeVertex vertex) {
+<span class="nc" id="L317">        BytesBuffer buffer = BytesBuffer.wrap(col.name);</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">        Id id = this.keyWithIdPrefix ? buffer.readId() : vertex.id();</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        E.checkState(buffer.remaining() &gt; 0, &quot;Missing column type&quot;);</span>
+<span class="nc" id="L320">        byte type = buffer.read();</span>
+        // Parse property
+<span class="nc bnc" id="L322" title="All 2 branches missed.">        if (type == HugeType.PROPERTY.code()) {</span>
+<span class="nc" id="L323">            Id pkeyId = buffer.readId();</span>
+<span class="nc" id="L324">            this.parseProperty(pkeyId, BytesBuffer.wrap(col.value), vertex);</span>
+<span class="nc" id="L325">        }</span>
+        // Parse edge
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        else if (type == HugeType.EDGE_IN.code() ||</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">                 type == HugeType.EDGE_OUT.code()) {</span>
+<span class="nc" id="L329">            this.parseEdge(col, vertex, vertex.graph());</span>
+        }
+        // Parse system property
+<span class="nc bnc" id="L332" title="All 2 branches missed.">        else if (type == HugeType.SYS_PROPERTY.code()) {</span>
+            // pass
+        }
+        // Invalid entry
+        else {
+<span class="nc" id="L337">            E.checkState(false, &quot;Invalid entry(%s) with unknown type(%s): 0x%s&quot;,</span>
+<span class="nc" id="L338">                         id, type &amp; 0xff, Bytes.toHex(col.name));</span>
+        }
+<span class="nc" id="L340">    }</span>
+
+    protected byte[] formatIndexName(HugeIndex index) {
+        BytesBuffer buffer;
+<span class="nc" id="L344">        Id elemId = index.elementId();</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (!this.indexWithIdPrefix) {</span>
+<span class="nc" id="L346">            int idLen = 1 + elemId.length();</span>
+<span class="nc" id="L347">            buffer = BytesBuffer.allocate(idLen);</span>
+<span class="nc" id="L348">        } else {</span>
+<span class="nc" id="L349">            Id indexId = index.id();</span>
+<span class="nc" id="L350">            HugeType type = index.type();</span>
+<span class="nc bnc" id="L351" title="All 4 branches missed.">            if (!type.isNumericIndex() &amp;&amp; indexIdLengthExceedLimit(indexId)) {</span>
+<span class="nc" id="L352">                indexId = index.hashId();</span>
+            }
+<span class="nc" id="L354">            int idLen = 1 + elemId.length() + 1 + indexId.length();</span>
+<span class="nc" id="L355">            buffer = BytesBuffer.allocate(idLen);</span>
+            // Write index-id
+<span class="nc" id="L357">            buffer.writeIndexId(indexId, type);</span>
+        }
+        // Write element-id
+<span class="nc" id="L360">        buffer.writeId(elemId);</span>
+        // Write expired time if needed
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        if (index.hasTtl()) {</span>
+<span class="nc" id="L363">            buffer.writeVLong(index.expiredTime());</span>
+        }
+
+<span class="nc" id="L366">        return buffer.bytes();</span>
+    }
+
+    protected void parseIndexName(HugeGraph graph, ConditionQuery query,
+                                  BinaryBackendEntry entry,
+                                  HugeIndex index, Object fieldValues) {
+<span class="nc bnc" id="L372" title="All 2 branches missed.">        for (BackendColumn col : entry.columns()) {</span>
+<span class="nc bnc" id="L373" title="All 2 branches missed.">            if (indexFieldValuesUnmatched(col.value, fieldValues)) {</span>
+                // Skip if field-values is not matched (just the same hash)
+<span class="nc" id="L375">                continue;</span>
+            }
+<span class="nc" id="L377">            BytesBuffer buffer = BytesBuffer.wrap(col.name);</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">            if (this.indexWithIdPrefix) {</span>
+<span class="nc" id="L379">                buffer.readIndexId(index.type());</span>
+            }
+<span class="nc" id="L381">            Id elemId = buffer.readId();</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">            long expiredTime = index.hasTtl() ? buffer.readVLong() : 0L;</span>
+<span class="nc" id="L383">            index.elementIds(elemId, expiredTime);</span>
+<span class="nc" id="L384">        }</span>
+<span class="nc" id="L385">    }</span>
+
+    @Override
+    public BackendEntry writeVertex(HugeVertex vertex) {
+<span class="nc bnc" id="L389" title="All 2 branches missed.">        if (vertex.olap()) {</span>
+<span class="nc" id="L390">            return this.writeOlapVertex(vertex);</span>
+        }
+
+<span class="nc" id="L393">        BinaryBackendEntry entry = newBackendEntry(vertex);</span>
+
+<span class="nc bnc" id="L395" title="All 2 branches missed.">        if (vertex.removed()) {</span>
+<span class="nc" id="L396">            return entry;</span>
+        }
+
+<span class="nc" id="L399">        int propsCount = vertex.sizeOfProperties();</span>
+<span class="nc" id="L400">        BytesBuffer buffer = BytesBuffer.allocate(8 + 16 * propsCount);</span>
+
+        // Write vertex label
+<span class="nc" id="L403">        buffer.writeId(vertex.schemaLabel().id());</span>
+
+        // Write all properties of the vertex
+<span class="nc" id="L406">        this.formatProperties(vertex.getProperties(), buffer);</span>
+
+        // Write vertex expired time if needed
+<span class="nc bnc" id="L409" title="All 2 branches missed.">        if (vertex.hasTtl()) {</span>
+<span class="nc" id="L410">            entry.ttl(vertex.ttl());</span>
+<span class="nc" id="L411">            this.formatExpiredTime(vertex.expiredTime(), buffer);</span>
+        }
+
+        // Fill column
+<span class="nc bnc" id="L415" title="All 2 branches missed.">        byte[] name = this.keyWithIdPrefix ?</span>
+<span class="nc" id="L416">                      entry.id().asBytes() : BytesBuffer.BYTES_EMPTY;</span>
+<span class="nc" id="L417">        entry.column(name, buffer.bytes());</span>
+
+<span class="nc" id="L419">        return entry;</span>
+    }
+
+    @Override
+    public BackendEntry writeOlapVertex(HugeVertex vertex) {
+<span class="nc" id="L424">        BinaryBackendEntry entry = newBackendEntry(HugeType.OLAP, vertex.id());</span>
+<span class="nc" id="L425">        BytesBuffer buffer = BytesBuffer.allocate(8 + 16);</span>
+
+<span class="nc" id="L427">        Collection&lt;HugeProperty&lt;?&gt;&gt; properties = vertex.getProperties();</span>
+<span class="nc bnc" id="L428" title="All 2 branches missed.">        if (properties.size() != 1) {</span>
+<span class="nc" id="L429">            E.checkArgument(false,</span>
+                            &quot;Expect 1 property for olap vertex, but got %s&quot;,
+<span class="nc" id="L431">                            properties.size());</span>
+        }
+<span class="nc" id="L433">        HugeProperty&lt;?&gt; property = properties.iterator().next();</span>
+<span class="nc" id="L434">        PropertyKey propertyKey = property.propertyKey();</span>
+<span class="nc" id="L435">        buffer.writeVInt(SchemaElement.schemaId(propertyKey.id()));</span>
+<span class="nc" id="L436">        buffer.writeProperty(propertyKey, property.value());</span>
+
+        // Fill column
+<span class="nc bnc" id="L439" title="All 2 branches missed.">        byte[] name = this.keyWithIdPrefix ?</span>
+<span class="nc" id="L440">                      entry.id().asBytes() : BytesBuffer.BYTES_EMPTY;</span>
+<span class="nc" id="L441">        entry.column(name, buffer.bytes());</span>
+<span class="nc" id="L442">        entry.subId(propertyKey.id());</span>
+<span class="nc" id="L443">        entry.olap(true);</span>
+<span class="nc" id="L444">        return entry;</span>
+    }
+
+    @Override
+    public BackendEntry writeVertexProperty(HugeVertexProperty&lt;?&gt; prop) {
+<span class="nc" id="L449">        throw new NotImplementedException(&quot;Unsupported writeVertexProperty()&quot;);</span>
+    }
+
+    @Override
+    public HugeVertex readVertex(HugeGraph graph, BackendEntry bytesEntry) {
+<span class="nc bnc" id="L454" title="All 2 branches missed.">        if (bytesEntry == null) {</span>
+<span class="nc" id="L455">            return null;</span>
+        }
+<span class="nc" id="L457">        BinaryBackendEntry entry = this.convertEntry(bytesEntry);</span>
+
+        // Parse id
+<span class="nc" id="L460">        Id id = entry.id().origin();</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">        Id vid = id.edge() ? ((EdgeId) id).ownerVertexId() : id;</span>
+<span class="nc" id="L462">        HugeVertex vertex = new HugeVertex(graph, vid, VertexLabel.NONE);</span>
+
+        // Parse all properties and edges of a Vertex
+<span class="nc" id="L465">        Iterator&lt;BackendColumn&gt; iterator = entry.columns().iterator();</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">        for (int index = 0; iterator.hasNext(); index++) {</span>
+<span class="nc" id="L467">            BackendColumn col = iterator.next();</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">            if (entry.type().isEdge()) {</span>
+                // NOTE: the entry id type is vertex even if entry type is edge
+                // Parse vertex edges
+<span class="nc" id="L471">                this.parseColumn(col, vertex);</span>
+            } else {
+<span class="nc bnc" id="L473" title="All 2 branches missed.">                assert entry.type().isVertex();</span>
+                // Parse vertex properties
+<span class="nc bnc" id="L475" title="All 2 branches missed.">                assert entry.columnsSize() &gt;= 1 : entry.columnsSize();</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">                if (index == 0) {</span>
+<span class="nc" id="L477">                    this.parseVertex(col.value, vertex);</span>
+                } else {
+<span class="nc" id="L479">                    this.parseVertexOlap(col.value, vertex);</span>
+                }
+            }
+        }
+
+<span class="nc" id="L484">        return vertex;</span>
+    }
+
+    protected void parseVertexOlap(byte[] value, HugeVertex vertex) {
+<span class="nc" id="L488">        BytesBuffer buffer = BytesBuffer.wrap(value);</span>
+<span class="nc" id="L489">        Id pkeyId = IdGenerator.of(buffer.readVInt());</span>
+<span class="nc" id="L490">        this.parseProperty(pkeyId, buffer, vertex);</span>
+<span class="nc" id="L491">    }</span>
+
+    @Override
+    public BackendEntry writeEdge(HugeEdge edge) {
+<span class="nc" id="L495">        BinaryBackendEntry entry = newBackendEntry(edge);</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">        byte[] name = this.keyWithIdPrefix ?</span>
+<span class="nc" id="L497">                      entry.id().asBytes() : BytesBuffer.BYTES_EMPTY;</span>
+<span class="nc" id="L498">        byte[] value = this.formatEdgeValue(edge);</span>
+<span class="nc" id="L499">        entry.column(name, value);</span>
+
+<span class="nc bnc" id="L501" title="All 2 branches missed.">        if (edge.hasTtl()) {</span>
+<span class="nc" id="L502">            entry.ttl(edge.ttl());</span>
+        }
+
+<span class="nc" id="L505">        return entry;</span>
+    }
+
+    @Override
+    public BackendEntry writeEdgeProperty(HugeEdgeProperty&lt;?&gt; prop) {
+        // TODO: entry.column(this.formatProperty(prop));
+<span class="nc" id="L511">        throw new NotImplementedException(&quot;Unsupported writeEdgeProperty()&quot;);</span>
+    }
+
+    @Override
+    public HugeEdge readEdge(HugeGraph graph, BackendEntry bytesEntry) {
+<span class="nc" id="L516">        HugeVertex vertex = this.readVertex(graph, bytesEntry);</span>
+<span class="nc" id="L517">        Collection&lt;HugeEdge&gt; edges = vertex.getEdges();</span>
+<span class="nc bnc" id="L518" title="All 2 branches missed.">        if (edges.size() != 1) {</span>
+<span class="nc" id="L519">            E.checkState(false,</span>
+                         &quot;Expect 1 edge in vertex, but got %s&quot;,
+<span class="nc" id="L521">                         edges.size());</span>
+        }
+<span class="nc" id="L523">        return edges.iterator().next();</span>
+    }
+
+    @Override
+    public BackendEntry writeIndex(HugeIndex index) {
+        BinaryBackendEntry entry;
+<span class="nc bnc" id="L529" title="All 4 branches missed.">        if (index.fieldValues() == null &amp;&amp; index.elementIds().size() == 0) {</span>
+            /*
+             * When field-values is null and elementIds size is 0, it is
+             * meaningful for deletion of index data by index label.
+             * TODO: improve
+             */
+<span class="nc" id="L535">            entry = this.formatILDeletion(index);</span>
+        } else {
+<span class="nc" id="L537">            Id id = index.id();</span>
+<span class="nc" id="L538">            HugeType type = index.type();</span>
+<span class="nc" id="L539">            byte[] value = null;</span>
+<span class="nc bnc" id="L540" title="All 4 branches missed.">            if (!type.isNumericIndex() &amp;&amp; indexIdLengthExceedLimit(id)) {</span>
+<span class="nc" id="L541">                id = index.hashId();</span>
+                // Save field-values as column value if the key is a hash string
+<span class="nc" id="L543">                value = StringEncoding.encode(index.fieldValues().toString());</span>
+            }
+
+<span class="nc" id="L546">            entry = newBackendEntry(type, id);</span>
+<span class="nc bnc" id="L547" title="All 2 branches missed.">            if (index.indexLabel().olap()) {</span>
+<span class="nc" id="L548">                entry.olap(true);</span>
+            }
+<span class="nc" id="L550">            entry.column(this.formatIndexName(index), value);</span>
+<span class="nc" id="L551">            entry.subId(index.elementId());</span>
+
+<span class="nc bnc" id="L553" title="All 2 branches missed.">            if (index.hasTtl()) {</span>
+<span class="nc" id="L554">                entry.ttl(index.ttl());</span>
+            }
+        }
+<span class="nc" id="L557">        return entry;</span>
+    }
+
+    @Override
+    public HugeIndex readIndex(HugeGraph graph, ConditionQuery query,
+                               BackendEntry bytesEntry) {
+<span class="nc bnc" id="L563" title="All 2 branches missed.">        if (bytesEntry == null) {</span>
+<span class="nc" id="L564">            return null;</span>
+        }
+
+<span class="nc" id="L567">        BinaryBackendEntry entry = this.convertEntry(bytesEntry);</span>
+        // NOTE: index id without length prefix
+<span class="nc" id="L569">        byte[] bytes = entry.id().asBytes();</span>
+<span class="nc" id="L570">        HugeIndex index = HugeIndex.parseIndexId(graph, entry.type(), bytes);</span>
+
+<span class="nc" id="L572">        Object fieldValues = null;</span>
+<span class="nc bnc" id="L573" title="All 2 branches missed.">        if (!index.type().isRangeIndex()) {</span>
+<span class="nc" id="L574">            fieldValues = query.condition(HugeKeys.FIELD_VALUES);</span>
+<span class="nc bnc" id="L575" title="All 2 branches missed.">            if (!index.fieldValues().equals(fieldValues)) {</span>
+                // Update field-values for hashed or encoded index-id
+<span class="nc" id="L577">                index.fieldValues(fieldValues);</span>
+            }
+        }
+
+<span class="nc" id="L581">        this.parseIndexName(graph, query, entry, index, fieldValues);</span>
+<span class="nc" id="L582">        return index;</span>
+    }
+
+    @Override
+    public BackendEntry writeId(HugeType type, Id id) {
+<span class="nc" id="L587">        return newBackendEntry(type, id);</span>
+    }
+
+    @Override
+    protected Id writeQueryId(HugeType type, Id id) {
+<span class="nc bnc" id="L592" title="All 2 branches missed.">        if (type.isEdge()) {</span>
+<span class="nc" id="L593">            id = writeEdgeId(id);</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">        } else if (type.isVertex()) {</span>
+<span class="nc" id="L595">            BytesBuffer buffer = BytesBuffer.allocate(2 + 1 + id.length());</span>
+<span class="nc" id="L596">            writePartitionedId(HugeType.VERTEX, id, buffer);</span>
+<span class="nc" id="L597">            id = new BinaryId(buffer.bytes(), id);</span>
+<span class="nc" id="L598">        } else {</span>
+<span class="nc" id="L599">            BytesBuffer buffer = BytesBuffer.allocate(1 + id.length());</span>
+<span class="nc" id="L600">            id = new BinaryId(buffer.writeId(id).bytes(), id);</span>
+        }
+<span class="nc" id="L602">        return id;</span>
+    }
+
+    @Override
+    protected Query writeQueryEdgeCondition(Query query) {
+<span class="nc" id="L607">        ConditionQuery cq = (ConditionQuery) query;</span>
+<span class="nc bnc" id="L608" title="All 2 branches missed.">        if (cq.hasRangeCondition()) {</span>
+<span class="nc" id="L609">            return this.writeQueryEdgeRangeCondition(cq);</span>
+        } else {
+<span class="nc" id="L611">            return this.writeQueryEdgePrefixCondition(cq);</span>
+        }
+    }
+
+    private Query writeQueryEdgeRangeCondition(ConditionQuery cq) {
+<span class="nc" id="L616">        List&lt;Condition&gt; sortValues = cq.syspropConditions(HugeKeys.SORT_VALUES);</span>
+<span class="nc bnc" id="L617" title="All 4 branches missed.">        E.checkArgument(sortValues.size() &gt;= 1 &amp;&amp; sortValues.size() &lt;= 2,</span>
+                        &quot;Edge range query must be with sort-values range&quot;);
+        // Would ignore target vertex
+<span class="nc" id="L620">        Id vertex = cq.condition(HugeKeys.OWNER_VERTEX);</span>
+<span class="nc" id="L621">        Directions direction = cq.condition(HugeKeys.DIRECTION);</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">        if (direction == null) {</span>
+<span class="nc" id="L623">            direction = Directions.OUT;</span>
+        }
+<span class="nc" id="L625">        Id label = cq.condition(HugeKeys.LABEL);</span>
+
+<span class="nc" id="L627">        BytesBuffer start = BytesBuffer.allocate(BytesBuffer.BUF_EDGE_ID);</span>
+<span class="nc" id="L628">        writePartitionedId(HugeType.EDGE, vertex, start);</span>
+<span class="nc" id="L629">        start.write(direction.type().code());</span>
+<span class="nc" id="L630">        start.writeId(label);</span>
+
+<span class="nc" id="L632">        BytesBuffer end = BytesBuffer.allocate(BytesBuffer.BUF_EDGE_ID);</span>
+<span class="nc" id="L633">        end.copyFrom(start);</span>
+
+<span class="nc" id="L635">        RangeConditions range = new RangeConditions(sortValues);</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">        if (range.keyMin() != null) {</span>
+<span class="nc" id="L637">            start.writeStringRaw((String) range.keyMin());</span>
+        }
+<span class="nc bnc" id="L639" title="All 2 branches missed.">        if (range.keyMax() != null) {</span>
+<span class="nc" id="L640">            end.writeStringRaw((String) range.keyMax());</span>
+        }
+        // Sort-value will be empty if there is no start sort-value
+<span class="nc" id="L643">        Id startId = new BinaryId(start.bytes(), null);</span>
+        // Set endId as prefix if there is no end sort-value
+<span class="nc" id="L645">        Id endId = new BinaryId(end.bytes(), null);</span>
+
+<span class="nc" id="L647">        boolean includeStart = range.keyMinEq();</span>
+<span class="nc bnc" id="L648" title="All 4 branches missed.">        if (cq.paging() &amp;&amp; !cq.page().isEmpty()) {</span>
+<span class="nc" id="L649">            includeStart = true;</span>
+<span class="nc" id="L650">            byte[] position = PageState.fromString(cq.page()).position();</span>
+<span class="nc bnc" id="L651" title="All 2 branches missed.">            E.checkArgument(Bytes.compare(position, startId.asBytes()) &gt;= 0,</span>
+                            &quot;Invalid page out of lower bound&quot;);
+<span class="nc" id="L653">            startId = new BinaryId(position, null);</span>
+        }
+<span class="nc bnc" id="L655" title="All 2 branches missed.">        if (range.keyMax() == null) {</span>
+<span class="nc" id="L656">            return new IdPrefixQuery(cq, startId, includeStart, endId);</span>
+        }
+<span class="nc" id="L658">        return new IdRangeQuery(cq, startId, includeStart, endId,</span>
+<span class="nc" id="L659">                                range.keyMaxEq());</span>
+    }
+
+    private Query writeQueryEdgePrefixCondition(ConditionQuery cq) {
+<span class="nc" id="L663">        int count = 0;</span>
+<span class="nc" id="L664">        BytesBuffer buffer = BytesBuffer.allocate(BytesBuffer.BUF_EDGE_ID);</span>
+<span class="nc bnc" id="L665" title="All 2 branches missed.">        for (HugeKeys key : EdgeId.KEYS) {</span>
+<span class="nc" id="L666">            Object value = cq.condition(key);</span>
+
+<span class="nc bnc" id="L668" title="All 2 branches missed.">            if (value != null) {</span>
+<span class="nc" id="L669">                count++;</span>
+            } else {
+<span class="nc bnc" id="L671" title="All 2 branches missed.">                if (key == HugeKeys.DIRECTION) {</span>
+                    // Direction is null, set to OUT
+<span class="nc" id="L673">                    value = Directions.OUT;</span>
+                } else {
+                    break;
+                }
+            }
+
+<span class="nc bnc" id="L679" title="All 4 branches missed.">            if (key == HugeKeys.OWNER_VERTEX ||</span>
+                key == HugeKeys.OTHER_VERTEX) {
+<span class="nc" id="L681">                writePartitionedId(HugeType.EDGE, (Id) value, buffer);</span>
+<span class="nc bnc" id="L682" title="All 2 branches missed.">            } else if (key == HugeKeys.DIRECTION) {</span>
+<span class="nc" id="L683">                byte t = ((Directions) value).type().code();</span>
+<span class="nc" id="L684">                buffer.write(t);</span>
+<span class="nc bnc" id="L685" title="All 2 branches missed.">            } else if (key == HugeKeys.LABEL) {</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">                assert value instanceof Id;</span>
+<span class="nc" id="L687">                buffer.writeId((Id) value);</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">            } else if (key == HugeKeys.SORT_VALUES) {</span>
+<span class="nc bnc" id="L689" title="All 2 branches missed.">                assert value instanceof String;</span>
+<span class="nc" id="L690">                buffer.writeStringWithEnding((String) value);</span>
+            } else {
+<span class="nc" id="L692">                assert false : key;</span>
+            }
+        }
+
+<span class="nc bnc" id="L696" title="All 2 branches missed.">        if (count &gt; 0) {</span>
+<span class="nc bnc" id="L697" title="All 2 branches missed.">            assert count == cq.conditionsSize();</span>
+<span class="nc" id="L698">            return prefixQuery(cq, new BinaryId(buffer.bytes(), null));</span>
+        }
+
+<span class="nc" id="L701">        return null;</span>
+    }
+
+    @Override
+    protected Query writeQueryCondition(Query query) {
+<span class="nc" id="L706">        HugeType type = query.resultType();</span>
+<span class="nc bnc" id="L707" title="All 2 branches missed.">        if (!type.isIndex()) {</span>
+<span class="nc" id="L708">            return query;</span>
+        }
+
+<span class="nc" id="L711">        ConditionQuery cq = (ConditionQuery) query;</span>
+
+<span class="nc bnc" id="L713" title="All 2 branches missed.">        if (type.isNumericIndex()) {</span>
+            // Convert range-index/shard-index query to id range query
+<span class="nc" id="L715">            return this.writeRangeIndexQuery(cq);</span>
+        } else {
+<span class="nc bnc" id="L717" title="All 4 branches missed.">            assert type.isSearchIndex() || type.isSecondaryIndex() ||</span>
+<span class="nc bnc" id="L718" title="All 2 branches missed.">                   type.isUniqueIndex();</span>
+            // Convert secondary-index or search-index query to id query
+<span class="nc" id="L720">            return this.writeStringIndexQuery(cq);</span>
+        }
+    }
+
+    private Query writeStringIndexQuery(ConditionQuery query) {
+<span class="nc bnc" id="L725" title="All 2 branches missed.">        E.checkArgument(query.allSysprop() &amp;&amp;</span>
+<span class="nc bnc" id="L726" title="All 2 branches missed.">                        query.conditionsSize() == 2,</span>
+                        &quot;There should be two conditions: &quot; +
+                        &quot;INDEX_LABEL_ID and FIELD_VALUES&quot; +
+                        &quot;in secondary index query&quot;);
+
+<span class="nc" id="L731">        Id index = query.condition(HugeKeys.INDEX_LABEL_ID);</span>
+<span class="nc" id="L732">        Object key = query.condition(HugeKeys.FIELD_VALUES);</span>
+
+<span class="nc bnc" id="L734" title="All 2 branches missed.">        E.checkArgument(index != null, &quot;Please specify the index label&quot;);</span>
+<span class="nc bnc" id="L735" title="All 2 branches missed.">        E.checkArgument(key != null, &quot;Please specify the index key&quot;);</span>
+
+<span class="nc" id="L737">        Id prefix = formatIndexId(query.resultType(), index, key, true);</span>
+<span class="nc" id="L738">        return prefixQuery(query, prefix);</span>
+    }
+
+    private Query writeRangeIndexQuery(ConditionQuery query) {
+<span class="nc" id="L742">        Id index = query.condition(HugeKeys.INDEX_LABEL_ID);</span>
+<span class="nc bnc" id="L743" title="All 2 branches missed.">        E.checkArgument(index != null, &quot;Please specify the index label&quot;);</span>
+
+<span class="nc" id="L745">        List&lt;Condition&gt; fields = query.syspropConditions(HugeKeys.FIELD_VALUES);</span>
+<span class="nc bnc" id="L746" title="All 2 branches missed.">        E.checkArgument(!fields.isEmpty(),</span>
+                        &quot;Please specify the index field values&quot;);
+
+<span class="nc" id="L749">        HugeType type = query.resultType();</span>
+<span class="nc" id="L750">        Id start = null;</span>
+<span class="nc bnc" id="L751" title="All 4 branches missed.">        if (query.paging() &amp;&amp; !query.page().isEmpty()) {</span>
+<span class="nc" id="L752">            byte[] position = PageState.fromString(query.page()).position();</span>
+<span class="nc" id="L753">            start = new BinaryId(position, null);</span>
+        }
+
+<span class="nc" id="L756">        RangeConditions range = new RangeConditions(fields);</span>
+<span class="nc bnc" id="L757" title="All 2 branches missed.">        if (range.keyEq() != null) {</span>
+<span class="nc" id="L758">            Id id = formatIndexId(type, index, range.keyEq(), true);</span>
+<span class="nc bnc" id="L759" title="All 2 branches missed.">            if (start == null) {</span>
+<span class="nc" id="L760">                return new IdPrefixQuery(query, id);</span>
+            }
+<span class="nc bnc" id="L762" title="All 2 branches missed.">            E.checkArgument(Bytes.compare(start.asBytes(), id.asBytes()) &gt;= 0,</span>
+                            &quot;Invalid page out of lower bound&quot;);
+<span class="nc" id="L764">            return new IdPrefixQuery(query, start, id);</span>
+        }
+
+<span class="nc" id="L767">        Object keyMin = range.keyMin();</span>
+<span class="nc" id="L768">        Object keyMax = range.keyMax();</span>
+<span class="nc" id="L769">        boolean keyMinEq = range.keyMinEq();</span>
+<span class="nc" id="L770">        boolean keyMaxEq = range.keyMaxEq();</span>
+<span class="nc bnc" id="L771" title="All 2 branches missed.">        if (keyMin == null) {</span>
+<span class="nc bnc" id="L772" title="All 2 branches missed.">            E.checkArgument(keyMax != null,</span>
+                            &quot;Please specify at least one condition&quot;);
+            // Set keyMin to min value
+<span class="nc" id="L775">            keyMin = NumericUtil.minValueOf(keyMax.getClass());</span>
+<span class="nc" id="L776">            keyMinEq = true;</span>
+        }
+
+<span class="nc" id="L779">        Id min = formatIndexId(type, index, keyMin, false);</span>
+<span class="nc bnc" id="L780" title="All 2 branches missed.">        if (!keyMinEq) {</span>
+            /*
+             * Increase 1 to keyMin, index GT query is a scan with GT prefix,
+             * inclusiveStart=false will also match index started with keyMin
+             */
+<span class="nc" id="L785">            increaseOne(min.asBytes());</span>
+<span class="nc" id="L786">            keyMinEq = true;</span>
+        }
+
+<span class="nc bnc" id="L789" title="All 2 branches missed.">        if (start == null) {</span>
+<span class="nc" id="L790">            start = min;</span>
+        } else {
+<span class="nc bnc" id="L792" title="All 2 branches missed.">            E.checkArgument(Bytes.compare(start.asBytes(), min.asBytes()) &gt;= 0,</span>
+                            &quot;Invalid page out of lower bound&quot;);
+        }
+
+<span class="nc bnc" id="L796" title="All 2 branches missed.">        if (keyMax == null) {</span>
+<span class="nc" id="L797">            keyMax = NumericUtil.maxValueOf(keyMin.getClass());</span>
+<span class="nc" id="L798">            keyMaxEq = true;</span>
+        }
+<span class="nc" id="L800">        Id max = formatIndexId(type, index, keyMax, false);</span>
+<span class="nc bnc" id="L801" title="All 2 branches missed.">        if (keyMaxEq) {</span>
+<span class="nc" id="L802">            keyMaxEq = false;</span>
+<span class="nc" id="L803">            increaseOne(max.asBytes());</span>
+        }
+<span class="nc" id="L805">        return new IdRangeQuery(query, start, keyMinEq, max, keyMaxEq);</span>
+    }
+
+    private BinaryBackendEntry formatILDeletion(HugeIndex index) {
+<span class="nc" id="L809">        Id id = index.indexLabelId();</span>
+<span class="nc" id="L810">        BinaryId bid = new BinaryId(id.asBytes(), id);</span>
+<span class="nc" id="L811">        BinaryBackendEntry entry = new BinaryBackendEntry(index.type(), bid);</span>
+<span class="nc bnc" id="L812" title="All 2 branches missed.">        if (index.type().isStringIndex()) {</span>
+<span class="nc" id="L813">            byte[] idBytes = IdGenerator.of(id.asString()).asBytes();</span>
+<span class="nc" id="L814">            BytesBuffer buffer = BytesBuffer.allocate(idBytes.length);</span>
+<span class="nc" id="L815">            buffer.write(idBytes);</span>
+<span class="nc" id="L816">            entry.column(buffer.bytes(), null);</span>
+<span class="nc" id="L817">        } else {</span>
+<span class="nc bnc" id="L818" title="All 2 branches missed.">            assert index.type().isRangeIndex();</span>
+<span class="nc" id="L819">            BytesBuffer buffer = BytesBuffer.allocate(4);</span>
+<span class="nc" id="L820">            buffer.writeInt((int) id.asLong());</span>
+<span class="nc" id="L821">            entry.column(buffer.bytes(), null);</span>
+        }
+<span class="nc" id="L823">        return entry;</span>
+    }
+
+    private BinaryId writeEdgeId(Id id) {
+        EdgeId edgeId;
+<span class="nc bnc" id="L828" title="All 2 branches missed.">        if (id instanceof EdgeId) {</span>
+<span class="nc" id="L829">            edgeId = (EdgeId) id;</span>
+        } else {
+<span class="nc" id="L831">            edgeId = EdgeId.parse(id.asString());</span>
+        }
+<span class="nc" id="L833">        BytesBuffer buffer = BytesBuffer.allocate(BytesBuffer.BUF_EDGE_ID);</span>
+<span class="nc bnc" id="L834" title="All 2 branches missed.">        if (this.enablePartition) {</span>
+<span class="nc" id="L835">            buffer.writeShort(getPartition(HugeType.EDGE, edgeId.ownerVertexId()));</span>
+<span class="nc" id="L836">            buffer.writeEdgeId(edgeId);</span>
+        } else {
+<span class="nc" id="L838">            buffer.writeEdgeId(edgeId);</span>
+        }
+<span class="nc" id="L840">        return new BinaryId(buffer.bytes(), id);</span>
+    }
+
+    private void writePartitionedId(HugeType type, Id id, BytesBuffer buffer) {
+<span class="nc bnc" id="L844" title="All 2 branches missed.">        if (this.enablePartition) {</span>
+<span class="nc" id="L845">            buffer.writeShort(getPartition(type, id));</span>
+<span class="nc" id="L846">            buffer.writeId(id);</span>
+        } else {
+<span class="nc" id="L848">            buffer.writeId(id);</span>
+        }
+<span class="nc" id="L850">    }</span>
+
+    protected short getPartition(HugeType type, Id id) {
+<span class="nc" id="L853">        return 0;</span>
+    }
+
+    public BackendEntry parse(BackendEntry originEntry) {
+<span class="nc" id="L857">        byte[] bytes = originEntry.id().asBytes();</span>
+<span class="nc" id="L858">        BinaryBackendEntry parsedEntry = new BinaryBackendEntry(originEntry.type(),</span>
+                                                                bytes,
+                                                                this.enablePartition);
+<span class="nc bnc" id="L861" title="All 2 branches missed.">        if (this.enablePartition) {</span>
+<span class="nc" id="L862">            bytes = Arrays.copyOfRange(bytes, parsedEntry.id().length() + 2, bytes.length);</span>
+        } else {
+<span class="nc" id="L864">            bytes = Arrays.copyOfRange(bytes, parsedEntry.id().length(), bytes.length);</span>
+        }
+<span class="nc" id="L866">        BytesBuffer buffer = BytesBuffer.allocate(BytesBuffer.BUF_EDGE_ID);</span>
+<span class="nc" id="L867">        buffer.write(parsedEntry.id().asBytes());</span>
+<span class="nc" id="L868">        buffer.write(bytes);</span>
+<span class="nc" id="L869">        parsedEntry = new BinaryBackendEntry(originEntry.type(), new BinaryId(buffer.bytes(),</span>
+<span class="nc" id="L870">                                             BytesBuffer.wrap(buffer.bytes()).readEdgeId()));</span>
+
+<span class="nc bnc" id="L872" title="All 2 branches missed.">        for (BackendColumn col : originEntry.columns()) {</span>
+<span class="nc" id="L873">            parsedEntry.column(buffer.bytes(), col.value);</span>
+<span class="nc" id="L874">        }</span>
+<span class="nc" id="L875">        return parsedEntry;</span>
+    }
+
+    private static Query prefixQuery(ConditionQuery query, Id prefix) {
+        Query newQuery;
+<span class="nc bnc" id="L880" title="All 4 branches missed.">        if (query.paging() &amp;&amp; !query.page().isEmpty()) {</span>
+            /*
+             * If used paging and the page number is not empty, deserialize
+             * the page to id and use it as the starting row for this query
+             */
+<span class="nc" id="L885">            byte[] position = PageState.fromString(query.page()).position();</span>
+<span class="nc bnc" id="L886" title="All 2 branches missed.">            E.checkArgument(Bytes.compare(position, prefix.asBytes()) &gt;= 0,</span>
+                            &quot;Invalid page out of lower bound&quot;);
+<span class="nc" id="L888">            BinaryId start = new BinaryId(position, null);</span>
+<span class="nc" id="L889">            newQuery = new IdPrefixQuery(query, start, prefix);</span>
+<span class="nc" id="L890">        } else {</span>
+<span class="nc" id="L891">            newQuery = new IdPrefixQuery(query, prefix);</span>
+        }
+<span class="nc" id="L893">        return newQuery;</span>
+    }
+
+    protected static BinaryId formatIndexId(HugeType type, Id indexLabel,
+                                            Object fieldValues,
+                                            boolean equal) {
+<span class="nc bnc" id="L899" title="All 4 branches missed.">        boolean withEnding = type.isRangeIndex() || equal;</span>
+<span class="nc" id="L900">        Id id = HugeIndex.formatIndexId(type, indexLabel, fieldValues);</span>
+<span class="nc bnc" id="L901" title="All 4 branches missed.">        if (!type.isNumericIndex() &amp;&amp; indexIdLengthExceedLimit(id)) {</span>
+<span class="nc" id="L902">            id = HugeIndex.formatIndexHashId(type, indexLabel, fieldValues);</span>
+        }
+<span class="nc" id="L904">        BytesBuffer buffer = BytesBuffer.allocate(1 + id.length());</span>
+<span class="nc" id="L905">        byte[] idBytes = buffer.writeIndexId(id, type, withEnding).bytes();</span>
+<span class="nc" id="L906">        return new BinaryId(idBytes, id);</span>
+    }
+
+    protected static boolean indexIdLengthExceedLimit(Id id) {
+<span class="nc bnc" id="L910" title="All 2 branches missed.">        return id.asBytes().length &gt; BytesBuffer.INDEX_HASH_ID_THRESHOLD;</span>
+    }
+
+    protected static boolean indexFieldValuesUnmatched(byte[] value,
+                                                       Object fieldValues) {
+<span class="nc bnc" id="L915" title="All 6 branches missed.">        if (value != null &amp;&amp; value.length &gt; 0 &amp;&amp; fieldValues != null) {</span>
+<span class="nc bnc" id="L916" title="All 2 branches missed.">            if (!StringEncoding.decode(value).equals(fieldValues)) {</span>
+<span class="nc" id="L917">                return true;</span>
+            }
+        }
+<span class="nc" id="L920">        return false;</span>
+    }
+
+    public static void increaseOne(byte[] bytes) {
+<span class="nc" id="L924">        final byte BYTE_MAX_VALUE = (byte) 0xff;</span>
+<span class="nc" id="L925">        final byte INCREASE_STEP = 0x01;</span>
+<span class="nc bnc" id="L926" title="All 2 branches missed.">        assert bytes.length &gt; 0;</span>
+<span class="nc" id="L927">        byte last = bytes[bytes.length - 1];</span>
+<span class="nc bnc" id="L928" title="All 2 branches missed.">        if (last != BYTE_MAX_VALUE) {</span>
+<span class="nc" id="L929">            bytes[bytes.length - 1] += INCREASE_STEP;</span>
+        } else {
+            // Process overflow (like [1, 255] =&gt; [2, 0])
+<span class="nc" id="L932">            int i = bytes.length - 1;</span>
+<span class="nc bnc" id="L933" title="All 4 branches missed.">            for (; i &gt; 0 &amp;&amp; bytes[i] == BYTE_MAX_VALUE; --i) {</span>
+<span class="nc" id="L934">                bytes[i] += INCREASE_STEP;</span>
+            }
+<span class="nc bnc" id="L936" title="All 2 branches missed.">            if (bytes[i] == BYTE_MAX_VALUE) {</span>
+<span class="nc bnc" id="L937" title="All 2 branches missed.">                assert i == 0;</span>
+<span class="nc" id="L938">                throw new BackendException(&quot;Unable to increase bytes: %s&quot;,</span>
+<span class="nc" id="L939">                                           Bytes.toHex(bytes));</span>
+            }
+<span class="nc" id="L941">            bytes[i] += INCREASE_STEP;</span>
+        }
+<span class="nc" id="L943">    }</span>
+
+    @Override
+    public BackendEntry writeVertexLabel(VertexLabel vertexLabel) {
+<span class="nc" id="L947">        SchemaSerializer serializer = new SchemaSerializer();</span>
+<span class="nc" id="L948">        return serializer.writeVertexLabel(vertexLabel);</span>
+    }
+
+    @Override
+    public VertexLabel readVertexLabel(HugeGraph graph,
+                                       BackendEntry backendEntry) {
+<span class="nc bnc" id="L954" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L955">            return null;</span>
+        }
+<span class="nc" id="L957">        BinaryBackendEntry entry = this.convertEntry(backendEntry);</span>
+
+<span class="nc" id="L959">        SchemaSerializer serializer = new SchemaSerializer();</span>
+<span class="nc" id="L960">        return serializer.readVertexLabel(graph, entry);</span>
+    }
+
+    @Override
+    public BackendEntry writeEdgeLabel(EdgeLabel edgeLabel) {
+<span class="nc" id="L965">        SchemaSerializer serializer = new SchemaSerializer();</span>
+<span class="nc" id="L966">        return serializer.writeEdgeLabel(edgeLabel);</span>
+    }
+
+    @Override
+    public EdgeLabel readEdgeLabel(HugeGraph graph, BackendEntry backendEntry) {
+<span class="nc bnc" id="L971" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L972">            return null;</span>
+        }
+<span class="nc" id="L974">        BinaryBackendEntry entry = this.convertEntry(backendEntry);</span>
+
+<span class="nc" id="L976">        SchemaSerializer serializer = new SchemaSerializer();</span>
+<span class="nc" id="L977">        return serializer.readEdgeLabel(graph, entry);</span>
+    }
+
+    @Override
+    public BackendEntry writePropertyKey(PropertyKey propertyKey) {
+<span class="nc" id="L982">        SchemaSerializer serializer = new SchemaSerializer();</span>
+<span class="nc" id="L983">        return serializer.writePropertyKey(propertyKey);</span>
+    }
+
+    @Override
+    public PropertyKey readPropertyKey(HugeGraph graph,
+                                       BackendEntry backendEntry) {
+<span class="nc bnc" id="L989" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L990">            return null;</span>
+        }
+<span class="nc" id="L992">        BinaryBackendEntry entry = this.convertEntry(backendEntry);</span>
+
+<span class="nc" id="L994">        SchemaSerializer serializer = new SchemaSerializer();</span>
+<span class="nc" id="L995">        return serializer.readPropertyKey(graph, entry);</span>
+    }
+
+    @Override
+    public BackendEntry writeIndexLabel(IndexLabel indexLabel) {
+<span class="nc" id="L1000">        SchemaSerializer serializer = new SchemaSerializer();</span>
+<span class="nc" id="L1001">        return serializer.writeIndexLabel(indexLabel);</span>
+    }
+
+    @Override
+    public IndexLabel readIndexLabel(HugeGraph graph,
+                                     BackendEntry backendEntry) {
+<span class="nc bnc" id="L1007" title="All 2 branches missed.">        if (backendEntry == null) {</span>
+<span class="nc" id="L1008">            return null;</span>
+        }
+<span class="nc" id="L1010">        BinaryBackendEntry entry = this.convertEntry(backendEntry);</span>
+
+<span class="nc" id="L1012">        SchemaSerializer serializer = new SchemaSerializer();</span>
+<span class="nc" id="L1013">        return serializer.readIndexLabel(graph, entry);</span>
+    }
+
+<span class="nc" id="L1016">    private final class SchemaSerializer {</span>
+
+        private BinaryBackendEntry entry;
+
+        public BinaryBackendEntry writeVertexLabel(VertexLabel schema) {
+<span class="nc" id="L1021">            this.entry = newBackendEntry(schema);</span>
+<span class="nc" id="L1022">            writeString(HugeKeys.NAME, schema.name());</span>
+<span class="nc" id="L1023">            writeEnum(HugeKeys.ID_STRATEGY, schema.idStrategy());</span>
+<span class="nc" id="L1024">            writeIds(HugeKeys.PROPERTIES, schema.properties());</span>
+<span class="nc" id="L1025">            writeIds(HugeKeys.PRIMARY_KEYS, schema.primaryKeys());</span>
+<span class="nc" id="L1026">            writeIds(HugeKeys.NULLABLE_KEYS, schema.nullableKeys());</span>
+<span class="nc" id="L1027">            writeIds(HugeKeys.INDEX_LABELS, schema.indexLabels());</span>
+<span class="nc" id="L1028">            writeBool(HugeKeys.ENABLE_LABEL_INDEX, schema.enableLabelIndex());</span>
+<span class="nc" id="L1029">            writeEnum(HugeKeys.STATUS, schema.status());</span>
+<span class="nc" id="L1030">            writeLong(HugeKeys.TTL, schema.ttl());</span>
+<span class="nc" id="L1031">            writeId(HugeKeys.TTL_START_TIME, schema.ttlStartTime());</span>
+<span class="nc" id="L1032">            writeUserdata(schema);</span>
+<span class="nc" id="L1033">            return this.entry;</span>
+        }
+
+        public VertexLabel readVertexLabel(HugeGraph graph,
+                                           BinaryBackendEntry entry) {
+<span class="nc" id="L1038">            E.checkNotNull(entry, &quot;entry&quot;);</span>
+<span class="nc" id="L1039">            this.entry = entry;</span>
+<span class="nc" id="L1040">            Id id = entry.id().origin();</span>
+<span class="nc" id="L1041">            String name = readString(HugeKeys.NAME);</span>
+
+<span class="nc" id="L1043">            VertexLabel vertexLabel = new VertexLabel(graph, id, name);</span>
+<span class="nc" id="L1044">            vertexLabel.idStrategy(readEnum(HugeKeys.ID_STRATEGY,</span>
+                                            IdStrategy.class));
+<span class="nc" id="L1046">            vertexLabel.properties(readIds(HugeKeys.PROPERTIES));</span>
+<span class="nc" id="L1047">            vertexLabel.primaryKeys(readIds(HugeKeys.PRIMARY_KEYS));</span>
+<span class="nc" id="L1048">            vertexLabel.nullableKeys(readIds(HugeKeys.NULLABLE_KEYS));</span>
+<span class="nc" id="L1049">            vertexLabel.addIndexLabels(readIds(HugeKeys.INDEX_LABELS));</span>
+<span class="nc" id="L1050">            vertexLabel.enableLabelIndex(readBool(HugeKeys.ENABLE_LABEL_INDEX));</span>
+<span class="nc" id="L1051">            vertexLabel.status(readEnum(HugeKeys.STATUS, SchemaStatus.class));</span>
+<span class="nc" id="L1052">            vertexLabel.ttl(readLong(HugeKeys.TTL));</span>
+<span class="nc" id="L1053">            vertexLabel.ttlStartTime(readId(HugeKeys.TTL_START_TIME));</span>
+<span class="nc" id="L1054">            readUserdata(vertexLabel);</span>
+<span class="nc" id="L1055">            return vertexLabel;</span>
+        }
+
+        public BinaryBackendEntry writeEdgeLabel(EdgeLabel schema) {
+<span class="nc" id="L1059">            this.entry = newBackendEntry(schema);</span>
+<span class="nc" id="L1060">            writeString(HugeKeys.NAME, schema.name());</span>
+<span class="nc" id="L1061">            writeId(HugeKeys.SOURCE_LABEL, schema.sourceLabel());</span>
+<span class="nc" id="L1062">            writeId(HugeKeys.TARGET_LABEL, schema.targetLabel());</span>
+<span class="nc" id="L1063">            writeEnum(HugeKeys.FREQUENCY, schema.frequency());</span>
+<span class="nc" id="L1064">            writeIds(HugeKeys.PROPERTIES, schema.properties());</span>
+<span class="nc" id="L1065">            writeIds(HugeKeys.SORT_KEYS, schema.sortKeys());</span>
+<span class="nc" id="L1066">            writeIds(HugeKeys.NULLABLE_KEYS, schema.nullableKeys());</span>
+<span class="nc" id="L1067">            writeIds(HugeKeys.INDEX_LABELS, schema.indexLabels());</span>
+<span class="nc" id="L1068">            writeBool(HugeKeys.ENABLE_LABEL_INDEX, schema.enableLabelIndex());</span>
+<span class="nc" id="L1069">            writeEnum(HugeKeys.STATUS, schema.status());</span>
+<span class="nc" id="L1070">            writeLong(HugeKeys.TTL, schema.ttl());</span>
+<span class="nc" id="L1071">            writeId(HugeKeys.TTL_START_TIME, schema.ttlStartTime());</span>
+<span class="nc" id="L1072">            writeUserdata(schema);</span>
+<span class="nc" id="L1073">            return this.entry;</span>
+        }
+
+        public EdgeLabel readEdgeLabel(HugeGraph graph,
+                                       BinaryBackendEntry entry) {
+<span class="nc" id="L1078">            E.checkNotNull(entry, &quot;entry&quot;);</span>
+<span class="nc" id="L1079">            this.entry = entry;</span>
+<span class="nc" id="L1080">            Id id = entry.id().origin();</span>
+<span class="nc" id="L1081">            String name = readString(HugeKeys.NAME);</span>
+
+<span class="nc" id="L1083">            EdgeLabel edgeLabel = new EdgeLabel(graph, id, name);</span>
+<span class="nc" id="L1084">            edgeLabel.sourceLabel(readId(HugeKeys.SOURCE_LABEL));</span>
+<span class="nc" id="L1085">            edgeLabel.targetLabel(readId(HugeKeys.TARGET_LABEL));</span>
+<span class="nc" id="L1086">            edgeLabel.frequency(readEnum(HugeKeys.FREQUENCY, Frequency.class));</span>
+<span class="nc" id="L1087">            edgeLabel.properties(readIds(HugeKeys.PROPERTIES));</span>
+<span class="nc" id="L1088">            edgeLabel.sortKeys(readIds(HugeKeys.SORT_KEYS));</span>
+<span class="nc" id="L1089">            edgeLabel.nullableKeys(readIds(HugeKeys.NULLABLE_KEYS));</span>
+<span class="nc" id="L1090">            edgeLabel.addIndexLabels(readIds(HugeKeys.INDEX_LABELS));</span>
+<span class="nc" id="L1091">            edgeLabel.enableLabelIndex(readBool(HugeKeys.ENABLE_LABEL_INDEX));</span>
+<span class="nc" id="L1092">            edgeLabel.status(readEnum(HugeKeys.STATUS, SchemaStatus.class));</span>
+<span class="nc" id="L1093">            edgeLabel.ttl(readLong(HugeKeys.TTL));</span>
+<span class="nc" id="L1094">            edgeLabel.ttlStartTime(readId(HugeKeys.TTL_START_TIME));</span>
+<span class="nc" id="L1095">            readUserdata(edgeLabel);</span>
+<span class="nc" id="L1096">            return edgeLabel;</span>
+        }
+
+        public BinaryBackendEntry writePropertyKey(PropertyKey schema) {
+<span class="nc" id="L1100">            this.entry = newBackendEntry(schema);</span>
+<span class="nc" id="L1101">            writeString(HugeKeys.NAME, schema.name());</span>
+<span class="nc" id="L1102">            writeEnum(HugeKeys.DATA_TYPE, schema.dataType());</span>
+<span class="nc" id="L1103">            writeEnum(HugeKeys.CARDINALITY, schema.cardinality());</span>
+<span class="nc" id="L1104">            writeEnum(HugeKeys.AGGREGATE_TYPE, schema.aggregateType());</span>
+<span class="nc" id="L1105">            writeEnum(HugeKeys.WRITE_TYPE, schema.writeType());</span>
+<span class="nc" id="L1106">            writeIds(HugeKeys.PROPERTIES, schema.properties());</span>
+<span class="nc" id="L1107">            writeEnum(HugeKeys.STATUS, schema.status());</span>
+<span class="nc" id="L1108">            writeUserdata(schema);</span>
+<span class="nc" id="L1109">            return this.entry;</span>
+        }
+
+        public PropertyKey readPropertyKey(HugeGraph graph,
+                                           BinaryBackendEntry entry) {
+<span class="nc" id="L1114">            E.checkNotNull(entry, &quot;entry&quot;);</span>
+<span class="nc" id="L1115">            this.entry = entry;</span>
+<span class="nc" id="L1116">            Id id = entry.id().origin();</span>
+<span class="nc" id="L1117">            String name = readString(HugeKeys.NAME);</span>
+
+<span class="nc" id="L1119">            PropertyKey propertyKey = new PropertyKey(graph, id, name);</span>
+<span class="nc" id="L1120">            propertyKey.dataType(readEnum(HugeKeys.DATA_TYPE, DataType.class));</span>
+<span class="nc" id="L1121">            propertyKey.cardinality(readEnum(HugeKeys.CARDINALITY,</span>
+                                             Cardinality.class));
+<span class="nc" id="L1123">            propertyKey.aggregateType(readEnum(HugeKeys.AGGREGATE_TYPE,</span>
+                                               AggregateType.class));
+<span class="nc" id="L1125">            propertyKey.writeType(readEnumOrDefault(HugeKeys.WRITE_TYPE,</span>
+                                                    WriteType.class,
+                                                    WriteType.OLTP));
+<span class="nc" id="L1128">            propertyKey.properties(readIds(HugeKeys.PROPERTIES));</span>
+<span class="nc" id="L1129">            propertyKey.status(readEnum(HugeKeys.STATUS, SchemaStatus.class));</span>
+<span class="nc" id="L1130">            readUserdata(propertyKey);</span>
+<span class="nc" id="L1131">            return propertyKey;</span>
+        }
+
+        public BinaryBackendEntry writeIndexLabel(IndexLabel schema) {
+<span class="nc" id="L1135">            this.entry = newBackendEntry(schema);</span>
+<span class="nc" id="L1136">            writeString(HugeKeys.NAME, schema.name());</span>
+<span class="nc" id="L1137">            writeEnum(HugeKeys.BASE_TYPE, schema.baseType());</span>
+<span class="nc" id="L1138">            writeId(HugeKeys.BASE_VALUE, schema.baseValue());</span>
+<span class="nc" id="L1139">            writeEnum(HugeKeys.INDEX_TYPE, schema.indexType());</span>
+<span class="nc" id="L1140">            writeIds(HugeKeys.FIELDS, schema.indexFields());</span>
+<span class="nc" id="L1141">            writeEnum(HugeKeys.STATUS, schema.status());</span>
+<span class="nc" id="L1142">            writeUserdata(schema);</span>
+<span class="nc" id="L1143">            return this.entry;</span>
+        }
+
+        public IndexLabel readIndexLabel(HugeGraph graph,
+                                         BinaryBackendEntry entry) {
+<span class="nc" id="L1148">            E.checkNotNull(entry, &quot;entry&quot;);</span>
+<span class="nc" id="L1149">            this.entry = entry;</span>
+<span class="nc" id="L1150">            Id id = entry.id().origin();</span>
+<span class="nc" id="L1151">            String name = readString(HugeKeys.NAME);</span>
+
+<span class="nc" id="L1153">            IndexLabel indexLabel = new IndexLabel(graph, id, name);</span>
+<span class="nc" id="L1154">            indexLabel.baseType(readEnum(HugeKeys.BASE_TYPE, HugeType.class));</span>
+<span class="nc" id="L1155">            indexLabel.baseValue(readId(HugeKeys.BASE_VALUE));</span>
+<span class="nc" id="L1156">            indexLabel.indexType(readEnum(HugeKeys.INDEX_TYPE,</span>
+                                          IndexType.class));
+<span class="nc" id="L1158">            indexLabel.indexFields(readIds(HugeKeys.FIELDS));</span>
+<span class="nc" id="L1159">            indexLabel.status(readEnum(HugeKeys.STATUS, SchemaStatus.class));</span>
+<span class="nc" id="L1160">            readUserdata(indexLabel);</span>
+<span class="nc" id="L1161">            return indexLabel;</span>
+        }
+
+        private void writeUserdata(SchemaElement schema) {
+<span class="nc" id="L1165">            String userdataStr = JsonUtil.toJson(schema.userdata());</span>
+<span class="nc" id="L1166">            writeString(HugeKeys.USER_DATA, userdataStr);</span>
+<span class="nc" id="L1167">        }</span>
+
+        private void readUserdata(SchemaElement schema) {
+            // Parse all user data of a schema element
+<span class="nc" id="L1171">            byte[] userdataBytes = column(HugeKeys.USER_DATA);</span>
+<span class="nc" id="L1172">            String userdataStr = StringEncoding.decode(userdataBytes);</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L1174">            Map&lt;String, Object&gt; userdata = JsonUtil.fromJson(userdataStr,</span>
+                                                             Map.class);
+<span class="nc bnc" id="L1176" title="All 2 branches missed.">            for (Map.Entry&lt;String, Object&gt; e : userdata.entrySet()) {</span>
+<span class="nc" id="L1177">                schema.userdata(e.getKey(), e.getValue());</span>
+<span class="nc" id="L1178">            }</span>
+<span class="nc" id="L1179">        }</span>
+
+        private void writeString(HugeKeys key, String value) {
+<span class="nc" id="L1182">            this.entry.column(formatColumnName(key),</span>
+<span class="nc" id="L1183">                              StringEncoding.encode(value));</span>
+<span class="nc" id="L1184">        }</span>
+
+        private String readString(HugeKeys key) {
+<span class="nc" id="L1187">            return StringEncoding.decode(column(key));</span>
+        }
+
+        private void writeEnum(HugeKeys key, SerialEnum value) {
+<span class="nc" id="L1191">            this.entry.column(formatColumnName(key), new byte[]{value.code()});</span>
+<span class="nc" id="L1192">        }</span>
+
+        private &lt;T extends SerialEnum&gt; T readEnum(HugeKeys key,
+                                                  Class&lt;T&gt; clazz) {
+<span class="nc" id="L1196">            byte[] value = column(key);</span>
+<span class="nc bnc" id="L1197" title="All 2 branches missed.">            E.checkState(value.length == 1,</span>
+                         &quot;The length of column '%s' must be 1, but is '%s'&quot;,
+<span class="nc" id="L1199">                         key, value.length);</span>
+<span class="nc" id="L1200">            return SerialEnum.fromCode(clazz, value[0]);</span>
+        }
+
+        private &lt;T extends SerialEnum&gt; T readEnumOrDefault(HugeKeys key,
+                                                           Class&lt;T&gt; clazz,
+                                                           T defaultValue) {
+<span class="nc" id="L1206">            BackendColumn column = this.entry.column(formatColumnName(key));</span>
+<span class="nc bnc" id="L1207" title="All 2 branches missed.">            if (column == null) {</span>
+<span class="nc" id="L1208">                return defaultValue;</span>
+            }
+<span class="nc" id="L1210">            E.checkNotNull(column.value, &quot;column.value&quot;);</span>
+<span class="nc" id="L1211">            return SerialEnum.fromCode(clazz, column.value[0]);</span>
+        }
+
+        private void writeLong(HugeKeys key, long value) {
+            @SuppressWarnings(&quot;resource&quot;)
+<span class="nc" id="L1216">            BytesBuffer buffer = new BytesBuffer(8);</span>
+<span class="nc" id="L1217">            buffer.writeVLong(value);</span>
+<span class="nc" id="L1218">            this.entry.column(formatColumnName(key), buffer.bytes());</span>
+<span class="nc" id="L1219">        }</span>
+
+        private long readLong(HugeKeys key) {
+<span class="nc" id="L1222">            byte[] value = column(key);</span>
+<span class="nc" id="L1223">            BytesBuffer buffer = BytesBuffer.wrap(value);</span>
+<span class="nc" id="L1224">            return buffer.readVLong();</span>
+        }
+
+        private void writeId(HugeKeys key, Id value) {
+<span class="nc" id="L1228">            this.entry.column(formatColumnName(key), writeId(value));</span>
+<span class="nc" id="L1229">        }</span>
+
+        private Id readId(HugeKeys key) {
+<span class="nc" id="L1232">            return readId(column(key));</span>
+        }
+
+        private void writeIds(HugeKeys key, Collection&lt;Id&gt; value) {
+<span class="nc" id="L1236">            this.entry.column(formatColumnName(key), writeIds(value));</span>
+<span class="nc" id="L1237">        }</span>
+
+        private Id[] readIds(HugeKeys key) {
+<span class="nc" id="L1240">            return readIds(column(key));</span>
+        }
+
+        private void writeBool(HugeKeys key, boolean value) {
+<span class="nc" id="L1244">            this.entry.column(formatColumnName(key),</span>
+<span class="nc bnc" id="L1245" title="All 2 branches missed.">                              new byte[]{(byte) (value ? 1 : 0)});</span>
+<span class="nc" id="L1246">        }</span>
+
+        private boolean readBool(HugeKeys key) {
+<span class="nc" id="L1249">            byte[] value = column(key);</span>
+<span class="nc bnc" id="L1250" title="All 2 branches missed.">            E.checkState(value.length == 1,</span>
+                         &quot;The length of column '%s' must be 1, but is '%s'&quot;,
+<span class="nc" id="L1252">                         key, value.length);</span>
+<span class="nc bnc" id="L1253" title="All 2 branches missed.">            return value[0] != (byte) 0;</span>
+        }
+
+        private byte[] writeId(Id id) {
+<span class="nc" id="L1257">            int size = 1 + id.length();</span>
+<span class="nc" id="L1258">            BytesBuffer buffer = BytesBuffer.allocate(size);</span>
+<span class="nc" id="L1259">            buffer.writeId(id);</span>
+<span class="nc" id="L1260">            return buffer.bytes();</span>
+        }
+
+        private Id readId(byte[] value) {
+<span class="nc" id="L1264">            BytesBuffer buffer = BytesBuffer.wrap(value);</span>
+<span class="nc" id="L1265">            return buffer.readId();</span>
+        }
+
+        private byte[] writeIds(Collection&lt;Id&gt; ids) {
+<span class="nc bnc" id="L1269" title="All 2 branches missed.">            E.checkState(ids.size() &lt;= BytesBuffer.UINT16_MAX,</span>
+                         &quot;The number of properties of vertex/edge label &quot; +
+<span class="nc" id="L1271">                         &quot;can't exceed '%s'&quot;, BytesBuffer.UINT16_MAX);</span>
+<span class="nc" id="L1272">            int size = 2;</span>
+<span class="nc bnc" id="L1273" title="All 2 branches missed.">            for (Id id : ids) {</span>
+<span class="nc" id="L1274">                size += (1 + id.length());</span>
+<span class="nc" id="L1275">            }</span>
+<span class="nc" id="L1276">            BytesBuffer buffer = BytesBuffer.allocate(size);</span>
+<span class="nc" id="L1277">            buffer.writeUInt16(ids.size());</span>
+<span class="nc bnc" id="L1278" title="All 2 branches missed.">            for (Id id : ids) {</span>
+<span class="nc" id="L1279">                buffer.writeId(id);</span>
+<span class="nc" id="L1280">            }</span>
+<span class="nc" id="L1281">            return buffer.bytes();</span>
+        }
+
+        private Id[] readIds(byte[] value) {
+<span class="nc" id="L1285">            BytesBuffer buffer = BytesBuffer.wrap(value);</span>
+<span class="nc" id="L1286">            int size = buffer.readUInt16();</span>
+<span class="nc" id="L1287">            Id[] ids = new Id[size];</span>
+<span class="nc bnc" id="L1288" title="All 2 branches missed.">            for (int i = 0; i &lt; size; i++) {</span>
+<span class="nc" id="L1289">                Id id = buffer.readId();</span>
+<span class="nc" id="L1290">                ids[i] = id;</span>
+            }
+<span class="nc" id="L1292">            return ids;</span>
+        }
+
+        private byte[] column(HugeKeys key) {
+<span class="nc" id="L1296">            BackendColumn column = this.entry.column(formatColumnName(key));</span>
+<span class="nc bnc" id="L1297" title="All 2 branches missed.">            E.checkState(column != null, &quot;Not found key '%s' from entry %s&quot;,</span>
+                         key, this.entry);
+<span class="nc" id="L1299">            E.checkNotNull(column.value, &quot;column.value&quot;);</span>
+<span class="nc" id="L1300">            return column.value;</span>
+        }
+
+        private byte[] formatColumnName(HugeKeys key) {
+<span class="nc" id="L1304">            Id id = this.entry.id().origin();</span>
+<span class="nc" id="L1305">            int size = 1 + id.length() + 1;</span>
+<span class="nc" id="L1306">            BytesBuffer buffer = BytesBuffer.allocate(size);</span>
+<span class="nc" id="L1307">            buffer.writeId(id);</span>
+<span class="nc" id="L1308">            buffer.write(key.code());</span>
+<span class="nc" id="L1309">            return buffer.bytes();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>JobCounters.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.system</a> &gt; <span class="el_source">JobCounters.java</span></div><h1>JobCounters.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.system;
+
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeIndex;
+
+<span class="nc" id="L29">public class JobCounters {</span>
+
+<span class="nc" id="L31">    private final ConcurrentHashMap&lt;String, JobCounter&gt; jobCounters = new ConcurrentHashMap&lt;&gt;();</span>
+
+    public JobCounter jobCounter(HugeGraph g) {
+<span class="nc" id="L34">        int batch = g.option(CoreOptions.TASK_TTL_DELETE_BATCH);</span>
+<span class="nc" id="L35">        String graph = g.name();</span>
+<span class="nc bnc" id="L36" title="All 2 branches missed.">        if (!this.jobCounters.containsKey(graph)) {</span>
+<span class="nc" id="L37">            this.jobCounters.putIfAbsent(graph, new JobCounter(batch));</span>
+        }
+<span class="nc" id="L39">        return this.jobCounters.get(graph);</span>
+    }
+
+<span class="nc" id="L42">    public static class JobCounter {</span>
+
+        private final AtomicInteger jobs;
+        private Set&lt;HugeElement&gt; elements;
+        private Set&lt;HugeIndex&gt; indexes;
+        private final int batchSize;
+
+<span class="nc" id="L49">        public JobCounter(int batchSize) {</span>
+<span class="nc" id="L50">            this.jobs = new AtomicInteger(0);</span>
+<span class="nc" id="L51">            this.elements = ConcurrentHashMap.newKeySet();</span>
+<span class="nc" id="L52">            this.indexes = ConcurrentHashMap.newKeySet();</span>
+<span class="nc" id="L53">            this.batchSize = batchSize;</span>
+<span class="nc" id="L54">        }</span>
+
+        public int jobs() {
+<span class="nc" id="L57">            return this.jobs.get();</span>
+        }
+
+        public void decrement() {
+<span class="nc" id="L61">            this.jobs.decrementAndGet();</span>
+<span class="nc" id="L62">        }</span>
+
+        public void increment() {
+<span class="nc" id="L65">            this.jobs.incrementAndGet();</span>
+<span class="nc" id="L66">        }</span>
+
+        public Set&lt;HugeElement&gt; elements() {
+<span class="nc" id="L69">            return this.elements;</span>
+        }
+
+        public Set&lt;HugeIndex&gt; indexes() {
+<span class="nc" id="L73">            return this.indexes;</span>
+        }
+
+        public void clear(Object object) {
+<span class="nc bnc" id="L77" title="All 2 branches missed.">            if (object instanceof HugeElement) {</span>
+<span class="nc" id="L78">                this.elements = ConcurrentHashMap.newKeySet();</span>
+            } else {
+<span class="nc bnc" id="L80" title="All 2 branches missed.">                assert object instanceof HugeIndex;</span>
+<span class="nc" id="L81">                this.indexes = ConcurrentHashMap.newKeySet();</span>
+            }
+<span class="nc" id="L83">        }</span>
+
+        public boolean addAndTriggerDelete(Object object) {
+<span class="nc bnc" id="L86" title="All 2 branches missed.">            return object instanceof HugeElement ?</span>
+<span class="nc" id="L87">                   addElementAndTriggerDelete((HugeElement) object) :</span>
+<span class="nc" id="L88">                   addIndexAndTriggerDelete((HugeIndex) object);</span>
+        }
+
+        /**
+         * Try to add element in collection waiting to be deleted
+         * @param element
+         * @return true if we should create a new delete job, false otherwise
+         */
+        public boolean addElementAndTriggerDelete(HugeElement element) {
+<span class="nc bnc" id="L97" title="All 2 branches missed.">            if (this.elements.size() &gt;= this.batchSize) {</span>
+<span class="nc" id="L98">                return true;</span>
+            }
+<span class="nc" id="L100">            this.elements.add(element);</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            return this.elements.size() &gt;= this.batchSize;</span>
+        }
+
+        /**
+         * Try to add edge in collection waiting to be deleted
+         * @param index
+         * @return true if we should create a new delete job, false otherwise
+         */
+        public boolean addIndexAndTriggerDelete(HugeIndex index) {
+<span class="nc bnc" id="L110" title="All 2 branches missed.">            if (this.indexes.size() &gt;= this.batchSize) {</span>
+<span class="nc" id="L111">                return true;</span>
+            }
+<span class="nc" id="L113">            this.indexes.add(index);</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            return this.indexes.size() &gt;= this.batchSize;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

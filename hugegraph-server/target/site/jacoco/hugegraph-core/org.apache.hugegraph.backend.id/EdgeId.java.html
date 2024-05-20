@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EdgeId.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.id</a> &gt; <span class="el_source">EdgeId.java</span></div><h1>EdgeId.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.id;
+
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.StringEncoding;
+
+/**
+ * Class used to format and parse id of edge, the edge id consists of:
+ * { source-vertex-id + edge-label + edge-name + target-vertex-id }
+ * NOTE: if we use `entry.type()` which is IN or OUT as a part of id,
+ * an edge's id will be different due to different directions (belongs
+ * to 2 owner vertex)
+ */
+public class EdgeId implements Id {
+
+<span class="nc" id="L38">    public static final HugeKeys[] KEYS = new HugeKeys[] {</span>
+        HugeKeys.OWNER_VERTEX,
+        HugeKeys.DIRECTION,
+        HugeKeys.LABEL,
+        HugeKeys.SORT_VALUES,
+        HugeKeys.OTHER_VERTEX
+    };
+
+    private final Id ownerVertexId;
+    private final Directions direction;
+    private final Id edgeLabelId;
+    private final String sortValues;
+    private final Id otherVertexId;
+
+    private final boolean directed;
+    private String cache;
+
+    public EdgeId(HugeVertex ownerVertex, Directions direction,
+                  Id edgeLabelId, String sortValues, HugeVertex otherVertex) {
+<span class="nc" id="L57">        this(ownerVertex.id(), direction, edgeLabelId,</span>
+<span class="nc" id="L58">             sortValues, otherVertex.id());</span>
+<span class="nc" id="L59">    }</span>
+
+    public EdgeId(Id ownerVertexId, Directions direction, Id edgeLabelId,
+                  String sortValues, Id otherVertexId) {
+<span class="nc" id="L63">        this(ownerVertexId, direction, edgeLabelId,</span>
+             sortValues, otherVertexId, false);
+<span class="nc" id="L65">    }</span>
+
+    public EdgeId(Id ownerVertexId, Directions direction, Id edgeLabelId,
+<span class="nc" id="L68">                  String sortValues, Id otherVertexId, boolean directed) {</span>
+<span class="nc" id="L69">        this.ownerVertexId = ownerVertexId;</span>
+<span class="nc" id="L70">        this.direction = direction;</span>
+<span class="nc" id="L71">        this.edgeLabelId = edgeLabelId;</span>
+<span class="nc" id="L72">        this.sortValues = sortValues;</span>
+<span class="nc" id="L73">        this.otherVertexId = otherVertexId;</span>
+<span class="nc" id="L74">        this.directed = directed;</span>
+<span class="nc" id="L75">        this.cache = null;</span>
+<span class="nc" id="L76">    }</span>
+
+    @Watched
+    public EdgeId switchDirection() {
+<span class="nc" id="L80">        Directions direction = this.direction.opposite();</span>
+<span class="nc" id="L81">        return new EdgeId(this.otherVertexId, direction, this.edgeLabelId,</span>
+                          this.sortValues, this.ownerVertexId, this.directed);
+    }
+
+    public EdgeId directed(boolean directed) {
+<span class="nc" id="L86">        return new EdgeId(this.ownerVertexId, this.direction, this.edgeLabelId,</span>
+                          this.sortValues, this.otherVertexId, directed);
+    }
+
+    private Id sourceVertexId() {
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        return this.direction == Directions.OUT ?</span>
+<span class="nc" id="L92">               this.ownerVertexId :</span>
+<span class="nc" id="L93">               this.otherVertexId;</span>
+    }
+
+    private Id targetVertexId() {
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        return this.direction == Directions.OUT ?</span>
+<span class="nc" id="L98">               this.otherVertexId :</span>
+<span class="nc" id="L99">               this.ownerVertexId;</span>
+    }
+
+    public Id ownerVertexId() {
+<span class="nc" id="L103">        return this.ownerVertexId;</span>
+    }
+
+    public Id edgeLabelId() {
+<span class="nc" id="L107">        return this.edgeLabelId;</span>
+    }
+
+    public Directions direction() {
+<span class="nc" id="L111">        return this.direction;</span>
+    }
+
+    public byte directionCode() {
+<span class="nc" id="L115">        return directionToCode(this.direction);</span>
+    }
+
+    public String sortValues() {
+<span class="nc" id="L119">        return this.sortValues;</span>
+    }
+
+    public Id otherVertexId() {
+<span class="nc" id="L123">        return this.otherVertexId;</span>
+    }
+
+    @Override
+    public Object asObject() {
+<span class="nc" id="L128">        return this.asString();</span>
+    }
+
+    @Override
+    public String asString() {
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (this.cache != null) {</span>
+<span class="nc" id="L134">            return this.cache;</span>
+        }
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        if (this.directed) {</span>
+<span class="nc" id="L137">            this.cache = SplicingIdGenerator.concat(</span>
+<span class="nc" id="L138">                         IdUtil.writeString(this.ownerVertexId),</span>
+<span class="nc" id="L139">                         this.direction.type().string(),</span>
+<span class="nc" id="L140">                         IdUtil.writeLong(this.edgeLabelId),</span>
+                         this.sortValues,
+<span class="nc" id="L142">                         IdUtil.writeString(this.otherVertexId));</span>
+        } else {
+<span class="nc" id="L144">            this.cache = SplicingIdGenerator.concat(</span>
+<span class="nc" id="L145">                         IdUtil.writeString(this.sourceVertexId()),</span>
+<span class="nc" id="L146">                         IdUtil.writeLong(this.edgeLabelId),</span>
+                         this.sortValues,
+<span class="nc" id="L148">                         IdUtil.writeString(this.targetVertexId()));</span>
+        }
+<span class="nc" id="L150">        return this.cache;</span>
+    }
+
+    @Override
+    public long asLong() {
+<span class="nc" id="L155">        throw new UnsupportedOperationException();</span>
+    }
+
+    @Override
+    public byte[] asBytes() {
+<span class="nc" id="L160">        return StringEncoding.encode(this.asString());</span>
+    }
+
+    @Override
+    public int length() {
+<span class="nc" id="L165">        return this.asString().length();</span>
+    }
+
+    @Override
+    public IdType type() {
+<span class="nc" id="L170">        return IdType.EDGE;</span>
+    }
+
+    @Override
+    public int compareTo(Id other) {
+<span class="nc" id="L175">        return this.asString().compareTo(other.asString());</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        if (this.directed) {</span>
+<span class="nc" id="L181">            return this.ownerVertexId.hashCode() ^</span>
+<span class="nc" id="L182">                   this.direction.hashCode() ^</span>
+<span class="nc" id="L183">                   this.edgeLabelId.hashCode() ^</span>
+<span class="nc" id="L184">                   this.sortValues.hashCode() ^</span>
+<span class="nc" id="L185">                   this.otherVertexId.hashCode();</span>
+        } else {
+<span class="nc" id="L187">            return this.sourceVertexId().hashCode() ^</span>
+<span class="nc" id="L188">                   this.edgeLabelId.hashCode() ^</span>
+<span class="nc" id="L189">                   this.sortValues.hashCode() ^</span>
+<span class="nc" id="L190">                   this.targetVertexId().hashCode();</span>
+        }
+    }
+
+    @Override
+    public boolean equals(Object object) {
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        if (!(object instanceof EdgeId)) {</span>
+<span class="nc" id="L197">            return false;</span>
+        }
+<span class="nc" id="L199">        EdgeId other = (EdgeId) object;</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        if (this.directed) {</span>
+<span class="nc bnc" id="L201" title="All 4 branches missed.">            return this.ownerVertexId.equals(other.ownerVertexId) &amp;&amp;</span>
+                   this.direction == other.direction &amp;&amp;
+<span class="nc bnc" id="L203" title="All 2 branches missed.">                   this.edgeLabelId.equals(other.edgeLabelId) &amp;&amp;</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">                   this.sortValues.equals(other.sortValues) &amp;&amp;</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">                   this.otherVertexId.equals(other.otherVertexId);</span>
+        } else {
+<span class="nc bnc" id="L207" title="All 2 branches missed.">            return this.sourceVertexId().equals(other.sourceVertexId()) &amp;&amp;</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">                   this.edgeLabelId.equals(other.edgeLabelId) &amp;&amp;</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">                   this.sortValues.equals(other.sortValues) &amp;&amp;</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">                   this.targetVertexId().equals(other.targetVertexId());</span>
+        }
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L216">        return this.asString();</span>
+    }
+
+    public static byte directionToCode(Directions direction) {
+<span class="nc" id="L220">        return direction.type().code();</span>
+    }
+
+    public static Directions directionFromCode(byte code) {
+<span class="nc" id="L224">        return Directions.convert(HugeType.fromCode(code));</span>
+    }
+
+    public static boolean isOutDirectionFromCode(byte code) {
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        return code == HugeType.EDGE_OUT.code();</span>
+    }
+
+    public static EdgeId parse(String id) throws NotFoundException {
+<span class="nc" id="L232">        return parse(id, false);</span>
+    }
+
+    public static EdgeId parse(String id, boolean returnNullIfError)
+                               throws NotFoundException {
+<span class="nc" id="L237">        String[] idParts = SplicingIdGenerator.split(id);</span>
+<span class="nc bnc" id="L238" title="All 4 branches missed.">        if (!(idParts.length == 4 || idParts.length == 5)) {</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">            if (returnNullIfError) {</span>
+<span class="nc" id="L240">                return null;</span>
+            }
+<span class="nc" id="L242">            throw new NotFoundException(&quot;Edge id must be formatted as 4~5 &quot; +</span>
+                                        &quot;parts, but got %s parts: '%s'&quot;,
+<span class="nc" id="L244">                                        idParts.length, id);</span>
+        }
+        try {
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            if (idParts.length == 4) {</span>
+<span class="nc" id="L248">                Id ownerVertexId = IdUtil.readString(idParts[0]);</span>
+<span class="nc" id="L249">                Id edgeLabelId = IdUtil.readLong(idParts[1]);</span>
+<span class="nc" id="L250">                String sortValues = idParts[2];</span>
+<span class="nc" id="L251">                Id otherVertexId = IdUtil.readString(idParts[3]);</span>
+<span class="nc" id="L252">                return new EdgeId(ownerVertexId, Directions.OUT, edgeLabelId,</span>
+                                  sortValues, otherVertexId);
+            } else {
+<span class="nc bnc" id="L255" title="All 2 branches missed.">                assert idParts.length == 5;</span>
+<span class="nc" id="L256">                Id ownerVertexId = IdUtil.readString(idParts[0]);</span>
+<span class="nc" id="L257">                HugeType direction = HugeType.fromString(idParts[1]);</span>
+<span class="nc" id="L258">                Id edgeLabelId = IdUtil.readLong(idParts[2]);</span>
+<span class="nc" id="L259">                String sortValues = idParts[3];</span>
+<span class="nc" id="L260">                Id otherVertexId = IdUtil.readString(idParts[4]);</span>
+<span class="nc" id="L261">                return new EdgeId(ownerVertexId, Directions.convert(direction),</span>
+                                  edgeLabelId, sortValues, otherVertexId);
+            }
+<span class="nc" id="L264">        } catch (Throwable e) {</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">            if (returnNullIfError) {</span>
+<span class="nc" id="L266">                return null;</span>
+            }
+<span class="nc" id="L268">            throw new NotFoundException(&quot;Invalid format of edge id '%s'&quot;,</span>
+                                        e, id);
+        }
+    }
+
+    public static Id parseStoredString(String id) {
+<span class="nc" id="L274">        String[] idParts = split(id);</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">        E.checkArgument(idParts.length == 4, &quot;Invalid id format: %s&quot;, id);</span>
+<span class="nc" id="L276">        Id ownerVertexId = IdUtil.readStoredString(idParts[0]);</span>
+<span class="nc" id="L277">        Id edgeLabelId = IdGenerator.ofStoredString(idParts[1], IdType.LONG);</span>
+<span class="nc" id="L278">        String sortValues = idParts[2];</span>
+<span class="nc" id="L279">        Id otherVertexId = IdUtil.readStoredString(idParts[3]);</span>
+<span class="nc" id="L280">        return new EdgeId(ownerVertexId, Directions.OUT, edgeLabelId,</span>
+                          sortValues, otherVertexId);
+    }
+
+    public static String asStoredString(Id id) {
+<span class="nc" id="L285">        EdgeId eid = (EdgeId) id;</span>
+<span class="nc" id="L286">        return SplicingIdGenerator.concat(</span>
+<span class="nc" id="L287">               IdUtil.writeStoredString(eid.sourceVertexId()),</span>
+<span class="nc" id="L288">               IdGenerator.asStoredString(eid.edgeLabelId()),</span>
+<span class="nc" id="L289">               eid.sortValues(),</span>
+<span class="nc" id="L290">               IdUtil.writeStoredString(eid.targetVertexId()));</span>
+    }
+
+    public static String concat(String... ids) {
+<span class="nc" id="L294">        return SplicingIdGenerator.concat(ids);</span>
+    }
+
+    public static String[] split(Id id) {
+<span class="nc" id="L298">        return EdgeId.split(id.asString());</span>
+    }
+
+    public static String[] split(String id) {
+<span class="nc" id="L302">        return SplicingIdGenerator.split(id);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

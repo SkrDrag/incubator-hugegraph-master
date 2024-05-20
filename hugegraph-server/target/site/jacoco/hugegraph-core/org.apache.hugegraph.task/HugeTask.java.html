@@ -1,0 +1,719 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeTask.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.task</a> &gt; <span class="el_source">HugeTask.java</span></div><h1>HugeTask.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.task;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.FutureTask;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.type.define.SerialEnum;
+import org.apache.hugegraph.util.*;
+import org.apache.tinkerpop.gremlin.structure.Graph.Hidden;
+import org.apache.tinkerpop.gremlin.structure.T;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.VertexProperty;
+import org.apache.hugegraph.util.Blob;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.StringEncoding;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.exception.LimitExceedException;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.job.ComputerJob;
+import org.apache.hugegraph.job.EphemeralJob;
+
+public class HugeTask&lt;V&gt; extends FutureTask&lt;V&gt; {
+
+<span class="nc" id="L56">    private static final Logger LOG = Log.logger(HugeTask.class);</span>
+
+    private static final float DECOMPRESS_RATIO = 10.0F;
+
+<span class="nc" id="L60">    private transient TaskScheduler scheduler = null;</span>
+
+    private final TaskCallable&lt;V&gt; callable;
+
+    private String type;
+    private String name;
+    private final Id id;
+    private final Id parent;
+    private Set&lt;Id&gt; dependencies;
+    private String description;
+    private String context;
+    private Date create;
+    private Id server;
+    private int load;
+
+    private volatile TaskStatus status;
+    private volatile int progress;
+    private volatile Date update;
+    private volatile int retries;
+    private volatile String input;
+    private volatile String result;
+
+    public HugeTask(Id id, Id parent, String callable, String input) {
+<span class="nc" id="L83">        this(id, parent, TaskCallable.fromClass(callable));</span>
+<span class="nc" id="L84">        this.input(input);</span>
+<span class="nc" id="L85">    }</span>
+
+    public HugeTask(Id id, Id parent, TaskCallable&lt;V&gt; callable) {
+<span class="nc" id="L88">        super(callable);</span>
+
+<span class="nc" id="L90">        E.checkArgumentNotNull(id, &quot;Task id can't be null&quot;);</span>
+<span class="nc" id="L91">        E.checkArgument(id.number(), &quot;Invalid task id type, it must be number&quot;);</span>
+
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        assert callable != null;</span>
+<span class="nc" id="L94">        this.callable = callable;</span>
+<span class="nc" id="L95">        this.type = null;</span>
+<span class="nc" id="L96">        this.name = null;</span>
+<span class="nc" id="L97">        this.id = id;</span>
+<span class="nc" id="L98">        this.parent = parent;</span>
+<span class="nc" id="L99">        this.dependencies = null;</span>
+<span class="nc" id="L100">        this.description = null;</span>
+<span class="nc" id="L101">        this.context = null;</span>
+<span class="nc" id="L102">        this.status = TaskStatus.NEW;</span>
+<span class="nc" id="L103">        this.progress = 0;</span>
+<span class="nc" id="L104">        this.create = new Date();</span>
+<span class="nc" id="L105">        this.update = null;</span>
+<span class="nc" id="L106">        this.retries = 0;</span>
+<span class="nc" id="L107">        this.input = null;</span>
+<span class="nc" id="L108">        this.result = null;</span>
+<span class="nc" id="L109">        this.server = null;</span>
+<span class="nc" id="L110">        this.load = 1;</span>
+<span class="nc" id="L111">    }</span>
+
+    public Id id() {
+<span class="nc" id="L114">        return this.id;</span>
+    }
+
+    public Id parent() {
+<span class="nc" id="L118">        return this.parent;</span>
+    }
+
+    public Set&lt;Id&gt; dependencies() {
+<span class="nc" id="L122">        return Collections.unmodifiableSet(this.dependencies);</span>
+    }
+
+    public void depends(Id id) {
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        E.checkState(this.status == TaskStatus.NEW,</span>
+                     &quot;Can't add dependency in status '%s'&quot;, this.status);
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        if (this.dependencies == null) {</span>
+<span class="nc" id="L129">            this.dependencies = InsertionOrderUtil.newSet();</span>
+        }
+<span class="nc" id="L131">        this.dependencies.add(id);</span>
+<span class="nc" id="L132">    }</span>
+
+    public TaskStatus status() {
+<span class="nc" id="L135">        return this.status;</span>
+    }
+
+    public void type(String type) {
+<span class="nc" id="L139">        this.type = type;</span>
+<span class="nc" id="L140">    }</span>
+
+    public String type() {
+<span class="nc" id="L143">        return this.type;</span>
+    }
+
+    public void name(String name) {
+<span class="nc" id="L147">        this.name = name;</span>
+<span class="nc" id="L148">    }</span>
+
+    public String name() {
+<span class="nc" id="L151">        return this.name;</span>
+    }
+
+    public void description(String description) {
+<span class="nc" id="L155">        this.description = description;</span>
+<span class="nc" id="L156">    }</span>
+
+    public String description() {
+<span class="nc" id="L159">        return this.description;</span>
+    }
+
+    public final void context(String context) {
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        E.checkArgument(this.context == null,</span>
+                        &quot;Task context must be set once, but already set '%s'&quot;,
+                        this.context);
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        E.checkArgument(this.status == TaskStatus.NEW,</span>
+                        &quot;Task context must be set in state NEW instead of %s&quot;,
+                        this.status);
+<span class="nc" id="L169">        this.context = context;</span>
+<span class="nc" id="L170">    }</span>
+
+    public final String context() {
+<span class="nc" id="L173">        return this.context;</span>
+    }
+
+    public void progress(int progress) {
+<span class="nc" id="L177">        this.progress = progress;</span>
+<span class="nc" id="L178">    }</span>
+
+    public int progress() {
+<span class="nc" id="L181">        return this.progress;</span>
+    }
+
+    public void createTime(Date create) {
+<span class="nc" id="L185">        this.create = create;</span>
+<span class="nc" id="L186">    }</span>
+
+    public Date createTime() {
+<span class="nc" id="L189">        return this.create;</span>
+    }
+
+    public void updateTime(Date update) {
+<span class="nc" id="L193">        this.update = update;</span>
+<span class="nc" id="L194">    }</span>
+
+    public Date updateTime() {
+<span class="nc" id="L197">        return this.update;</span>
+    }
+
+    public void retry() {
+<span class="nc" id="L201">        ++this.retries;</span>
+<span class="nc" id="L202">    }</span>
+
+    public int retries() {
+<span class="nc" id="L205">        return this.retries;</span>
+    }
+
+    public void input(String input) {
+        // checkPropertySize(input, P.INPUT);
+<span class="nc" id="L210">        this.input = input;</span>
+<span class="nc" id="L211">    }</span>
+
+    public String input() {
+<span class="nc" id="L214">        return this.input;</span>
+    }
+
+    public String result() {
+<span class="nc" id="L218">        return this.result;</span>
+    }
+
+    private synchronized boolean result(TaskStatus status, String result) {
+<span class="nc" id="L222">        checkPropertySize(result, P.RESULT);</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        if (this.status(status)) {</span>
+<span class="nc" id="L224">            this.result = result;</span>
+<span class="nc" id="L225">            return true;</span>
+        }
+<span class="nc" id="L227">        return false;</span>
+    }
+
+    public void server(Id server) {
+<span class="nc" id="L231">        this.server = server;</span>
+<span class="nc" id="L232">    }</span>
+
+    public Id server() {
+<span class="nc" id="L235">        return this.server;</span>
+    }
+
+    public void load(int load) {
+<span class="nc" id="L239">        this.load = load;</span>
+<span class="nc" id="L240">    }</span>
+
+    public int load() {
+<span class="nc" id="L243">        return this.load;</span>
+    }
+
+    public boolean completed() {
+<span class="nc" id="L247">        return TaskStatus.COMPLETED_STATUSES.contains(this.status);</span>
+    }
+
+    public boolean success() {
+<span class="nc bnc" id="L251" title="All 2 branches missed.">        return this.status == TaskStatus.SUCCESS;</span>
+    }
+
+    public boolean cancelled() {
+<span class="nc bnc" id="L255" title="All 4 branches missed.">        return this.status == TaskStatus.CANCELLED || this.isCancelled();</span>
+    }
+
+    public boolean cancelling() {
+<span class="nc bnc" id="L259" title="All 2 branches missed.">        return this.status == TaskStatus.CANCELLING;</span>
+    }
+
+    public boolean computer() {
+<span class="nc" id="L263">        return ComputerJob.COMPUTER.equals(this.type);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L268">        return String.format(&quot;HugeTask(%s)%s&quot;, this.id, this.asMap());</span>
+    }
+
+    @Override
+    public void run() {
+<span class="nc bnc" id="L273" title="All 2 branches missed.">        if (this.cancelled()) {</span>
+            // A task is running after cancelled which scheduled/queued before
+<span class="nc" id="L275">            return;</span>
+        }
+
+<span class="nc" id="L278">        TaskManager.setContext(this.context());</span>
+        try {
+<span class="nc bnc" id="L280" title="All 2 branches missed.">            assert this.status.code() &lt; TaskStatus.RUNNING.code() : this.status;</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">            if (this.checkDependenciesSuccess()) {</span>
+                /*
+                 * FIXME: worker node may reset status to RUNNING here, and the
+                 *        status in DB is CANCELLING that set by master node,
+                 *        it will lead to cancel() operation not to take effect.
+                 */
+<span class="nc" id="L287">                this.status(TaskStatus.RUNNING);</span>
+<span class="nc" id="L288">                super.run();</span>
+            }
+<span class="nc" id="L290">        } catch (Throwable e) {</span>
+<span class="nc" id="L291">            this.setException(e);</span>
+        } finally {
+<span class="nc" id="L293">            LOG.debug(&quot;Task is finished {}&quot;, this);</span>
+<span class="nc" id="L294">            TaskManager.resetContext();</span>
+        }
+<span class="nc" id="L296">    }</span>
+
+    @Override
+    public boolean cancel(boolean mayInterruptIfRunning) {
+        // NOTE: Gremlin sleep() can't be interrupted by default
+        // https://mrhaki.blogspot.com/2016/10/groovy-goodness-interrupted-sleeping.html
+<span class="nc" id="L302">        boolean cancelled = super.cancel(mayInterruptIfRunning);</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">        if (!cancelled) {</span>
+<span class="nc" id="L304">            return cancelled;</span>
+        }
+
+        try {
+<span class="nc bnc" id="L308" title="All 2 branches missed.">            if (this.status(TaskStatus.CANCELLED)) {</span>
+                // Callback for saving status to store
+<span class="nc" id="L310">                this.callable.cancelled();</span>
+            } else {
+                // Maybe worker node is still running then set status SUCCESS
+<span class="nc" id="L313">                cancelled = false;</span>
+            }
+<span class="nc" id="L315">        } catch (Throwable e) {</span>
+<span class="nc" id="L316">            LOG.error(&quot;An exception occurred when calling cancelled()&quot;, e);</span>
+<span class="nc" id="L317">        }</span>
+<span class="nc" id="L318">        return cancelled;</span>
+    }
+
+    public boolean fail(Throwable e) {
+<span class="nc" id="L322">        E.checkNotNull(e, &quot;exception&quot;);</span>
+<span class="nc bnc" id="L323" title="All 4 branches missed.">        if (!(this.cancelled() &amp;&amp; HugeException.isInterrupted(e))) {</span>
+<span class="nc" id="L324">            LOG.warn(&quot;An exception occurred when running task: {}&quot;,</span>
+<span class="nc" id="L325">                     this.id(), e);</span>
+            // Update status to FAILED if exception occurred(not interrupted)
+<span class="nc bnc" id="L327" title="All 2 branches missed.">            if (this.result(TaskStatus.FAILED, e.toString())) {</span>
+<span class="nc" id="L328">                return true;</span>
+            }
+        }
+<span class="nc" id="L331">        return false;</span>
+    }
+
+    public void failToSave(Throwable e) {
+<span class="nc bnc" id="L335" title="All 2 branches missed.">        if (!this.fail(e)) {</span>
+            // Can't update status, just set result to error message
+<span class="nc" id="L337">            this.result = e.toString();</span>
+        }
+<span class="nc" id="L339">    }</span>
+
+    @Override
+    protected void done() {
+        try {
+            // Callback for saving status to store
+<span class="nc" id="L345">            this.callable.done();</span>
+<span class="nc" id="L346">        } catch (Throwable e) {</span>
+<span class="nc" id="L347">            LOG.error(&quot;An exception occurred when calling done()&quot;, e);</span>
+        } finally {
+<span class="nc" id="L349">            StandardTaskScheduler scheduler = (StandardTaskScheduler)</span>
+<span class="nc" id="L350">                                              this.scheduler();</span>
+<span class="nc" id="L351">            scheduler.taskDone(this);</span>
+        }
+<span class="nc" id="L353">    }</span>
+
+    @Override
+    protected void set(V v) {
+<span class="nc" id="L357">        String result = JsonUtil.toJson(v);</span>
+<span class="nc" id="L358">        checkPropertySize(result, P.RESULT);</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">        if (!this.result(TaskStatus.SUCCESS, result)) {</span>
+<span class="nc bnc" id="L360" title="All 2 branches missed.">            assert this.completed();</span>
+        }
+        // Will call done() and may cause to save to store
+<span class="nc" id="L363">        super.set(v);</span>
+<span class="nc" id="L364">    }</span>
+
+    @Override
+    protected void setException(Throwable e) {
+<span class="nc" id="L368">        this.fail(e);</span>
+<span class="nc" id="L369">        super.setException(e);</span>
+<span class="nc" id="L370">    }</span>
+
+    protected void scheduler(TaskScheduler scheduler) {
+<span class="nc" id="L373">        this.scheduler = scheduler;</span>
+<span class="nc" id="L374">    }</span>
+
+    protected TaskScheduler scheduler() {
+<span class="nc bnc" id="L377" title="All 2 branches missed.">        E.checkState(this.scheduler != null,</span>
+                     &quot;Can't call scheduler() before scheduling task&quot;);
+<span class="nc" id="L379">        return this.scheduler;</span>
+    }
+
+    protected boolean checkDependenciesSuccess() {
+<span class="nc bnc" id="L383" title="All 4 branches missed.">        if (this.dependencies == null || this.dependencies.isEmpty()) {</span>
+<span class="nc" id="L384">            return true;</span>
+        }
+<span class="nc" id="L386">        TaskScheduler scheduler = this.scheduler();</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        for (Id dependency : this.dependencies) {</span>
+<span class="nc" id="L388">            HugeTask&lt;?&gt; task = scheduler.task(dependency);</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">            if (!task.completed()) {</span>
+                // Dependent task not completed, re-schedule self
+<span class="nc" id="L391">                scheduler.schedule(this);</span>
+<span class="nc" id="L392">                return false;</span>
+<span class="nc bnc" id="L393" title="All 2 branches missed.">            } else if (task.status() == TaskStatus.CANCELLED) {</span>
+<span class="nc" id="L394">                this.result(TaskStatus.CANCELLED, String.format(</span>
+                            &quot;Cancelled due to dependent task '%s' cancelled&quot;,
+                            dependency));
+<span class="nc" id="L397">                this.done();</span>
+<span class="nc" id="L398">                return false;</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">            } else if (task.status() == TaskStatus.FAILED) {</span>
+<span class="nc" id="L400">                this.result(TaskStatus.FAILED, String.format(</span>
+                            &quot;Failed due to dependent task '%s' failed&quot;,
+                            dependency));
+<span class="nc" id="L403">                this.done();</span>
+<span class="nc" id="L404">                return false;</span>
+            }
+<span class="nc" id="L406">        }</span>
+<span class="nc" id="L407">        return true;</span>
+    }
+
+    protected TaskCallable&lt;V&gt; callable() {
+<span class="nc" id="L411">        E.checkNotNull(this.callable, &quot;callable&quot;);</span>
+<span class="nc" id="L412">        return this.callable;</span>
+    }
+
+    protected synchronized boolean status(TaskStatus status) {
+<span class="nc" id="L416">        E.checkNotNull(status, &quot;status&quot;);</span>
+<span class="nc bnc" id="L417" title="All 2 branches missed.">        if (status.code() &gt; TaskStatus.NEW.code()) {</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">            E.checkState(this.type != null, &quot;Task type can't be null&quot;);</span>
+<span class="nc bnc" id="L419" title="All 2 branches missed.">            E.checkState(this.name != null, &quot;Task name can't be null&quot;);</span>
+        }
+<span class="nc bnc" id="L421" title="All 2 branches missed.">        if (!this.completed()) {</span>
+<span class="nc bnc" id="L422" title="All 4 branches missed.">            assert this.status.code() &lt; status.code() ||</span>
+                   status == TaskStatus.RESTORING :
+                   this.status + &quot; =&gt; &quot; + status + &quot; (task &quot; + this.id + &quot;)&quot;;
+<span class="nc" id="L425">            this.status = status;</span>
+<span class="nc" id="L426">            return true;</span>
+        }
+<span class="nc" id="L428">        return false;</span>
+    }
+
+    protected void property(String key, Object value) {
+<span class="nc" id="L432">        E.checkNotNull(key, &quot;property key&quot;);</span>
+<span class="nc bnc" id="L433" title="All 15 branches missed.">        switch (key) {</span>
+            case P.TYPE:
+<span class="nc" id="L435">                this.type = (String) value;</span>
+<span class="nc" id="L436">                break;</span>
+            case P.NAME:
+<span class="nc" id="L438">                this.name = (String) value;</span>
+<span class="nc" id="L439">                break;</span>
+            case P.CALLABLE:
+                // pass
+<span class="nc" id="L442">                break;</span>
+            case P.STATUS:
+<span class="nc" id="L444">                this.status = SerialEnum.fromCode(TaskStatus.class,</span>
+<span class="nc" id="L445">                                                  (byte) value);</span>
+<span class="nc" id="L446">                break;</span>
+            case P.PROGRESS:
+<span class="nc" id="L448">                this.progress = (int) value;</span>
+<span class="nc" id="L449">                break;</span>
+            case P.CREATE:
+<span class="nc" id="L451">                this.create = (Date) value;</span>
+<span class="nc" id="L452">                break;</span>
+            case P.RETRIES:
+<span class="nc" id="L454">                this.retries = (int) value;</span>
+<span class="nc" id="L455">                break;</span>
+            case P.DESCRIPTION:
+<span class="nc" id="L457">                this.description = (String) value;</span>
+<span class="nc" id="L458">                break;</span>
+            case P.CONTEXT:
+<span class="nc" id="L460">                this.context = (String) value;</span>
+<span class="nc" id="L461">                break;</span>
+            case P.UPDATE:
+<span class="nc" id="L463">                this.update = (Date) value;</span>
+<span class="nc" id="L464">                break;</span>
+            case P.DEPENDENCIES:
+                @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L467">                Set&lt;Long&gt; values = (Set&lt;Long&gt;) value;</span>
+<span class="nc" id="L468">                this.dependencies = values.stream().map(IdGenerator::of)</span>
+<span class="nc" id="L469">                                                   .collect(toOrderSet());</span>
+<span class="nc" id="L470">                break;</span>
+            case P.INPUT:
+<span class="nc" id="L472">                this.input = StringEncoding.decompress(((Blob) value).bytes(),</span>
+                                                       DECOMPRESS_RATIO);
+<span class="nc" id="L474">                break;</span>
+            case P.RESULT:
+<span class="nc" id="L476">                this.result = StringEncoding.decompress(((Blob) value).bytes(),</span>
+                                                        DECOMPRESS_RATIO);
+<span class="nc" id="L478">                break;</span>
+            case P.SERVER:
+<span class="nc" id="L480">                this.server = IdGenerator.of((String) value);</span>
+<span class="nc" id="L481">                break;</span>
+            default:
+<span class="nc" id="L483">                throw new AssertionError(&quot;Unsupported key: &quot; + key);</span>
+        }
+<span class="nc" id="L485">    }</span>
+
+    protected synchronized Object[] asArray() {
+<span class="nc bnc" id="L488" title="All 2 branches missed.">        E.checkState(this.type != null, &quot;Task type can't be null&quot;);</span>
+<span class="nc bnc" id="L489" title="All 2 branches missed.">        E.checkState(this.name != null, &quot;Task name can't be null&quot;);</span>
+
+<span class="nc" id="L491">        List&lt;Object&gt; list = new ArrayList&lt;&gt;(28);</span>
+
+<span class="nc" id="L493">        list.add(T.label);</span>
+<span class="nc" id="L494">        list.add(P.TASK);</span>
+
+<span class="nc" id="L496">        list.add(T.id);</span>
+<span class="nc" id="L497">        list.add(this.id);</span>
+
+<span class="nc" id="L499">        list.add(P.TYPE);</span>
+<span class="nc" id="L500">        list.add(this.type);</span>
+
+<span class="nc" id="L502">        list.add(P.NAME);</span>
+<span class="nc" id="L503">        list.add(this.name);</span>
+
+<span class="nc" id="L505">        list.add(P.CALLABLE);</span>
+<span class="nc" id="L506">        list.add(this.callable.getClass().getName());</span>
+
+<span class="nc" id="L508">        list.add(P.STATUS);</span>
+<span class="nc" id="L509">        list.add(this.status.code());</span>
+
+<span class="nc" id="L511">        list.add(P.PROGRESS);</span>
+<span class="nc" id="L512">        list.add(this.progress);</span>
+
+<span class="nc" id="L514">        list.add(P.CREATE);</span>
+<span class="nc" id="L515">        list.add(this.create);</span>
+
+<span class="nc" id="L517">        list.add(P.RETRIES);</span>
+<span class="nc" id="L518">        list.add(this.retries);</span>
+
+<span class="nc bnc" id="L520" title="All 2 branches missed.">        if (this.description != null) {</span>
+<span class="nc" id="L521">            list.add(P.DESCRIPTION);</span>
+<span class="nc" id="L522">            list.add(this.description);</span>
+        }
+
+<span class="nc bnc" id="L525" title="All 2 branches missed.">        if (this.context != null) {</span>
+<span class="nc" id="L526">            list.add(P.CONTEXT);</span>
+<span class="nc" id="L527">            list.add(this.context);</span>
+        }
+
+<span class="nc bnc" id="L530" title="All 2 branches missed.">        if (this.update != null) {</span>
+<span class="nc" id="L531">            list.add(P.UPDATE);</span>
+<span class="nc" id="L532">            list.add(this.update);</span>
+        }
+
+<span class="nc bnc" id="L535" title="All 2 branches missed.">        if (this.dependencies != null) {</span>
+<span class="nc" id="L536">            list.add(P.DEPENDENCIES);</span>
+<span class="nc" id="L537">            list.add(this.dependencies.stream().map(Id::asLong)</span>
+<span class="nc" id="L538">                                               .collect(toOrderSet()));</span>
+        }
+
+<span class="nc bnc" id="L541" title="All 2 branches missed.">        if (this.input != null) {</span>
+<span class="nc" id="L542">            byte[] bytes = StringEncoding.compress(this.input);</span>
+<span class="nc" id="L543">            checkPropertySize(bytes.length, P.INPUT);</span>
+<span class="nc" id="L544">            list.add(P.INPUT);</span>
+<span class="nc" id="L545">            list.add(bytes);</span>
+        }
+
+<span class="nc bnc" id="L548" title="All 2 branches missed.">        if (this.result != null) {</span>
+<span class="nc" id="L549">            byte[] bytes = StringEncoding.compress(this.result);</span>
+<span class="nc" id="L550">            checkPropertySize(bytes.length, P.RESULT);</span>
+<span class="nc" id="L551">            list.add(P.RESULT);</span>
+<span class="nc" id="L552">            list.add(bytes);</span>
+        }
+
+<span class="nc bnc" id="L555" title="All 2 branches missed.">        if (this.server != null) {</span>
+<span class="nc" id="L556">            list.add(P.SERVER);</span>
+<span class="nc" id="L557">            list.add(this.server.asString());</span>
+        }
+
+<span class="nc" id="L560">        return list.toArray();</span>
+    }
+
+    public Map&lt;String, Object&gt; asMap() {
+<span class="nc" id="L564">        return this.asMap(true);</span>
+    }
+
+    public synchronized Map&lt;String, Object&gt; asMap(boolean withDetails) {
+<span class="nc bnc" id="L568" title="All 2 branches missed.">        E.checkState(this.type != null, &quot;Task type can't be null&quot;);</span>
+<span class="nc bnc" id="L569" title="All 2 branches missed.">        E.checkState(this.name != null, &quot;Task name can't be null&quot;);</span>
+
+<span class="nc" id="L571">        Map&lt;String, Object&gt; map = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L573">        map.put(Hidden.unHide(P.ID), this.id);</span>
+
+<span class="nc" id="L575">        map.put(Hidden.unHide(P.TYPE), this.type);</span>
+<span class="nc" id="L576">        map.put(Hidden.unHide(P.NAME), this.name);</span>
+<span class="nc" id="L577">        map.put(Hidden.unHide(P.STATUS), this.status.string());</span>
+<span class="nc" id="L578">        map.put(Hidden.unHide(P.PROGRESS), this.progress);</span>
+<span class="nc" id="L579">        map.put(Hidden.unHide(P.CREATE), this.create);</span>
+<span class="nc" id="L580">        map.put(Hidden.unHide(P.RETRIES), this.retries);</span>
+
+<span class="nc bnc" id="L582" title="All 2 branches missed.">        if (this.description != null) {</span>
+<span class="nc" id="L583">            map.put(Hidden.unHide(P.DESCRIPTION), this.description);</span>
+        }
+<span class="nc bnc" id="L585" title="All 2 branches missed.">        if (this.update != null) {</span>
+<span class="nc" id="L586">            map.put(Hidden.unHide(P.UPDATE), this.update);</span>
+        }
+<span class="nc bnc" id="L588" title="All 2 branches missed.">        if (this.dependencies != null) {</span>
+<span class="nc" id="L589">            Set&lt;Long&gt; value = this.dependencies.stream().map(Id::asLong)</span>
+<span class="nc" id="L590">                                                        .collect(toOrderSet());</span>
+<span class="nc" id="L591">            map.put(Hidden.unHide(P.DEPENDENCIES), value);</span>
+        }
+
+<span class="nc bnc" id="L594" title="All 2 branches missed.">        if (this.server != null) {</span>
+<span class="nc" id="L595">            map.put(Hidden.unHide(P.SERVER), this.server.asString());</span>
+        }
+
+<span class="nc bnc" id="L598" title="All 2 branches missed.">        if (withDetails) {</span>
+<span class="nc" id="L599">            map.put(Hidden.unHide(P.CALLABLE),</span>
+<span class="nc" id="L600">                    this.callable.getClass().getName());</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">            if (this.input != null) {</span>
+<span class="nc" id="L602">                map.put(Hidden.unHide(P.INPUT), this.input);</span>
+            }
+<span class="nc bnc" id="L604" title="All 2 branches missed.">            if (this.result != null) {</span>
+<span class="nc" id="L605">                map.put(Hidden.unHide(P.RESULT), this.result);</span>
+            }
+        }
+
+<span class="nc" id="L609">        return map;</span>
+    }
+
+    public static &lt;V&gt; HugeTask&lt;V&gt; fromVertex(Vertex vertex) {
+<span class="nc" id="L613">        String callableName = vertex.value(P.CALLABLE);</span>
+        TaskCallable&lt;V&gt; callable;
+        try {
+<span class="nc" id="L616">            callable = TaskCallable.fromClass(callableName);</span>
+<span class="nc" id="L617">        } catch (Exception e) {</span>
+<span class="nc" id="L618">            callable = TaskCallable.empty(e);</span>
+<span class="nc" id="L619">        }</span>
+
+<span class="nc" id="L621">        HugeTask&lt;V&gt; task = new HugeTask&lt;&gt;((Id) vertex.id(), null, callable);</span>
+<span class="nc" id="L622">        for (Iterator&lt;VertexProperty&lt;Object&gt;&gt; iter = vertex.properties();</span>
+<span class="nc bnc" id="L623" title="All 2 branches missed.">             iter.hasNext();) {</span>
+<span class="nc" id="L624">            VertexProperty&lt;Object&gt; prop = iter.next();</span>
+<span class="nc" id="L625">            task.property(prop.key(), prop.value());</span>
+<span class="nc" id="L626">        }</span>
+<span class="nc" id="L627">        return task;</span>
+    }
+
+    private static &lt;V&gt; Collector&lt;V, ?, Set&lt;V&gt;&gt; toOrderSet() {
+<span class="nc" id="L631">        return Collectors.toCollection(InsertionOrderUtil::newSet);</span>
+    }
+
+    private void checkPropertySize(String property, String propertyName) {
+<span class="nc" id="L635">        byte[] bytes = StringEncoding.compress(property);</span>
+<span class="nc" id="L636">        checkPropertySize(bytes.length, propertyName);</span>
+<span class="nc" id="L637">    }</span>
+
+    private void checkPropertySize(int propertyLength, String propertyName) {
+<span class="nc" id="L640">        long propertyLimit = BytesBuffer.STRING_LEN_MAX;</span>
+<span class="nc" id="L641">        HugeGraph graph = this.scheduler().graph();</span>
+<span class="nc bnc" id="L642" title="All 2 branches missed.">        if (propertyName.equals(P.INPUT)) {</span>
+<span class="nc" id="L643">            propertyLimit = graph.option(CoreOptions.TASK_INPUT_SIZE_LIMIT);</span>
+<span class="nc bnc" id="L644" title="All 2 branches missed.">        } else if (propertyName.equals(P.RESULT)) {</span>
+<span class="nc" id="L645">            propertyLimit = graph.option(CoreOptions.TASK_RESULT_SIZE_LIMIT);</span>
+        }
+
+<span class="nc bnc" id="L648" title="All 2 branches missed.">        if (propertyLength &gt; propertyLimit) {</span>
+<span class="nc" id="L649">            throw new LimitExceedException(</span>
+                      &quot;Task %s size %s exceeded limit %s bytes&quot;,
+<span class="nc" id="L651">                      P.unhide(propertyName), propertyLength, propertyLimit);</span>
+        }
+<span class="nc" id="L653">    }</span>
+
+    public void syncWait() {
+        // This method is just called by tests
+<span class="nc" id="L657">        HugeTask&lt;?&gt; task = null;</span>
+        try {
+<span class="nc" id="L659">            task = this.scheduler().waitUntilTaskCompleted(this.id());</span>
+<span class="nc" id="L660">        } catch (Throwable e) {</span>
+<span class="nc bnc" id="L661" title="All 2 branches missed.">            if (this.callable() instanceof EphemeralJob &amp;&amp;</span>
+<span class="nc bnc" id="L662" title="All 2 branches missed.">                e.getClass() == NotFoundException.class &amp;&amp;</span>
+<span class="nc bnc" id="L663" title="All 2 branches missed.">                e.getMessage().contains(&quot;Can't find task with id&quot;)) {</span>
+                /*
+                 * The task with EphemeralJob won't saved in backends and
+                 * will be removed from memory when completed
+                 */
+<span class="nc" id="L668">                return;</span>
+            }
+<span class="nc" id="L670">            throw new HugeException(&quot;Failed to wait for task '%s' completed&quot;,</span>
+                                    e, this.id);
+<span class="nc" id="L672">        }</span>
+<span class="nc bnc" id="L673" title="All 2 branches missed.">        assert task != null;</span>
+        /*
+         * This can be enabled for debug to expose schema-clear errors early，
+         * but also lead to some negative tests failed,
+         */
+<span class="nc" id="L678">        boolean debugTest = false;</span>
+<span class="nc bnc" id="L679" title="All 4 branches missed.">        if (debugTest &amp;&amp; !task.success()) {</span>
+<span class="nc" id="L680">            throw new HugeException(&quot;Task '%s' is failed with error: %s&quot;,</span>
+<span class="nc" id="L681">                                    task.id(), task.result());</span>
+        }
+<span class="nc" id="L683">    }</span>
+
+<span class="nc" id="L685">    public static final class P {</span>
+
+<span class="nc" id="L687">        public static final String TASK = Hidden.hide(&quot;task&quot;);</span>
+
+<span class="nc" id="L689">        public static final String ID = T.id.getAccessor();</span>
+<span class="nc" id="L690">        public static final String LABEL = T.label.getAccessor();</span>
+
+        public static final String TYPE = &quot;~task_type&quot;;
+        public static final String NAME = &quot;~task_name&quot;;
+        public static final String CALLABLE = &quot;~task_callable&quot;;
+        public static final String DESCRIPTION = &quot;~task_description&quot;;
+        public static final String CONTEXT = &quot;~task_context&quot;;
+        public static final String STATUS = &quot;~task_status&quot;;
+        public static final String PROGRESS = &quot;~task_progress&quot;;
+        public static final String CREATE = &quot;~task_create&quot;;
+        public static final String UPDATE = &quot;~task_update&quot;;
+        public static final String RETRIES = &quot;~task_retries&quot;;
+        public static final String INPUT = &quot;~task_input&quot;;
+        public static final String RESULT = &quot;~task_result&quot;;
+        public static final String DEPENDENCIES = &quot;~task_dependencies&quot;;
+        public static final String SERVER = &quot;~task_server&quot;;
+
+        //public static final String PARENT = hide(&quot;parent&quot;);
+        //public static final String CHILDREN = hide(&quot;children&quot;);
+
+        public static String unhide(String key) {
+<span class="nc" id="L711">            final String prefix = Hidden.hide(&quot;task_&quot;);</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">            if (key.startsWith(prefix)) {</span>
+<span class="nc" id="L713">                return key.substring(prefix.length());</span>
+            }
+<span class="nc" id="L715">            return key;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

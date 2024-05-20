@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractRecords.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.algorithm.records</a> &gt; <span class="el_source">AbstractRecords.java</span></div><h1>AbstractRecords.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.algorithm.records;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.util.collection.ObjectIntMapping;
+import org.apache.hugegraph.util.collection.ObjectIntMappingFactory;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.traversal.algorithm.records.record.Record;
+import org.apache.hugegraph.traversal.algorithm.records.record.RecordFactory;
+import org.apache.hugegraph.traversal.algorithm.records.record.RecordType;
+
+<span class="nc" id="L29">public abstract class AbstractRecords implements Records {</span>
+
+    private final ObjectIntMapping&lt;Id&gt; idMapping;
+    private final RecordType type;
+    private final boolean concurrent;
+    private Record currentRecord;
+    private Record parentRecord;
+
+<span class="nc" id="L37">    public AbstractRecords(RecordType type, boolean concurrent) {</span>
+<span class="nc" id="L38">        this.type = type;</span>
+<span class="nc" id="L39">        this.concurrent = concurrent;</span>
+<span class="nc" id="L40">        this.parentRecord = null;</span>
+<span class="nc" id="L41">        this.idMapping = ObjectIntMappingFactory.newObjectIntMapping(this.concurrent);</span>
+<span class="nc" id="L42">    }</span>
+
+    @Watched
+    protected final int code(Id id) {
+<span class="nc bnc" id="L46" title="All 2 branches missed.">        if (id.number()) {</span>
+<span class="nc" id="L47">            long l = id.asLong();</span>
+<span class="nc bnc" id="L48" title="All 4 branches missed.">            if (0 &lt;= l &amp;&amp; l &lt;= Integer.MAX_VALUE) {</span>
+<span class="nc" id="L49">                return (int) l;</span>
+            }
+        }
+<span class="nc" id="L52">        int code = this.idMapping.object2Code(id);</span>
+<span class="nc bnc" id="L53" title="All 2 branches missed.">        assert code &gt; 0;</span>
+<span class="nc" id="L54">        return -code;</span>
+    }
+
+    @Watched
+    protected final Id id(int code) {
+<span class="nc bnc" id="L59" title="All 2 branches missed.">        if (code &gt;= 0) {</span>
+<span class="nc" id="L60">            return IdGenerator.of(code);</span>
+        }
+<span class="nc" id="L62">        return this.idMapping.code2Object(-code);</span>
+    }
+
+    protected final Record newRecord() {
+<span class="nc" id="L66">        return RecordFactory.newRecord(this.type, this.concurrent);</span>
+    }
+
+    protected final Record currentRecord() {
+<span class="nc" id="L70">        return this.currentRecord;</span>
+    }
+
+    protected void currentRecord(Record currentRecord, Record parentRecord) {
+<span class="nc" id="L74">        this.parentRecord = parentRecord;</span>
+<span class="nc" id="L75">        this.currentRecord = currentRecord;</span>
+<span class="nc" id="L76">    }</span>
+
+    protected Record parentRecord() {
+<span class="nc" id="L79">        return this.parentRecord;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

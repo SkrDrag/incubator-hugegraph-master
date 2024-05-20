@@ -1,0 +1,325 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CassandraMetrics.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-cassandra</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.cassandra</a> &gt; <span class="el_source">CassandraMetrics.java</span></div><h1>CassandraMetrics.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.cassandra;
+
+import java.io.IOException;
+import java.lang.management.MemoryUsage;
+import java.net.Inet4Address;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+
+import org.apache.cassandra.metrics.CassandraMetricsRegistry.JmxCounterMBean;
+import org.apache.cassandra.metrics.CassandraMetricsRegistry.JmxTimerMBean;
+import org.apache.cassandra.tools.NodeProbe;
+import org.apache.cassandra.tools.nodetool.Compact;
+import org.apache.hugegraph.backend.store.BackendMetrics;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.backend.store.BackendTable;
+import org.apache.hugegraph.backend.store.cassandra.CassandraTables.Edge;
+import org.apache.hugegraph.backend.store.cassandra.CassandraTables.Vertex;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.testutil.Whitebox;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.UnitUtil;
+import org.apache.tinkerpop.gremlin.util.NumberHelper;
+import org.slf4j.Logger;
+
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.Host;
+import com.google.common.collect.ImmutableList;
+
+public class CassandraMetrics implements BackendMetrics {
+
+<span class="nc" id="L54">    private static final Logger LOG = Log.logger(CassandraMetrics.class);</span>
+
+    private final Cluster cluster;
+    private final int port;
+    private final String username;
+    private final String password;
+
+    private final String keyspace;
+    private final List&lt;String&gt; tables;
+
+    public CassandraMetrics(HugeConfig conf,
+                            CassandraSessionPool sessions,
+<span class="nc" id="L66">                            String keyspace) {</span>
+<span class="nc" id="L67">        E.checkNotNull(conf, &quot;config&quot;);</span>
+<span class="nc" id="L68">        E.checkArgumentNotNull(sessions,</span>
+                               &quot;Cassandra sessions have not been initialized&quot;);
+<span class="nc" id="L70">        this.cluster = sessions.cluster();</span>
+<span class="nc" id="L71">        this.port = conf.get(CassandraOptions.CASSANDRA_JMX_PORT);</span>
+<span class="nc" id="L72">        this.username = conf.get(CassandraOptions.CASSANDRA_USERNAME);</span>
+<span class="nc" id="L73">        this.password = conf.get(CassandraOptions.CASSANDRA_PASSWORD);</span>
+<span class="nc bnc" id="L74" title="All 4 branches missed.">        assert this.username != null &amp;&amp; this.password != null;</span>
+
+<span class="nc" id="L76">        this.keyspace = keyspace;</span>
+<span class="nc" id="L77">        String g = BackendStoreProvider.GRAPH_STORE;</span>
+<span class="nc" id="L78">        String v = BackendTable.joinTableName(g, Vertex.TABLE);</span>
+<span class="nc" id="L79">        String oe = BackendTable.joinTableName(g, &quot;o&quot; + Edge.TABLE_SUFFIX);</span>
+<span class="nc" id="L80">        String ie = BackendTable.joinTableName(g, &quot;i&quot; + Edge.TABLE_SUFFIX);</span>
+<span class="nc" id="L81">        this.tables = ImmutableList.of(v, oe, ie);</span>
+<span class="nc" id="L82">    }</span>
+
+    @Override
+    public Map&lt;String, Object&gt; metrics() {
+<span class="nc" id="L86">        return this.executeAllHosts(this::getMetricsByHost);</span>
+    }
+
+    protected String keyspace() {
+<span class="nc" id="L90">        return this.keyspace;</span>
+    }
+
+    protected List&lt;String&gt; tables() {
+<span class="nc" id="L94">        return this.tables;</span>
+    }
+
+    protected Map&lt;String, Object&gt; getMetricsByHost(String host) {
+<span class="nc" id="L98">        Map&lt;String, Object&gt; metrics = InsertionOrderUtil.newMap();</span>
+        // JMX client operations for Cassandra.
+<span class="nc" id="L100">        try (NodeProbe probe = this.newNodeProbe(host)) {</span>
+<span class="nc" id="L101">            MemoryUsage heapUsage = probe.getHeapMemoryUsage();</span>
+<span class="nc" id="L102">            metrics.put(MEM_MAX, UnitUtil.bytesToMB(heapUsage.getMax()));</span>
+<span class="nc" id="L103">            metrics.put(MEM_COMMITTED,</span>
+<span class="nc" id="L104">                        UnitUtil.bytesToMB(heapUsage.getCommitted()));</span>
+<span class="nc" id="L105">            metrics.put(MEM_USED, UnitUtil.bytesToMB(heapUsage.getUsed()));</span>
+<span class="nc" id="L106">            metrics.put(MEM_USED + READABLE,</span>
+<span class="nc" id="L107">                        UnitUtil.bytesToReadableString(heapUsage.getUsed()));</span>
+<span class="nc" id="L108">            metrics.put(MEM_UNIT, &quot;MB&quot;);</span>
+
+<span class="nc" id="L110">            long diskSize = UnitUtil.bytesFromReadableString(</span>
+<span class="nc" id="L111">                            probe.getLoadString());</span>
+<span class="nc" id="L112">            metrics.put(DISK_USAGE, UnitUtil.bytesToGB(diskSize));</span>
+<span class="nc" id="L113">            metrics.put(DISK_USAGE + READABLE,</span>
+<span class="nc" id="L114">                        UnitUtil.bytesToReadableString(diskSize));</span>
+<span class="nc" id="L115">            metrics.put(DISK_USAGE + &quot;_details&quot;, probe.getLoadMap(false));</span>
+<span class="nc" id="L116">            metrics.put(DISK_UNIT, &quot;GB&quot;);</span>
+
+            // Uptime Metrics
+<span class="nc" id="L119">            metrics.put(&quot;uptime&quot;, probe.getUptime());</span>
+<span class="nc" id="L120">            metrics.put(&quot;uptime_readable&quot;,</span>
+<span class="nc" id="L121">                        UnitUtil.timestampToReadableString(probe.getUptime()));</span>
+<span class="nc" id="L122">            metrics.put(&quot;time_unit&quot;, &quot;ms&quot;);</span>
+
+            // Table/Cache/Compaction Metrics
+<span class="nc" id="L125">            this.appendExtraMetrics(metrics, probe);</span>
+
+            // Nodes Metrics
+<span class="nc" id="L128">            metrics.put(&quot;live_nodes&quot;, probe.getLiveNodes(false));</span>
+<span class="nc" id="L129">            metrics.put(&quot;joining_nodes&quot;, probe.getJoiningNodes(false));</span>
+<span class="nc" id="L130">            metrics.put(&quot;moving_nodes&quot;, probe.getMovingNodes(false));</span>
+<span class="nc" id="L131">            metrics.put(&quot;leaving_nodes&quot;, probe.getLeavingNodes(false));</span>
+<span class="nc" id="L132">            metrics.put(&quot;unreachable_nodes&quot;, probe.getUnreachableNodes(false));</span>
+
+            // Others
+<span class="nc" id="L135">            metrics.put(&quot;keyspaces&quot;, probe.getKeyspaces());</span>
+<span class="nc" id="L136">            metrics.put(&quot;num_tables&quot;, probe.getNumberOfTables());</span>
+<span class="nc" id="L137">            metrics.put(&quot;exception_count&quot;, probe.getExceptionCount());</span>
+
+            /*
+             * TODO: add metrics:
+             * probe.getAndResetGCStats()
+             * probe.getCfsProxy(keyspace, cf).estimateKeys()
+             * probe.takeSnapshot(snapshotName, table, options, keyspaces)
+             */
+<span class="nc" id="L145">        } catch (Throwable e) {</span>
+<span class="nc" id="L146">            LOG.debug(&quot;Unable to get metrics from host '{}':&quot;, host, e);</span>
+<span class="nc" id="L147">            metrics.put(EXCEPTION, e.toString());</span>
+<span class="nc" id="L148">        }</span>
+<span class="nc" id="L149">        return metrics;</span>
+    }
+
+    protected void appendExtraMetrics(Map&lt;String, Object&gt; metrics,
+                                      NodeProbe probe) {
+        // Table counter Metrics
+<span class="nc" id="L155">        appendCounterMetrics(metrics, probe, this.keyspace, this.tables,</span>
+                             &quot;EstimatedPartitionCount&quot;);
+<span class="nc" id="L157">        appendCounterMetrics(metrics, probe, this.keyspace, this.tables,</span>
+                             &quot;DroppedMutations&quot;);
+<span class="nc" id="L159">        appendCounterMetrics(metrics, probe, this.keyspace, this.tables,</span>
+                             &quot;PendingFlushes&quot;);
+<span class="nc" id="L161">        appendCounterMetrics(metrics, probe, this.keyspace, this.tables,</span>
+                             &quot;KeyCacheHitRate&quot;);
+<span class="nc" id="L163">        appendCounterMetrics(metrics, probe, this.keyspace, this.tables,</span>
+                             &quot;BloomFilterFalseRatio&quot;);
+
+        // Table timer Metrics
+<span class="nc" id="L167">        appendTimerMetrics(metrics, probe, this.keyspace, &quot;WriteLatency&quot;);</span>
+<span class="nc" id="L168">        appendTimerMetrics(metrics, probe, this.keyspace, &quot;ReadLatency&quot;);</span>
+<span class="nc" id="L169">        appendTimerMetrics(metrics, probe, null, &quot;WriteLatency&quot;);</span>
+<span class="nc" id="L170">        appendTimerMetrics(metrics, probe, null, &quot;ReadLatency&quot;);</span>
+
+        // Cache Metrics
+<span class="nc" id="L173">        appendCacheMetrics(metrics, probe, &quot;KeyCache&quot;, &quot;Size&quot;);</span>
+<span class="nc" id="L174">        appendCacheMetrics(metrics, probe, &quot;KeyCache&quot;, &quot;Entries&quot;);</span>
+<span class="nc" id="L175">        appendCacheMetrics(metrics, probe, &quot;RowCache&quot;, &quot;Size&quot;);</span>
+<span class="nc" id="L176">        appendCacheMetrics(metrics, probe, &quot;RowCache&quot;, &quot;Entries&quot;);</span>
+<span class="nc" id="L177">        appendCacheMetrics(metrics, probe, &quot;CounterCache&quot;, &quot;Size&quot;);</span>
+<span class="nc" id="L178">        appendCacheMetrics(metrics, probe, &quot;CounterCache&quot;, &quot;Entries&quot;);</span>
+
+        // Compaction Metrics
+<span class="nc" id="L181">        appendCompactionMetrics(metrics, probe, &quot;CompletedTasks&quot;);</span>
+<span class="nc" id="L182">        appendCompactionMetrics(metrics, probe, &quot;PendingTasks&quot;);</span>
+<span class="nc" id="L183">        appendCompactionMetrics(metrics, probe, &quot;BytesCompacted&quot;);</span>
+<span class="nc" id="L184">    }</span>
+
+    protected static void appendCounterMetrics(Map&lt;String, Object&gt; metrics,
+                                               NodeProbe probe,
+                                               String keyspace,
+                                               List&lt;String&gt; tables,
+                                               String metric) {
+        // &quot;EstimatedPartitionCount&quot; =&gt; &quot;estimated_partition_count&quot;
+<span class="nc" id="L192">        String name = humpToLine(metric);</span>
+
+        // Aggregation of metrics for the whole host tables
+<span class="nc" id="L195">        Number number = 0;</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        for (String table : tables) {</span>
+            // like: &quot;hugegraph&quot;, &quot;g_v&quot;, &quot;EstimatedPartitionCount&quot;
+<span class="nc" id="L198">            Object value = probe.getColumnFamilyMetric(keyspace, table, metric);</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">            if (!(value instanceof Number)) {</span>
+<span class="nc" id="L200">                value = Double.parseDouble(value.toString());</span>
+            }
+<span class="nc" id="L202">            number = NumberHelper.add(number, (Number) value);</span>
+<span class="nc" id="L203">        }</span>
+<span class="nc" id="L204">        metrics.put(name, number);</span>
+<span class="nc" id="L205">    }</span>
+
+    protected static void appendTimerMetrics(Map&lt;String, Object&gt; metrics,
+                                             NodeProbe probe,
+                                             String keyspace,
+                                             String metric) {
+        // &quot;ReadLatency&quot; =&gt; &quot;read_latency_hugegraph&quot;
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        String suffix = keyspace == null ? &quot;*&quot; : keyspace;</span>
+<span class="nc" id="L213">        String name = humpToLine(metric + &quot;_&quot; + suffix);</span>
+        // Aggregation of metrics for the whole host if keyspace=null
+<span class="nc" id="L215">        JmxTimerMBean value = (JmxTimerMBean) probe.getColumnFamilyMetric(</span>
+                              keyspace, null, metric);
+<span class="nc" id="L217">        Map&lt;String, Object&gt; timerMap = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L218">        timerMap.put(&quot;count&quot;, value.getCount());</span>
+<span class="nc" id="L219">        timerMap.put(&quot;min&quot;, value.getMin());</span>
+<span class="nc" id="L220">        timerMap.put(&quot;mean&quot;, value.getMean());</span>
+<span class="nc" id="L221">        timerMap.put(&quot;max&quot;, value.getMax());</span>
+<span class="nc" id="L222">        timerMap.put(&quot;stddev&quot;, value.getStdDev());</span>
+<span class="nc" id="L223">        timerMap.put(&quot;p50&quot;, value.get50thPercentile());</span>
+<span class="nc" id="L224">        timerMap.put(&quot;p75&quot;, value.get75thPercentile());</span>
+<span class="nc" id="L225">        timerMap.put(&quot;p95&quot;, value.get95thPercentile());</span>
+<span class="nc" id="L226">        timerMap.put(&quot;p98&quot;, value.get98thPercentile());</span>
+<span class="nc" id="L227">        timerMap.put(&quot;p99&quot;, value.get99thPercentile());</span>
+<span class="nc" id="L228">        timerMap.put(&quot;p999&quot;, value.get999thPercentile());</span>
+<span class="nc" id="L229">        timerMap.put(&quot;duration_unit&quot;, value.getDurationUnit());</span>
+<span class="nc" id="L230">        timerMap.put(&quot;mean_rate&quot;, value.getMeanRate());</span>
+<span class="nc" id="L231">        timerMap.put(&quot;m15_rate&quot;, value.getFifteenMinuteRate());</span>
+<span class="nc" id="L232">        timerMap.put(&quot;m5_rate&quot;, value.getFiveMinuteRate());</span>
+<span class="nc" id="L233">        timerMap.put(&quot;m1_rate&quot;, value.getOneMinuteRate());</span>
+<span class="nc" id="L234">        timerMap.put(&quot;rate_unit&quot;, value.getRateUnit());</span>
+
+<span class="nc" id="L236">        metrics.put(name, timerMap);</span>
+<span class="nc" id="L237">    }</span>
+
+    protected static void appendCompactionMetrics(Map&lt;String, Object&gt; metrics,
+                                                  NodeProbe probe,
+                                                  String metric) {
+        // &quot;CompletedTasks&quot; =&gt; &quot;compaction_completed_tasks&quot;
+<span class="nc" id="L243">        String name = humpToLine(&quot;compaction&quot; + metric);</span>
+<span class="nc" id="L244">        Object value = probe.getCompactionMetric(metric);</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (value instanceof JmxCounterMBean) {</span>
+<span class="nc" id="L246">            value = ((JmxCounterMBean) value).getCount();</span>
+        }
+<span class="nc" id="L248">        metrics.put(name, value);</span>
+<span class="nc" id="L249">    }</span>
+
+    protected static void appendCacheMetrics(Map&lt;String, Object&gt; metrics,
+                                             NodeProbe probe,
+                                             String cacheType,
+                                             String metric) {
+        // &quot;RowCache&quot; + &quot;Size&quot; =&gt; &quot;row_cache_size&quot;
+<span class="nc" id="L256">        String name = humpToLine(cacheType + metric);</span>
+<span class="nc" id="L257">        metrics.put(name, probe.getCacheMetric(cacheType, metric));</span>
+<span class="nc" id="L258">    }</span>
+
+    private static String humpToLine(String name) {
+<span class="nc" id="L261">        name = name.replaceAll(&quot;[A-Z]&quot;, &quot;_$0&quot;).toLowerCase();</span>
+<span class="nc bnc" id="L262" title="All 4 branches missed.">        if (!name.isEmpty() &amp;&amp; name.charAt(0) == '_') {</span>
+<span class="nc" id="L263">            name = name.substring(1);</span>
+        }
+<span class="nc" id="L265">        return name;</span>
+    }
+
+    public Map&lt;String, Object&gt; compact() {
+<span class="nc" id="L269">        return this.executeAllHosts(this::compactHost);</span>
+    }
+
+    private Object compactHost(String host) {
+<span class="nc" id="L273">        try (NodeProbe probe = this.newNodeProbe(host)) {</span>
+<span class="nc" id="L274">            Compact compact = new Compact();</span>
+            /*
+             * Set the keyspace to be compacted
+             * NOTE: use Whitebox due to no public api is provided, args format
+             * is [&lt;keyspace&gt; &lt;tables&gt;...], the first arg means keyspace.
+             */
+<span class="nc" id="L280">            Whitebox.invoke(compact, &quot;args&quot;, new Class&lt;?&gt;[]{Object.class},</span>
+                            &quot;add&quot;, this.keyspace);
+<span class="nc" id="L282">            compact.execute(probe);</span>
+<span class="nc" id="L283">            return &quot;OK&quot;;</span>
+<span class="nc" id="L284">        } catch (Throwable e) {</span>
+<span class="nc" id="L285">            return e.toString();</span>
+        }
+    }
+
+    private Map&lt;String, Object&gt; executeAllHosts(Function&lt;String, Object&gt; func) {
+<span class="nc" id="L290">        Set&lt;Host&gt; hosts = this.cluster.getMetadata().getAllHosts();</span>
+
+<span class="nc" id="L292">        Map&lt;String, Object&gt; results = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L293">        results.put(CLUSTER_ID, this.cluster.getClusterName());</span>
+<span class="nc" id="L294">        results.put(NODES, hosts.size());</span>
+
+<span class="nc" id="L296">        Map&lt;String, Object&gt; hostsResults = InsertionOrderUtil.newMap();</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">        for (Host host : hosts) {</span>
+<span class="nc" id="L298">            InetAddress address = host.getAddress();</span>
+            String hostAddress;
+<span class="nc bnc" id="L300" title="All 2 branches missed.">            if (address instanceof Inet4Address) {</span>
+<span class="nc" id="L301">                hostAddress = host.getAddress().getHostAddress();</span>
+                /*
+                 * Translate IPv4 to IPv6 to fix issue #1843
+                 * TODO: delete this workaround code after fixed CASSANDRA-17581
+                 */
+<span class="nc" id="L306">                hostAddress = &quot;::FFFF:&quot; + hostAddress;</span>
+            } else {
+<span class="nc bnc" id="L308" title="All 2 branches missed.">                assert address instanceof Inet6Address;</span>
+<span class="nc" id="L309">                hostAddress = host.getAddress().getHostAddress();</span>
+            }
+<span class="nc" id="L311">            hostsResults.put(hostAddress, func.apply(hostAddress));</span>
+<span class="nc" id="L312">        }</span>
+<span class="nc" id="L313">        results.put(SERVERS, hostsResults);</span>
+
+<span class="nc" id="L315">        return results;</span>
+    }
+
+    private NodeProbe newNodeProbe(String host) throws IOException {
+<span class="nc" id="L319">        LOG.debug(&quot;Probe to cassandra node: '{}:{}'&quot;, host,  this.port);</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">        return this.username.isEmpty() ?</span>
+<span class="nc" id="L321">               new NodeProbe(host, this.port) :</span>
+<span class="nc" id="L322">               new NodeProbe(host, this.port, this.username, this.password);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

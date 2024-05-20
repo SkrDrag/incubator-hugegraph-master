@@ -1,0 +1,438 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RocksDBSstSessions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-rocksdb</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.rocksdbsst</a> &gt; <span class="el_source">RocksDBSstSessions.java</span></div><h1>RocksDBSstSessions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.rocksdbsst;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumnIterator;
+import org.apache.hugegraph.backend.store.rocksdb.RocksDBIngester;
+import org.apache.hugegraph.backend.store.rocksdb.RocksDBSessions;
+import org.apache.hugegraph.backend.store.rocksdb.RocksDBStdSessions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.util.E;
+import org.rocksdb.EnvOptions;
+import org.rocksdb.Options;
+import org.rocksdb.RocksDBException;
+import org.rocksdb.SstFileWriter;
+
+<span class="nc" id="L47">public class RocksDBSstSessions extends RocksDBSessions {</span>
+
+    private final String dataPath;
+    private final Map&lt;String, SstFileWriter&gt; tables;
+
+    public RocksDBSstSessions(HugeConfig config, String database, String store, String dataPath) {
+<span class="nc" id="L53">        super(config, database, store);</span>
+
+<span class="nc" id="L55">        this.dataPath = dataPath;</span>
+<span class="nc" id="L56">        this.tables = new ConcurrentHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L58">        File path = new File(this.dataPath);</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">        if (!path.exists()) {</span>
+<span class="nc" id="L60">            E.checkState(path.mkdirs(), &quot;Can't mkdir '%s'&quot;, path);</span>
+        }
+<span class="nc" id="L62">    }</span>
+
+    public RocksDBSstSessions(HugeConfig config, String dataPath, String database, String store,
+                              List&lt;String&gt; tableNames) throws RocksDBException {
+<span class="nc" id="L66">        this(config, dataPath, database, store);</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">        for (String table : tableNames) {</span>
+<span class="nc" id="L68">            this.createTable(table);</span>
+<span class="nc" id="L69">        }</span>
+<span class="nc" id="L70">    }</span>
+
+    private RocksDBSstSessions(HugeConfig config, String database, String store,
+                               RocksDBSstSessions origin) {
+<span class="nc" id="L74">        super(config, database, store);</span>
+
+<span class="nc" id="L76">        this.dataPath = origin.dataPath;</span>
+<span class="nc" id="L77">        this.tables = origin.tables;</span>
+<span class="nc" id="L78">    }</span>
+
+    @Override
+    public void open() throws Exception {
+        // pass
+<span class="nc" id="L83">    }</span>
+
+    @Override
+    protected boolean opened() {
+<span class="nc" id="L87">        return true;</span>
+    }
+
+    @Override
+    public Set&lt;String&gt; openedTables() {
+<span class="nc" id="L92">        return this.tables.keySet();</span>
+    }
+
+    @Override
+    public synchronized void createTable(String... tables) throws RocksDBException {
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        for (String table : tables) {</span>
+<span class="nc" id="L98">            this.createTable(table);</span>
+        }
+<span class="nc" id="L100">    }</span>
+
+    private void createTable(String table) throws RocksDBException {
+<span class="nc" id="L103">        String number = String.format(&quot;%04d&quot;, 1);</span>
+<span class="nc" id="L104">        Path sstFile = Paths.get(this.dataPath, table, number + RocksDBIngester.SST);</span>
+        try {
+<span class="nc" id="L106">            FileUtils.forceMkdir(sstFile.toAbsolutePath().getParent().toFile());</span>
+<span class="nc" id="L107">        } catch (IOException e) {</span>
+<span class="nc" id="L108">            throw new BackendException(&quot;Can't make directory for sst: '%s'&quot;,</span>
+<span class="nc" id="L109">                                       e, sstFile.toString());</span>
+<span class="nc" id="L110">        }</span>
+
+<span class="nc" id="L112">        EnvOptions env = new EnvOptions();</span>
+<span class="nc" id="L113">        Options options = new Options();</span>
+<span class="nc" id="L114">        RocksDBStdSessions.initOptions(this.config(), options, options, options, options);</span>
+        // NOTE: unset merge op due to SIGSEGV when cf.setMergeOperatorName()
+<span class="nc" id="L116">        options.setMergeOperatorName(&quot;not-exist-merge-op&quot;);</span>
+<span class="nc" id="L117">        SstFileWriter sst = new SstFileWriter(env, options);</span>
+<span class="nc" id="L118">        sst.open(sstFile.toString());</span>
+<span class="nc" id="L119">        this.tables.put(table, sst);</span>
+<span class="nc" id="L120">    }</span>
+
+    @Override
+    public synchronized void dropTable(String... tables) throws RocksDBException {
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        for (String table : tables) {</span>
+<span class="nc" id="L125">            this.dropTable(table);</span>
+        }
+<span class="nc" id="L127">    }</span>
+
+    public void dropTable(String table) throws RocksDBException{
+<span class="nc" id="L130">        try (SstFileWriter sst = this.tables.remove(table)) {</span>
+<span class="nc bnc" id="L131" title="All 4 branches missed.">            assert sst == null || !sst.isOwningHandle() : &quot;Please close table before drop to &quot; +</span>
+                                                          &quot;ensure call sst.finish()&quot;;
+        }
+<span class="nc" id="L134">    }</span>
+
+    @Override
+    public boolean existsTable(String table) {
+<span class="nc" id="L138">        return this.tables.containsKey(table);</span>
+    }
+
+    @Override
+    public List&lt;String&gt; property(String property) {
+<span class="nc" id="L143">        throw new UnsupportedOperationException(&quot;RocksDBSstStore property()&quot;);</span>
+    }
+
+    @Override
+    public void compactRange() {
+<span class="nc" id="L148">        throw new NotSupportException(&quot;RocksDBSstStore compactRange()&quot;);</span>
+    }
+
+    @Override
+    public RocksDBSessions copy(HugeConfig config, String database, String store) {
+<span class="nc" id="L153">        return new RocksDBSstSessions(config, database, store, this);</span>
+    }
+
+    @Override
+    public void createSnapshot(String snapshotPath) {
+<span class="nc" id="L158">        throw new UnsupportedOperationException(&quot;createSnapshot&quot;);</span>
+    }
+
+    @Override
+    public void resumeSnapshot(String snapshotPath) {
+<span class="nc" id="L163">        throw new UnsupportedOperationException(&quot;resumeSnapshot&quot;);</span>
+    }
+
+    @Override
+    public String buildSnapshotPath(String snapshotPrefix) {
+<span class="nc" id="L168">        throw new UnsupportedOperationException(&quot;buildSnapshotPath&quot;);</span>
+    }
+
+    @Override
+    public String hardLinkSnapshot(String snapshotPath) {
+<span class="nc" id="L173">        throw new UnsupportedOperationException(&quot;hardLinkSnapshot&quot;);</span>
+    }
+
+    @Override
+    public void reloadRocksDB() {
+<span class="nc" id="L178">        throw new UnsupportedOperationException(&quot;reloadRocksDB&quot;);</span>
+    }
+
+    @Override
+    public void forceCloseRocksDB() {
+<span class="nc" id="L183">        throw new UnsupportedOperationException(&quot;forceCloseRocksDB&quot;);</span>
+    }
+
+    private SstFileWriter table(String table) {
+<span class="nc" id="L187">        SstFileWriter sst = this.tables.get(table);</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (sst == null) {</span>
+<span class="nc" id="L189">            throw new BackendException(&quot;Table '%s' is not opened&quot;, table);</span>
+        }
+<span class="nc" id="L191">        return sst;</span>
+    }
+
+    @Override
+    public final Session session() {
+<span class="nc" id="L196">        return (Session) super.getOrNewSession();</span>
+    }
+
+    @Override
+    protected Session newSession() {
+<span class="nc" id="L201">        return new SstSession();</span>
+    }
+
+    @Override
+    protected synchronized void doClose() {
+<span class="nc" id="L206">        final String NO_ENTRIES = &quot;Can't create sst file with no entries&quot;;</span>
+
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        for (SstFileWriter sst : this.tables.values()) {</span>
+<span class="nc" id="L209">            E.checkState(sst.isOwningHandle(), &quot;SstFileWriter closed&quot;);</span>
+            try {
+<span class="nc" id="L211">                sst.finish();</span>
+<span class="nc" id="L212">            } catch (RocksDBException e) {</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">                if (e.getMessage().equals(NO_ENTRIES)) {</span>
+<span class="nc" id="L214">                    continue;</span>
+                }
+<span class="nc" id="L216">                throw new BackendException(&quot;Failed to close SstFileWriter&quot;, e);</span>
+<span class="nc" id="L217">            }</span>
+<span class="nc" id="L218">            sst.close();</span>
+<span class="nc" id="L219">        }</span>
+<span class="nc" id="L220">        this.tables.clear();</span>
+<span class="nc" id="L221">    }</span>
+
+    /**
+     * SstSession implement for RocksDB
+     */
+<span class="nc" id="L226">    private final class SstSession extends Session {</span>
+
+        private final Map&lt;String, Changes&gt; batch;
+
+<span class="nc" id="L230">        public SstSession() {</span>
+<span class="nc" id="L231">            this.batch = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L232">        }</span>
+
+        @Override
+        public void open() {
+<span class="nc" id="L236">            this.opened = true;</span>
+<span class="nc" id="L237">        }</span>
+
+        @Override
+        public void close() {
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            assert this.closeable();</span>
+<span class="nc" id="L242">            this.opened = false;</span>
+<span class="nc" id="L243">        }</span>
+
+        /**
+         * Any change in the session
+         */
+        @Override
+        public boolean hasChanges() {
+<span class="nc bnc" id="L250" title="All 2 branches missed.">            return this.batch.size() &gt; 0;</span>
+        }
+
+        /**
+         * Commit all updates(put/delete) to DB
+         */
+        @Override
+        public Integer commit() {
+<span class="nc" id="L258">            int count = this.batch.size();</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">            if (count == 0) {</span>
+<span class="nc" id="L260">                return 0;</span>
+            }
+
+            try {
+<span class="nc bnc" id="L264" title="All 2 branches missed.">                for (Entry&lt;String, Changes&gt; table : this.batch.entrySet()) {</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">                    if (table.getValue().isEmpty() ||</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">                        table.getKey().endsWith(&quot;i&quot;)) {</span>
+                        // Skip empty value table or index table
+<span class="nc" id="L268">                        continue;</span>
+                    }
+
+                    // TODO: limit individual SST file size
+<span class="nc" id="L272">                    SstFileWriter sst = table(table.getKey());</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">                    for (Pair&lt;byte[], byte[]&gt; change : table.getValue()) {</span>
+<span class="nc" id="L274">                        sst.put(change.getKey(), change.getValue());</span>
+<span class="nc" id="L275">                    }</span>
+<span class="nc" id="L276">                }</span>
+<span class="nc" id="L277">            } catch (RocksDBException e) {</span>
+<span class="nc" id="L278">                throw new BackendException(&quot;Failed to commit&quot;, e);</span>
+<span class="nc" id="L279">            }</span>
+
+            // Clear batch if write() successfully (retained if failed)
+<span class="nc" id="L282">            this.batch.clear();</span>
+
+<span class="nc" id="L284">            return count;</span>
+        }
+
+        /**
+         * Rollback updates not committed in the session
+         */
+        @Override
+        public void rollback() {
+<span class="nc" id="L292">            this.batch.clear();</span>
+<span class="nc" id="L293">        }</span>
+
+        @Override
+        public String dataPath() {
+<span class="nc" id="L297">            return RocksDBSstSessions.this.dataPath;</span>
+        }
+
+        @Override
+        public String walPath() {
+<span class="nc" id="L302">            return RocksDBSstSessions.this.dataPath;</span>
+        }
+
+        /**
+         * Get property value by name from specified table
+         */
+        @Override
+        public String property(String table, String property) {
+<span class="nc" id="L310">            throw new NotSupportException(&quot;RocksDBSstStore property()&quot;);</span>
+        }
+
+        @Override
+        public Pair&lt;byte[], byte[]&gt; keyRange(String table) {
+<span class="nc" id="L315">            return null;</span>
+        }
+
+        @Override
+        public void compactRange(String table) {
+<span class="nc" id="L320">            throw new NotSupportException(&quot;RocksDBSstStore compactRange()&quot;);</span>
+        }
+
+        /**
+         * Add a KV record to a table
+         */
+        @Override
+        public void put(String table, byte[] key, byte[] value) {
+<span class="nc" id="L328">            Changes changes = this.batch.get(table);</span>
+<span class="nc bnc" id="L329" title="All 2 branches missed.">            if (changes == null) {</span>
+<span class="nc" id="L330">                changes = new Changes();</span>
+<span class="nc" id="L331">                this.batch.put(table, changes);</span>
+            }
+<span class="nc" id="L333">            changes.add(Pair.of(key, value));</span>
+<span class="nc" id="L334">        }</span>
+
+        /**
+         * Merge a record to an existing key to a table
+         * For more details about merge-operator:
+         *  &lt;a href=&quot;https://github.com/facebook/rocksdb/wiki/merge-operator&quot;&gt;...&lt;/a&gt;
+         */
+        @Override
+        public void merge(String table, byte[] key, byte[] value) {
+<span class="nc" id="L343">            throw new NotSupportException(&quot;RocksDBSstStore merge()&quot;);</span>
+        }
+
+        /**
+         * Merge a record to an existing key to a table and commit immediately
+         */
+        @Override
+        public void increase(String table, byte[] key, byte[] value) {
+<span class="nc" id="L351">            throw new NotSupportException(&quot;RocksDBSstStore increase()&quot;);</span>
+        }
+
+        /**
+         * Delete a record by key from a table
+         */
+        @Override
+        public void delete(String table, byte[] key) {
+<span class="nc" id="L359">            throw new NotSupportException(&quot;RocksDBSstStore delete()&quot;);</span>
+        }
+
+        /**
+         * Delete the only one version of a record by key from a table
+         * NOTE: requires that the key exists and was not overwritten.
+         */
+        @Override
+        public void deleteSingle(String table, byte[] key) {
+<span class="nc" id="L368">            throw new NotSupportException(&quot;RocksDBSstStore deleteSingle()&quot;);</span>
+        }
+
+        /**
+         * Delete a record by key(or prefix with key) from a table
+         */
+        @Override
+        public void deletePrefix(String table, byte[] key) {
+<span class="nc" id="L376">            throw new NotSupportException(&quot;RocksDBSstStore deletePrefix()&quot;);</span>
+        }
+
+        /**
+         * Delete a range of keys from a table
+         */
+        @Override
+        public void deleteRange(String table, byte[] keyFrom, byte[] keyTo) {
+<span class="nc" id="L384">            throw new NotSupportException(&quot;RocksDBSstStore deleteRange()&quot;);</span>
+        }
+
+        /**
+         * Get a record by key from a table
+         */
+        @Override
+        public byte[] get(String table, byte[] key) {
+<span class="nc" id="L392">            return null;</span>
+        }
+
+        /**
+         * Get records by a list of keys from a table
+         */
+        @Override
+        public BackendColumnIterator get(String table, List&lt;byte[]&gt; keys) {
+<span class="nc bnc" id="L400" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+<span class="nc" id="L401">            return BackendColumnIterator.empty();</span>
+        }
+
+        /**
+         * Scan all records from a table
+         */
+        @Override
+        public BackendColumnIterator scan(String table) {
+<span class="nc bnc" id="L409" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+<span class="nc" id="L410">            return BackendColumnIterator.empty();</span>
+        }
+
+        /**
+         * Scan records by key prefix from a table
+         */
+        @Override
+        public BackendColumnIterator scan(String table, byte[] prefix) {
+<span class="nc bnc" id="L418" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+<span class="nc" id="L419">            return BackendColumnIterator.empty();</span>
+        }
+
+        /**
+         * Scan records by key range from a table
+         */
+        @Override
+        public BackendColumnIterator scan(String table, byte[] keyFrom,
+                                          byte[] keyTo, int scanType) {
+<span class="nc bnc" id="L428" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+<span class="nc" id="L429">            return BackendColumnIterator.empty();</span>
+        }
+    }
+
+    private static class Changes extends ArrayList&lt;Pair&lt;byte[], byte[]&gt;&gt; {
+
+        private static final long serialVersionUID = 9047034706183029125L;
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

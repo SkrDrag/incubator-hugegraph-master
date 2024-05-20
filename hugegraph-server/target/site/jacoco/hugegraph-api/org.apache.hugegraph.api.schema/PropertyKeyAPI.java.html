@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PropertyKeyAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.schema</a> &gt; <span class="el_source">PropertyKeyAPI.java</span></div><h1>PropertyKeyAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.schema;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.RedirectFilter;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.Userdata;
+import org.apache.hugegraph.type.define.AggregateType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.type.define.WriteType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.ImmutableMap;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/schema/propertykeys&quot;)
+@Singleton
+@Tag(name = &quot;PropertyKeyAPI&quot;)
+<span class="nc" id="L68">public class PropertyKeyAPI extends API {</span>
+
+<span class="nc" id="L70">    private static final Logger LOG = Log.logger(PropertyKeyAPI.class);</span>
+
+    @POST
+    @Timed
+    @Status(Status.ACCEPTED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=property_key_write&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonPropertyKey jsonPropertyKey) {
+<span class="nc" id="L82">        LOG.debug(&quot;Graph [{}] create property key: {}&quot;, graph, jsonPropertyKey);</span>
+<span class="nc" id="L83">        checkCreatingBody(jsonPropertyKey);</span>
+
+<span class="nc" id="L85">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L86">        PropertyKey.Builder builder = jsonPropertyKey.convert2Builder(g);</span>
+<span class="nc" id="L87">        SchemaElement.TaskWithSchema pk = builder.createWithTask();</span>
+<span class="nc" id="L88">        return manager.serializer(g).writeTaskWithSchema(pk);</span>
+    }
+
+    @PUT
+    @Timed
+    @Status(Status.ACCEPTED)
+    @Path(&quot;{name}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=property_key_write&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;name&quot;) String name,
+                         @QueryParam(&quot;action&quot;) String action,
+                         PropertyKeyAPI.JsonPropertyKey jsonPropertyKey) {
+<span class="nc" id="L104">        LOG.debug(&quot;Graph [{}] {} property key: {}&quot;,</span>
+                  graph, action, jsonPropertyKey);
+<span class="nc" id="L106">        checkUpdatingBody(jsonPropertyKey);</span>
+<span class="nc" id="L107">        E.checkArgument(name.equals(jsonPropertyKey.name),</span>
+                        &quot;The name in url(%s) and body(%s) are different&quot;,
+                        name, jsonPropertyKey.name);
+
+<span class="nc" id="L111">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (ACTION_CLEAR.equals(action)) {</span>
+<span class="nc" id="L113">            PropertyKey propertyKey = g.propertyKey(name);</span>
+<span class="nc" id="L114">            E.checkArgument(propertyKey.olap(),</span>
+                            &quot;Only olap property key can do action clear, &quot; +
+                            &quot;but got '%s'&quot;, propertyKey);
+<span class="nc" id="L117">            Id id = g.clearPropertyKey(propertyKey);</span>
+<span class="nc" id="L118">            SchemaElement.TaskWithSchema pk =</span>
+                    new SchemaElement.TaskWithSchema(propertyKey, id);
+<span class="nc" id="L120">            return manager.serializer(g).writeTaskWithSchema(pk);</span>
+        }
+
+        // Parse action parameter
+<span class="nc" id="L124">        boolean append = checkAndParseAction(action);</span>
+
+<span class="nc" id="L126">        PropertyKey.Builder builder = jsonPropertyKey.convert2Builder(g);</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        PropertyKey propertyKey = append ?</span>
+<span class="nc" id="L128">                                  builder.append() :</span>
+<span class="nc" id="L129">                                  builder.eliminate();</span>
+<span class="nc" id="L130">        SchemaElement.TaskWithSchema pk =</span>
+                new SchemaElement.TaskWithSchema(propertyKey, IdGenerator.ZERO);
+<span class="nc" id="L132">        return manager.serializer(g).writeTaskWithSchema(pk);</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=property_key_read&quot;})
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;names&quot;) List&lt;String&gt; names) {
+<span class="nc" id="L142">        boolean listAll = CollectionUtils.isEmpty(names);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (listAll) {</span>
+<span class="nc" id="L144">            LOG.debug(&quot;Graph [{}] list property keys&quot;, graph);</span>
+        } else {
+<span class="nc" id="L146">            LOG.debug(&quot;Graph [{}] get property keys by names {}&quot;, graph, names);</span>
+        }
+
+<span class="nc" id="L149">        HugeGraph g = graph(manager, graph);</span>
+        List&lt;PropertyKey&gt; propKeys;
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (listAll) {</span>
+<span class="nc" id="L152">            propKeys = g.schema().getPropertyKeys();</span>
+        } else {
+<span class="nc" id="L154">            propKeys = new ArrayList&lt;&gt;(names.size());</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            for (String name : names) {</span>
+<span class="nc" id="L156">                propKeys.add(g.schema().getPropertyKey(name));</span>
+<span class="nc" id="L157">            }</span>
+        }
+<span class="nc" id="L159">        return manager.serializer(g).writePropertyKeys(propKeys);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=property_key_read&quot;})
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L170">        LOG.debug(&quot;Graph [{}] get property key by name '{}'&quot;, graph, name);</span>
+
+<span class="nc" id="L172">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L173">        PropertyKey propertyKey = g.schema().getPropertyKey(name);</span>
+<span class="nc" id="L174">        return manager.serializer(g).writePropertyKey(propertyKey);</span>
+    }
+
+    @DELETE
+    @Timed
+    @Status(Status.ACCEPTED)
+    @Path(&quot;{name}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=property_key_delete&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public Map&lt;String, Id&gt; delete(@Context GraphManager manager,
+                                  @PathParam(&quot;graph&quot;) String graph,
+                                  @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L188">        LOG.debug(&quot;Graph [{}] remove property key by name '{}'&quot;, graph, name);</span>
+
+<span class="nc" id="L190">        HugeGraph g = graph(manager, graph);</span>
+        // Throw 404 if not exists
+<span class="nc" id="L192">        g.schema().getPropertyKey(name);</span>
+<span class="nc" id="L193">        return ImmutableMap.of(&quot;task_id&quot;,</span>
+<span class="nc" id="L194">                               g.schema().propertyKey(name).remove());</span>
+    }
+
+    /**
+     * JsonPropertyKey is only used to receive create and append requests
+     */
+    @JsonIgnoreProperties(value = {&quot;status&quot;})
+    private static class JsonPropertyKey implements Checkable {
+
+        @JsonProperty(&quot;id&quot;)
+        public long id;
+        @JsonProperty(&quot;name&quot;)
+        public String name;
+        @JsonProperty(&quot;cardinality&quot;)
+        public Cardinality cardinality;
+        @JsonProperty(&quot;data_type&quot;)
+        public DataType dataType;
+        @JsonProperty(&quot;aggregate_type&quot;)
+        public AggregateType aggregateType;
+        @JsonProperty(&quot;write_type&quot;)
+        public WriteType writeType;
+        @JsonProperty(&quot;properties&quot;)
+        public String[] properties;
+        @JsonProperty(&quot;user_data&quot;)
+        public Userdata userdata;
+        @JsonProperty(&quot;check_exist&quot;)
+        public Boolean checkExist;
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L224">            E.checkArgumentNotNull(this.name,</span>
+                                   &quot;The name of property key can't be null&quot;);
+<span class="nc bnc" id="L226" title="All 4 branches missed.">            E.checkArgument(this.properties == null ||</span>
+                            this.properties.length == 0,
+                            &quot;Not allowed to pass properties when &quot; +
+                            &quot;creating property key since it doesn't &quot; +
+                            &quot;support meta properties currently&quot;);
+<span class="nc" id="L231">        }</span>
+
+        private PropertyKey.Builder convert2Builder(HugeGraph g) {
+<span class="nc" id="L234">            PropertyKey.Builder builder = g.schema().propertyKey(this.name);</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">            if (this.id != 0) {</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">                E.checkArgument(this.id &gt; 0,</span>
+                                &quot;Only positive number can be assign as &quot; +
+                                &quot;property key id&quot;);
+<span class="nc bnc" id="L239" title="All 2 branches missed.">                E.checkArgument(g.mode() == GraphMode.RESTORING,</span>
+                                &quot;Only accept property key id when graph in &quot; +
+                                &quot;RESTORING mode, but '%s' is in mode '%s'&quot;,
+<span class="nc" id="L242">                                g, g.mode());</span>
+<span class="nc" id="L243">                builder.id(this.id);</span>
+            }
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (this.cardinality != null) {</span>
+<span class="nc" id="L246">                builder.cardinality(this.cardinality);</span>
+            }
+<span class="nc bnc" id="L248" title="All 2 branches missed.">            if (this.dataType != null) {</span>
+<span class="nc" id="L249">                builder.dataType(this.dataType);</span>
+            }
+<span class="nc bnc" id="L251" title="All 2 branches missed.">            if (this.aggregateType != null) {</span>
+<span class="nc" id="L252">                builder.aggregateType(this.aggregateType);</span>
+            }
+<span class="nc bnc" id="L254" title="All 2 branches missed.">            if (this.writeType != null) {</span>
+<span class="nc" id="L255">                builder.writeType(this.writeType);</span>
+            }
+<span class="nc bnc" id="L257" title="All 2 branches missed.">            if (this.userdata != null) {</span>
+<span class="nc" id="L258">                builder.userdata(this.userdata);</span>
+            }
+<span class="nc bnc" id="L260" title="All 2 branches missed.">            if (this.checkExist != null) {</span>
+<span class="nc" id="L261">                builder.checkExist(this.checkExist);</span>
+            }
+<span class="nc" id="L263">            return builder;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L268">            return String.format(&quot;JsonPropertyKey{name=%s, cardinality=%s, &quot; +</span>
+                                 &quot;dataType=%s, aggregateType=%s, &quot; +
+                                 &quot;writeType=%s, properties=%s}&quot;,
+                                 this.name, this.cardinality,
+                                 this.dataType, this.aggregateType,
+<span class="nc" id="L273">                                 this.writeType, Arrays.toString(this.properties));</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

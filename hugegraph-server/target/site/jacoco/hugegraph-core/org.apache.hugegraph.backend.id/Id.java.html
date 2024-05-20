@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Id.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.id</a> &gt; <span class="el_source">Id.java</span></div><h1>Id.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.id;
+
+import org.apache.hugegraph.util.E;
+
+public interface Id extends Comparable&lt;Id&gt; {
+
+    int UUID_LENGTH = 16;
+
+    Object asObject();
+
+    String asString();
+
+    long asLong();
+
+    byte[] asBytes();
+
+    int length();
+
+    IdType type();
+
+    default boolean number() {
+<span class="nc bnc" id="L39" title="All 2 branches missed.">        return this.type() == IdType.LONG;</span>
+    }
+
+    default boolean uuid() {
+<span class="nc bnc" id="L43" title="All 2 branches missed.">        return this.type() == IdType.UUID;</span>
+    }
+
+    default boolean string() {
+<span class="nc bnc" id="L47" title="All 2 branches missed.">        return this.type() == IdType.STRING;</span>
+    }
+
+    default boolean edge() {
+<span class="nc bnc" id="L51" title="All 2 branches missed.">        return this.type() == IdType.EDGE;</span>
+    }
+
+<span class="nc" id="L54">    enum IdType {</span>
+
+<span class="nc" id="L56">        UNKNOWN,</span>
+<span class="nc" id="L57">        LONG,</span>
+<span class="nc" id="L58">        UUID,</span>
+<span class="nc" id="L59">        STRING,</span>
+<span class="nc" id="L60">        EDGE;</span>
+
+        public char prefix() {
+<span class="nc bnc" id="L63" title="All 2 branches missed.">            if (this == UNKNOWN) {</span>
+<span class="nc" id="L64">                return 'N';</span>
+            }
+<span class="nc" id="L66">            return this.name().charAt(0);</span>
+        }
+
+        public static IdType valueOfPrefix(String id) {
+<span class="nc bnc" id="L70" title="All 4 branches missed.">            E.checkArgument(id != null &amp;&amp; id.length() &gt; 0,</span>
+                            &quot;Invalid id '%s'&quot;, id);
+<span class="nc bnc" id="L72" title="All 5 branches missed.">            switch (id.charAt(0)) {</span>
+                case 'L':
+<span class="nc" id="L74">                    return IdType.LONG;</span>
+                case 'U':
+<span class="nc" id="L76">                    return IdType.UUID;</span>
+                case 'S':
+<span class="nc" id="L78">                    return IdType.STRING;</span>
+                case 'E':
+<span class="nc" id="L80">                    return IdType.EDGE;</span>
+                default:
+<span class="nc" id="L82">                    return IdType.UNKNOWN;</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

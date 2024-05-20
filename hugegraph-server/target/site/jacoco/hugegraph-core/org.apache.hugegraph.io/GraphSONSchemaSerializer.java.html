@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GraphSONSchemaSerializer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.io</a> &gt; <span class="el_source">GraphSONSchemaSerializer.java</span></div><h1>GraphSONSchemaSerializer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.io;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+
+<span class="nc" id="L31">public class GraphSONSchemaSerializer {</span>
+
+    public Map&lt;HugeKeys, Object&gt; writeVertexLabel(VertexLabel vertexLabel) {
+<span class="nc" id="L34">        HugeGraph graph = vertexLabel.graph();</span>
+<span class="nc bnc" id="L35" title="All 2 branches missed.">        assert graph != null;</span>
+
+<span class="nc" id="L37">        Map&lt;HugeKeys, Object&gt; map = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L38">        map.put(HugeKeys.ID, vertexLabel.id().asLong());</span>
+<span class="nc" id="L39">        map.put(HugeKeys.NAME, vertexLabel.name());</span>
+<span class="nc" id="L40">        map.put(HugeKeys.ID_STRATEGY, vertexLabel.idStrategy());</span>
+<span class="nc" id="L41">        map.put(HugeKeys.PRIMARY_KEYS,</span>
+<span class="nc" id="L42">                graph.mapPkId2Name(vertexLabel.primaryKeys()));</span>
+<span class="nc" id="L43">        map.put(HugeKeys.NULLABLE_KEYS,</span>
+<span class="nc" id="L44">                graph.mapPkId2Name(vertexLabel.nullableKeys()));</span>
+<span class="nc" id="L45">        map.put(HugeKeys.INDEX_LABELS,</span>
+<span class="nc" id="L46">                graph.mapIlId2Name(vertexLabel.indexLabels()));</span>
+<span class="nc" id="L47">        map.put(HugeKeys.PROPERTIES,</span>
+<span class="nc" id="L48">                graph.mapPkId2Name(vertexLabel.properties()));</span>
+<span class="nc" id="L49">        map.put(HugeKeys.STATUS, vertexLabel.status());</span>
+<span class="nc" id="L50">        map.put(HugeKeys.TTL, vertexLabel.ttl());</span>
+<span class="nc" id="L51">        String ttlStartTimeName = vertexLabel.ttlStartTimeName();</span>
+<span class="nc bnc" id="L52" title="All 2 branches missed.">        if (ttlStartTimeName != null) {</span>
+<span class="nc" id="L53">            map.put(HugeKeys.TTL_START_TIME, ttlStartTimeName);</span>
+        }
+<span class="nc" id="L55">        map.put(HugeKeys.ENABLE_LABEL_INDEX, vertexLabel.enableLabelIndex());</span>
+<span class="nc" id="L56">        map.put(HugeKeys.USER_DATA, vertexLabel.userdata());</span>
+<span class="nc" id="L57">        return map;</span>
+    }
+
+    public Map&lt;HugeKeys, Object&gt; writeEdgeLabel(EdgeLabel edgeLabel) {
+<span class="nc" id="L61">        HugeGraph graph = edgeLabel.graph();</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        assert graph != null;</span>
+
+<span class="nc" id="L64">        Map&lt;HugeKeys, Object&gt; map = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L65">        map.put(HugeKeys.ID, edgeLabel.id().asLong());</span>
+<span class="nc" id="L66">        map.put(HugeKeys.NAME, edgeLabel.name());</span>
+<span class="nc" id="L67">        map.put(HugeKeys.SOURCE_LABEL, edgeLabel.sourceLabelName());</span>
+<span class="nc" id="L68">        map.put(HugeKeys.TARGET_LABEL, edgeLabel.targetLabelName());</span>
+<span class="nc" id="L69">        map.put(HugeKeys.FREQUENCY, edgeLabel.frequency());</span>
+<span class="nc" id="L70">        map.put(HugeKeys.SORT_KEYS,</span>
+<span class="nc" id="L71">                graph.mapPkId2Name(edgeLabel.sortKeys()));</span>
+<span class="nc" id="L72">        map.put(HugeKeys.NULLABLE_KEYS,</span>
+<span class="nc" id="L73">                graph.mapPkId2Name(edgeLabel.nullableKeys()));</span>
+<span class="nc" id="L74">        map.put(HugeKeys.INDEX_LABELS,</span>
+<span class="nc" id="L75">                graph.mapIlId2Name(edgeLabel.indexLabels()));</span>
+<span class="nc" id="L76">        map.put(HugeKeys.PROPERTIES,</span>
+<span class="nc" id="L77">                graph.mapPkId2Name(edgeLabel.properties()));</span>
+<span class="nc" id="L78">        map.put(HugeKeys.STATUS, edgeLabel.status());</span>
+<span class="nc" id="L79">        map.put(HugeKeys.TTL, edgeLabel.ttl());</span>
+<span class="nc" id="L80">        String ttlStartTimeName = edgeLabel.ttlStartTimeName();</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (ttlStartTimeName != null) {</span>
+<span class="nc" id="L82">            map.put(HugeKeys.TTL_START_TIME, ttlStartTimeName);</span>
+        }
+<span class="nc" id="L84">        map.put(HugeKeys.ENABLE_LABEL_INDEX, edgeLabel.enableLabelIndex());</span>
+<span class="nc" id="L85">        map.put(HugeKeys.USER_DATA, edgeLabel.userdata());</span>
+<span class="nc" id="L86">        return map;</span>
+    }
+
+    public Map&lt;HugeKeys, Object&gt; writePropertyKey(PropertyKey propertyKey) {
+<span class="nc" id="L90">        HugeGraph graph = propertyKey.graph();</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        assert graph != null;</span>
+
+<span class="nc" id="L93">        Map&lt;HugeKeys, Object&gt; map = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L94">        map.put(HugeKeys.ID, propertyKey.id().asLong());</span>
+<span class="nc" id="L95">        map.put(HugeKeys.NAME, propertyKey.name());</span>
+<span class="nc" id="L96">        map.put(HugeKeys.DATA_TYPE, propertyKey.dataType());</span>
+<span class="nc" id="L97">        map.put(HugeKeys.CARDINALITY, propertyKey.cardinality());</span>
+<span class="nc" id="L98">        map.put(HugeKeys.AGGREGATE_TYPE, propertyKey.aggregateType());</span>
+<span class="nc" id="L99">        map.put(HugeKeys.WRITE_TYPE, propertyKey.writeType());</span>
+<span class="nc" id="L100">        map.put(HugeKeys.PROPERTIES,</span>
+<span class="nc" id="L101">                graph.mapPkId2Name(propertyKey.properties()));</span>
+<span class="nc" id="L102">        map.put(HugeKeys.STATUS, propertyKey.status());</span>
+<span class="nc" id="L103">        map.put(HugeKeys.USER_DATA, propertyKey.userdata());</span>
+<span class="nc" id="L104">        return map;</span>
+    }
+
+    public Map&lt;HugeKeys, Object&gt; writeIndexLabel(IndexLabel indexLabel) {
+<span class="nc" id="L108">        HugeGraph graph = indexLabel.graph();</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        assert graph != null;</span>
+
+<span class="nc" id="L111">        Map&lt;HugeKeys, Object&gt; map = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L112">        map.put(HugeKeys.ID, indexLabel.id().asLong());</span>
+<span class="nc" id="L113">        map.put(HugeKeys.NAME, indexLabel.name());</span>
+<span class="nc" id="L114">        map.put(HugeKeys.BASE_TYPE, indexLabel.baseType());</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (indexLabel.baseType() == HugeType.VERTEX_LABEL) {</span>
+<span class="nc" id="L116">            map.put(HugeKeys.BASE_VALUE,</span>
+<span class="nc" id="L117">                    graph.vertexLabel(indexLabel.baseValue()).name());</span>
+        } else {
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            assert indexLabel.baseType() == HugeType.EDGE_LABEL;</span>
+<span class="nc" id="L120">            map.put(HugeKeys.BASE_VALUE,</span>
+<span class="nc" id="L121">                    graph.edgeLabel(indexLabel.baseValue()).name());</span>
+        }
+<span class="nc" id="L123">        map.put(HugeKeys.INDEX_TYPE, indexLabel.indexType());</span>
+<span class="nc" id="L124">        map.put(HugeKeys.FIELDS, graph.mapPkId2Name(indexLabel.indexFields()));</span>
+<span class="nc" id="L125">        map.put(HugeKeys.STATUS, indexLabel.status());</span>
+<span class="nc" id="L126">        map.put(HugeKeys.USER_DATA, indexLabel.userdata());</span>
+<span class="nc" id="L127">        return map;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

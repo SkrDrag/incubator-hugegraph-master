@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SchemaIndexTransaction.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.tx</a> &gt; <span class="el_source">SchemaIndexTransaction.java</span></div><h1>SchemaIndexTransaction.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.tx;
+
+import java.util.Iterator;
+
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.IdQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.structure.HugeIndex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.E;
+
+<span class="nc" id="L39">public class SchemaIndexTransaction extends AbstractTransaction {</span>
+
+    public SchemaIndexTransaction(HugeGraphParams graph, BackendStore store) {
+<span class="nc" id="L42">        super(graph, store);</span>
+<span class="nc" id="L43">    }</span>
+
+    @Watched(prefix = &quot;index&quot;)
+    public void updateNameIndex(SchemaElement element, boolean removed) {
+<span class="nc bnc" id="L47" title="All 2 branches missed.">        if (!this.needIndexForName()) {</span>
+<span class="nc" id="L48">            return;</span>
+        }
+
+<span class="nc" id="L51">        IndexLabel indexLabel = IndexLabel.label(element.type());</span>
+        // Update name index if backend store not supports name-query
+<span class="nc" id="L53">        HugeIndex index = new HugeIndex(this.graph(), indexLabel);</span>
+<span class="nc" id="L54">        index.fieldValues(element.name());</span>
+<span class="nc" id="L55">        index.elementIds(element.id());</span>
+
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        if (removed) {</span>
+<span class="nc" id="L58">            this.doEliminate(this.serializer.writeIndex(index));</span>
+        } else {
+<span class="nc" id="L60">            this.doAppend(this.serializer.writeIndex(index));</span>
+        }
+<span class="nc" id="L62">    }</span>
+
+    private boolean needIndexForName() {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        return !this.store().features().supportsQuerySchemaByName();</span>
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    @Override
+    public QueryResults&lt;BackendEntry&gt; query(Query query) {
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (query instanceof ConditionQuery) {</span>
+<span class="nc" id="L72">            ConditionQuery q = (ConditionQuery) query;</span>
+<span class="nc bnc" id="L73" title="All 4 branches missed.">            if (q.allSysprop() &amp;&amp; q.conditionsSize() == 1 &amp;&amp;</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">                q.containsCondition(HugeKeys.NAME)) {</span>
+<span class="nc" id="L75">                return this.queryByName(q);</span>
+            }
+        }
+<span class="nc" id="L78">        return super.query(query);</span>
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    private QueryResults&lt;BackendEntry&gt; queryByName(ConditionQuery query) {
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        if (!this.needIndexForName()) {</span>
+<span class="nc" id="L84">            return super.query(query);</span>
+        }
+<span class="nc" id="L86">        IndexLabel il = IndexLabel.label(query.resultType());</span>
+<span class="nc" id="L87">        String name = query.condition(HugeKeys.NAME);</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        E.checkState(name != null, &quot;The name in condition can't be null &quot; +</span>
+                     &quot;when querying schema by name&quot;);
+
+        ConditionQuery indexQuery;
+<span class="nc" id="L92">        indexQuery = new ConditionQuery(HugeType.SECONDARY_INDEX, query);</span>
+<span class="nc" id="L93">        indexQuery.eq(HugeKeys.FIELD_VALUES, name);</span>
+<span class="nc" id="L94">        indexQuery.eq(HugeKeys.INDEX_LABEL_ID, il.id());</span>
+
+<span class="nc" id="L96">        IdQuery idQuery = new IdQuery(query.resultType(), query);</span>
+<span class="nc" id="L97">        Iterator&lt;BackendEntry&gt; entries = super.query(indexQuery).iterator();</span>
+        try {
+<span class="nc bnc" id="L99" title="All 2 branches missed.">            while (entries.hasNext()) {</span>
+<span class="nc" id="L100">                HugeIndex index = this.serializer.readIndex(graph(), indexQuery,</span>
+<span class="nc" id="L101">                                                            entries.next());</span>
+<span class="nc" id="L102">                idQuery.query(index.elementIds());</span>
+<span class="nc" id="L103">                Query.checkForceCapacity(idQuery.idsSize());</span>
+<span class="nc" id="L104">            }</span>
+        } finally {
+<span class="nc" id="L106">            CloseableIterator.closeIterator(entries);</span>
+        }
+
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        if (idQuery.ids().isEmpty()) {</span>
+<span class="nc" id="L110">            return QueryResults.empty();</span>
+        }
+
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        assert idQuery.idsSize() == 1 : idQuery.ids();</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        if (idQuery.idsSize() &gt; 1) {</span>
+<span class="nc" id="L115">            LOG.warn(&quot;Multiple ids are found with same name '{}': {}&quot;,</span>
+<span class="nc" id="L116">                     name, idQuery.ids());</span>
+        }
+<span class="nc" id="L118">        return super.query(idQuery);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,223 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PostgresqlStoreProvider.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.postgresql</a> &gt; <span class="el_source">PostgresqlStoreProvider.java</span></div><h1>PostgresqlStoreProvider.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.postgresql;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.backend.store.mysql.MysqlSessions;
+import org.apache.hugegraph.backend.store.mysql.MysqlStoreProvider;
+import org.apache.hugegraph.backend.store.mysql.MysqlTable;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.Log;
+
+<span class="nc" id="L37">public class PostgresqlStoreProvider extends MysqlStoreProvider {</span>
+
+<span class="nc" id="L39">    private static final Logger LOG = Log.logger(PostgresqlStoreProvider.class);</span>
+
+    @Override
+    protected BackendStore newSchemaStore(HugeConfig config, String store) {
+<span class="nc" id="L43">        return new PostgresqlSchemaStore(this, this.database(), store);</span>
+    }
+
+    @Override
+    protected BackendStore newGraphStore(HugeConfig config, String store) {
+<span class="nc" id="L48">        return new PostgresqlGraphStore(this, this.database(), store);</span>
+    }
+
+    @Override
+    protected BackendStore newSystemStore(HugeConfig config, String store) {
+<span class="nc" id="L53">        return new PostgresqlSystemStore(this, this.database(), store);</span>
+    }
+
+    @Override
+    public String type() {
+<span class="nc" id="L58">        return &quot;postgresql&quot;;</span>
+    }
+
+    @Override
+    public String driverVersion() {
+        /*
+         * Versions history:
+         * [1.0] #441: supports PostgreSQL and Cockroach backend
+         * [1.1] #270 &amp; #398: support shard-index and vertex + sortkey prefix,
+         *                    also split range table to rangeInt, rangeFloat,
+         *                    rangeLong and rangeDouble
+         * [1.2] #633: support unique index
+         * [1.3] #661: reduce the storage of vertex/edge id
+         * [1.4] #691: support aggregate property
+         * [1.5] #746: support userdata for indexlabel
+         * [1.6] #894: asStoredString() encoding is changed to signed B64
+         *             instead of sortable B64
+         * [1.7] #295: support ttl for vertex and edge
+         * [1.8] #1333: support read frequency for property key
+         * [1.9] #1506: rename read frequency to write type
+         * [1.9] #1533: add meta table in system store
+         */
+<span class="nc" id="L80">        return &quot;1.9&quot;;</span>
+    }
+
+    public static class PostgresqlSchemaStore extends PostgresqlStore {
+
+        private final PostgresqlTables.Counters counters;
+
+        public PostgresqlSchemaStore(BackendStoreProvider provider,
+                                     String database, String store) {
+<span class="nc" id="L89">            super(provider, database, store);</span>
+
+<span class="nc" id="L91">            this.counters = new PostgresqlTables.Counters();</span>
+
+<span class="nc" id="L93">            registerTableManager(HugeType.VERTEX_LABEL,</span>
+                                 new PostgresqlTables.VertexLabel());
+<span class="nc" id="L95">            registerTableManager(HugeType.EDGE_LABEL,</span>
+                                 new PostgresqlTables.EdgeLabel());
+<span class="nc" id="L97">            registerTableManager(HugeType.PROPERTY_KEY,</span>
+                                 new PostgresqlTables.PropertyKey());
+<span class="nc" id="L99">            registerTableManager(HugeType.INDEX_LABEL,</span>
+                                 new PostgresqlTables.IndexLabel());
+<span class="nc" id="L101">        }</span>
+
+        @Override
+        protected Collection&lt;MysqlTable&gt; tables() {
+<span class="nc" id="L105">            List&lt;MysqlTable&gt; tables = new ArrayList&lt;&gt;(super.tables());</span>
+<span class="nc" id="L106">            tables.add(this.counters);</span>
+<span class="nc" id="L107">            return tables;</span>
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L112">            this.checkOpened();</span>
+<span class="nc" id="L113">            MysqlSessions.Session session = this.session(type);</span>
+<span class="nc" id="L114">            this.counters.increaseCounter(session, type, increment);</span>
+<span class="nc" id="L115">        }</span>
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L119">            this.checkOpened();</span>
+<span class="nc" id="L120">            MysqlSessions.Session session = this.session(type);</span>
+<span class="nc" id="L121">            return this.counters.getCounter(session, type);</span>
+        }
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L126">            return true;</span>
+        }
+    }
+
+    public static class PostgresqlGraphStore extends PostgresqlStore {
+
+        public PostgresqlGraphStore(BackendStoreProvider provider,
+                                    String database, String store) {
+<span class="nc" id="L134">            super(provider, database, store);</span>
+
+<span class="nc" id="L136">            registerTableManager(HugeType.VERTEX,</span>
+                                 new PostgresqlTables.Vertex(store));
+<span class="nc" id="L138">            registerTableManager(HugeType.EDGE_OUT,</span>
+                                 new PostgresqlTables.Edge(store,
+                                                           Directions.OUT));
+<span class="nc" id="L141">            registerTableManager(HugeType.EDGE_IN,</span>
+                                 new PostgresqlTables.Edge(store,
+                                                           Directions.IN));
+<span class="nc" id="L144">            registerTableManager(HugeType.SECONDARY_INDEX,</span>
+                                 new PostgresqlTables.SecondaryIndex(store));
+<span class="nc" id="L146">            registerTableManager(HugeType.RANGE_INT_INDEX,</span>
+                                 new PostgresqlTables.RangeIntIndex(store));
+<span class="nc" id="L148">            registerTableManager(HugeType.RANGE_FLOAT_INDEX,</span>
+                                 new PostgresqlTables.RangeFloatIndex(store));
+<span class="nc" id="L150">            registerTableManager(HugeType.RANGE_LONG_INDEX,</span>
+                                 new PostgresqlTables.RangeLongIndex(store));
+<span class="nc" id="L152">            registerTableManager(HugeType.RANGE_DOUBLE_INDEX,</span>
+                                 new PostgresqlTables.RangeDoubleIndex(store));
+<span class="nc" id="L154">            registerTableManager(HugeType.SEARCH_INDEX,</span>
+                                 new PostgresqlTables.SearchIndex(store));
+<span class="nc" id="L156">            registerTableManager(HugeType.SHARD_INDEX,</span>
+                                 new PostgresqlTables.ShardIndex(store));
+<span class="nc" id="L158">            registerTableManager(HugeType.UNIQUE_INDEX,</span>
+                                 new PostgresqlTables.UniqueIndex(store));
+<span class="nc" id="L160">        }</span>
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L164">            return false;</span>
+        }
+
+        @Override
+        public Id nextId(HugeType type) {
+<span class="nc" id="L169">            throw new UnsupportedOperationException(</span>
+                      &quot;PostgresqlGraphStore.nextId()&quot;);
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L175">            throw new UnsupportedOperationException(</span>
+                      &quot;PostgresqlGraphStore.increaseCounter()&quot;);
+        }
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L181">            throw new UnsupportedOperationException(</span>
+                      &quot;PostgresqlGraphStore.getCounter()&quot;);
+        }
+    }
+
+    public static class PostgresqlSystemStore extends PostgresqlGraphStore {
+
+        private final PostgresqlTables.Meta meta;
+
+        public PostgresqlSystemStore(BackendStoreProvider provider,
+                                     String database, String store) {
+<span class="nc" id="L192">            super(provider, database, store);</span>
+
+<span class="nc" id="L194">            this.meta = new PostgresqlTables.Meta();</span>
+<span class="nc" id="L195">        }</span>
+
+        @Override
+        public void init() {
+<span class="nc" id="L199">            super.init();</span>
+<span class="nc" id="L200">            this.checkOpened();</span>
+<span class="nc" id="L201">            MysqlSessions.Session session = this.session(HugeType.META);</span>
+<span class="nc" id="L202">            String driverVersion = this.provider().driverVersion();</span>
+<span class="nc" id="L203">            this.meta.writeVersion(session, driverVersion);</span>
+<span class="nc" id="L204">            LOG.info(&quot;Write down the backend version: {}&quot;, driverVersion);</span>
+<span class="nc" id="L205">        }</span>
+
+        @Override
+        public String storedVersion() {
+<span class="nc" id="L209">            super.init();</span>
+<span class="nc" id="L210">            this.checkOpened();</span>
+<span class="nc" id="L211">            MysqlSessions.Session session = this.session(HugeType.META);</span>
+<span class="nc" id="L212">            return this.meta.readVersion(session);</span>
+        }
+
+        @Override
+        protected Collection&lt;MysqlTable&gt; tables() {
+<span class="nc" id="L217">            List&lt;MysqlTable&gt; tables = new ArrayList&lt;&gt;(super.tables());</span>
+<span class="nc" id="L218">            tables.add(this.meta);</span>
+<span class="nc" id="L219">            return tables;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

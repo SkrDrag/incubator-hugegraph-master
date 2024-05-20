@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EntityManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">EntityManager.java</span></div><h1>EntityManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.tinkerpop.gremlin.structure.Graph.Hidden;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.auth.SchemaDefine.Entity;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.iterator.MapperIterator;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.util.E;
+import com.google.common.collect.ImmutableMap;
+
+<span class="nc" id="L47">public class EntityManager&lt;T extends Entity&gt; {</span>
+
+    private final HugeGraphParams graph;
+    private final String label;
+    private final Function&lt;Vertex, T&gt; deser;
+<span class="nc" id="L52">    private final ThreadLocal&lt;Boolean&gt; autoCommit = new ThreadLocal&lt;&gt;();</span>
+
+    private static final long NO_LIMIT = -1L;
+
+    public EntityManager(HugeGraphParams graph, String label,
+<span class="nc" id="L57">                         Function&lt;Vertex, T&gt; deser) {</span>
+<span class="nc" id="L58">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+
+<span class="nc" id="L60">        this.graph = graph;</span>
+<span class="nc" id="L61">        this.label = label;</span>
+<span class="nc" id="L62">        this.deser = deser;</span>
+<span class="nc" id="L63">    }</span>
+
+    private GraphTransaction tx() {
+<span class="nc" id="L66">        return this.graph.systemTransaction();</span>
+    }
+
+    private HugeGraph graph() {
+<span class="nc" id="L70">        return this.graph.graph();</span>
+    }
+
+    private String unhideLabel() {
+<span class="nc" id="L74">        return Hidden.unHide(this.label);</span>
+    }
+
+    public Id add(T entity) {
+<span class="nc" id="L78">        E.checkArgumentNotNull(entity, &quot;Entity can't be null&quot;);</span>
+<span class="nc" id="L79">        return this.save(entity, false);</span>
+    }
+
+    public Id update(T entity) {
+<span class="nc" id="L83">        E.checkArgumentNotNull(entity, &quot;Entity can't be null&quot;);</span>
+<span class="nc" id="L84">        entity.onUpdate();</span>
+<span class="nc" id="L85">        return this.save(entity, true);</span>
+    }
+
+    public T delete(Id id) {
+<span class="nc" id="L89">        T entity = null;</span>
+<span class="nc" id="L90">        Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(id);</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (vertices.hasNext()) {</span>
+<span class="nc" id="L92">            HugeVertex vertex = (HugeVertex) vertices.next();</span>
+<span class="nc" id="L93">            entity = this.deser.apply(vertex);</span>
+<span class="nc" id="L94">            this.tx().removeVertex(vertex);</span>
+<span class="nc" id="L95">            this.commitOrRollback();</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">            assert !vertices.hasNext();</span>
+        }
+<span class="nc" id="L98">        return entity;</span>
+    }
+
+    public T get(Id id) {
+<span class="nc" id="L102">        T entity = null;</span>
+<span class="nc" id="L103">        Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(id);</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (vertices.hasNext()) {</span>
+<span class="nc" id="L105">            entity = this.deser.apply(vertices.next());</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">            assert !vertices.hasNext();</span>
+        }
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        if (entity == null) {</span>
+<span class="nc" id="L109">            throw new NotFoundException(&quot;Can't find %s with id '%s'&quot;,</span>
+<span class="nc" id="L110">                                        this.unhideLabel(), id);</span>
+        }
+<span class="nc" id="L112">        return entity;</span>
+    }
+
+    public boolean exists(Id id) {
+<span class="nc" id="L116">        Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(id);</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (vertices.hasNext()) {</span>
+<span class="nc" id="L118">            Vertex vertex = vertices.next();</span>
+<span class="nc" id="L119">            return this.label.equals(vertex.label());</span>
+        }
+<span class="nc" id="L121">        return false;</span>
+    }
+
+    public List&lt;T&gt; list(List&lt;Id&gt; ids) {
+<span class="nc" id="L125">        return toList(this.queryById(ids));</span>
+    }
+
+    public List&lt;T&gt; list(long limit) {
+<span class="nc" id="L129">        return toList(this.queryEntity(this.label, ImmutableMap.of(), limit));</span>
+    }
+
+    protected List&lt;T&gt; query(String key, Object value, long limit) {
+<span class="nc" id="L133">        Map&lt;String, Object&gt; conditions = ImmutableMap.of(key, value);</span>
+<span class="nc" id="L134">        return toList(this.queryEntity(this.label, conditions, limit));</span>
+    }
+
+    protected List&lt;T&gt; toList(Iterator&lt;Vertex&gt; vertices) {
+<span class="nc" id="L138">        Iterator&lt;T&gt; iter = new MapperIterator&lt;&gt;(vertices, this.deser);</span>
+        // Convert iterator to list to avoid across thread tx accessed
+<span class="nc" id="L140">        return (List&lt;T&gt;) QueryResults.toList(iter).list();</span>
+    }
+
+    private Iterator&lt;Vertex&gt; queryById(List&lt;Id&gt; ids) {
+<span class="nc" id="L144">        Object[] idArray = ids.toArray(new Id[0]);</span>
+<span class="nc" id="L145">        return this.tx().queryVertices(idArray);</span>
+    }
+
+    private Iterator&lt;Vertex&gt; queryEntity(String label,
+                                         Map&lt;String, Object&gt; conditions,
+                                         long limit) {
+<span class="nc" id="L151">        ConditionQuery query = new ConditionQuery(HugeType.VERTEX);</span>
+<span class="nc" id="L152">        VertexLabel vl = this.graph().vertexLabel(label);</span>
+<span class="nc" id="L153">        query.eq(HugeKeys.LABEL, vl.id());</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; entry : conditions.entrySet()) {</span>
+<span class="nc" id="L155">            PropertyKey pkey = this.graph().propertyKey(entry.getKey());</span>
+<span class="nc" id="L156">            query.query(Condition.eq(pkey.id(), entry.getValue()));</span>
+<span class="nc" id="L157">        }</span>
+<span class="nc" id="L158">        query.showHidden(true);</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (limit != NO_LIMIT) {</span>
+<span class="nc" id="L160">            query.limit(limit);</span>
+        }
+<span class="nc" id="L162">        return this.tx().queryVertices(query);</span>
+    }
+
+    private Id save(T entity, boolean expectExists) {
+        // Construct vertex from task
+<span class="nc" id="L167">        HugeVertex vertex = this.constructVertex(entity);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        E.checkArgument(this.exists(vertex.id()) == expectExists,</span>
+                        &quot;Can't save %s '%s' that %s exists&quot;,
+<span class="nc" id="L170">                        this.unhideLabel(), vertex.id(),</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">                        expectExists ? &quot;not&quot; : &quot;already&quot;);</span>
+
+        // Add or update user in backend store, stale index might exist
+<span class="nc" id="L174">        vertex = this.tx().addVertex(vertex);</span>
+<span class="nc" id="L175">        this.commitOrRollback();</span>
+<span class="nc" id="L176">        return vertex.id();</span>
+    }
+
+    private HugeVertex constructVertex(Entity entity) {
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        if (!this.graph().existsVertexLabel(entity.label())) {</span>
+<span class="nc" id="L181">            throw new HugeException(&quot;Schema is missing for %s '%s'&quot;,</span>
+<span class="nc" id="L182">                                    entity.label(), entity.id());</span>
+        }
+<span class="nc" id="L184">        return this.tx().constructVertex(false, entity.asArray());</span>
+    }
+
+    private void commitOrRollback() {
+<span class="nc" id="L188">        Boolean autoCommit = this.autoCommit.get();</span>
+<span class="nc bnc" id="L189" title="All 4 branches missed.">        if (autoCommit != null &amp;&amp; !autoCommit) {</span>
+<span class="nc" id="L190">            return;</span>
+        }
+<span class="nc" id="L192">        this.tx().commitOrRollback();</span>
+<span class="nc" id="L193">    }</span>
+
+    public void autoCommit(boolean value) {
+<span class="nc" id="L196">        this.autoCommit.set(value);</span>
+<span class="nc" id="L197">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

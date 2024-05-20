@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CustomTaskManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">CustomTaskManager.java</span></div><h1>CustomTaskManager.java</h1><pre class="source lang-java linenums">package org.apache.hugegraph.api.traversers;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class CustomTaskManager {
+
+    private ExecutorService executor;
+
+<span class="nc" id="L10">    public CustomTaskManager(int poolSize) {</span>
+        // 创建一个固定大小的线程池
+<span class="nc" id="L12">        this.executor = Executors.newFixedThreadPool(poolSize);</span>
+<span class="nc" id="L13">    }</span>
+
+    // 提交任务
+    public void submitTask(CustomTask task) {
+<span class="nc" id="L17">        executor.submit(task);</span>
+<span class="nc" id="L18">    }</span>
+
+    // 关闭线程池
+    public void shutdown() {
+<span class="nc" id="L22">        this.executor.shutdown();</span>
+<span class="nc" id="L23">    }</span>
+
+    // 任务类
+    public static class CustomTask implements Runnable {
+        private String taskName;
+
+<span class="nc" id="L29">        public CustomTask(String taskName) {</span>
+<span class="nc" id="L30">            this.taskName = taskName;</span>
+<span class="nc" id="L31">        }</span>
+
+        @Override
+        public void run() {
+            // 执行任务的逻辑
+<span class="nc" id="L36">            System.out.println(&quot;Task &quot; + taskName + &quot; is executing.&quot;);</span>
+<span class="nc" id="L37">        }</span>
+    }
+}
+
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

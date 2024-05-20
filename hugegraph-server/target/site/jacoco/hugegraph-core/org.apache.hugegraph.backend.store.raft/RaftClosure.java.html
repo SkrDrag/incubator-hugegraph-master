@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RaftClosure.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.raft</a> &gt; <span class="el_source">RaftClosure.java</span></div><h1>RaftClosure.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.raft;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
+
+import org.slf4j.Logger;
+
+import com.alipay.sofa.jraft.Closure;
+import com.alipay.sofa.jraft.Status;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.util.Log;
+
+public class RaftClosure&lt;T&gt; implements Closure {
+
+<span class="nc" id="L35">    private static final Logger LOG = Log.logger(RaftStoreClosure.class);</span>
+
+    private final CompletableFuture&lt;RaftResult&lt;T&gt;&gt; future;
+
+<span class="nc" id="L39">    public RaftClosure() {</span>
+<span class="nc" id="L40">        this.future = new CompletableFuture&lt;&gt;();</span>
+<span class="nc" id="L41">    }</span>
+
+    public T waitFinished() throws Throwable {
+<span class="nc" id="L44">        RaftResult&lt;T&gt; result = this.get();</span>
+<span class="nc bnc" id="L45" title="All 2 branches missed.">        if (result.status().isOk()) {</span>
+<span class="nc" id="L46">            return result.callback().get();</span>
+        } else {
+<span class="nc" id="L48">            throw result.exception();</span>
+        }
+    }
+
+    public Status status() {
+<span class="nc" id="L53">        return this.get().status();</span>
+    }
+
+    private RaftResult&lt;T&gt; get() {
+        try {
+<span class="nc" id="L58">            return this.future.get(RaftContext.WAIT_RAFTLOG_TIMEOUT,</span>
+                                   TimeUnit.MILLISECONDS);
+<span class="nc" id="L60">        } catch (ExecutionException e) {</span>
+<span class="nc" id="L61">            throw new BackendException(&quot;ExecutionException&quot;, e);</span>
+<span class="nc" id="L62">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L63">            throw new BackendException(&quot;InterruptedException&quot;, e);</span>
+<span class="nc" id="L64">        } catch (TimeoutException e) {</span>
+<span class="nc" id="L65">            throw new BackendException(&quot;Wait closure timeout&quot;);</span>
+        }
+    }
+
+    public void complete(Status status) {
+<span class="nc" id="L70">        this.future.complete(new RaftResult&lt;&gt;(status));</span>
+<span class="nc" id="L71">    }</span>
+
+    public void complete(Status status, Supplier&lt;T&gt; callback) {
+        // This callback is called by consumer thread(like grizzly)
+<span class="nc" id="L75">        this.future.complete(new RaftResult&lt;&gt;(status, callback));</span>
+<span class="nc" id="L76">    }</span>
+
+    public void failure(Status status, Throwable exception) {
+<span class="nc" id="L79">        this.future.complete(new RaftResult&lt;&gt;(status, exception));</span>
+<span class="nc" id="L80">    }</span>
+
+    @Override
+    public void run(Status status) {
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (status.isOk()) {</span>
+<span class="nc" id="L85">            this.complete(status);</span>
+        } else {
+<span class="nc" id="L87">            LOG.error(&quot;Failed to apply command: {}&quot;, status);</span>
+<span class="nc" id="L88">            String msg = &quot;Failed to apply command in raft node with error: &quot; +</span>
+<span class="nc" id="L89">                         status.getErrorMsg();</span>
+<span class="nc" id="L90">            this.failure(status, new BackendException(msg));</span>
+        }
+<span class="nc" id="L92">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

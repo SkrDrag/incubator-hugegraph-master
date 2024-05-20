@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StandardClusterRoleStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.masterelection</a> &gt; <span class="el_source">StandardClusterRoleStore.java</span></div><h1>StandardClusterRoleStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.masterelection;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.auth.SchemaDefine;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.T;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.slf4j.Logger;
+
+public class StandardClusterRoleStore implements ClusterRoleStore {
+
+<span class="nc" id="L45">    private static final Logger LOG = Log.logger(StandardClusterRoleStore.class);</span>
+    private static final int RETRY_QUERY_TIMEOUT = 200;
+
+    private final HugeGraphParams graph;
+
+    private boolean firstTime;
+
+<span class="nc" id="L52">    public StandardClusterRoleStore(HugeGraphParams graph) {</span>
+<span class="nc" id="L53">        this.graph = graph;</span>
+<span class="nc" id="L54">        Schema schema = new Schema(graph);</span>
+<span class="nc" id="L55">        schema.initSchemaIfNeeded();</span>
+<span class="nc" id="L56">        this.firstTime = true;</span>
+<span class="nc" id="L57">    }</span>
+
+    @Override
+    public boolean updateIfNodePresent(ClusterRole clusterRole) {
+        // if epoch increase, update and return true
+        // if epoch equal, ignore different node, return false
+<span class="nc" id="L63">        Optional&lt;Vertex&gt; oldClusterRoleOpt = this.queryVertex();</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">        if (oldClusterRoleOpt.isPresent()) {</span>
+<span class="nc" id="L65">            ClusterRole oldClusterRole = this.from(oldClusterRoleOpt.get());</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">            if (clusterRole.epoch() &lt; oldClusterRole.epoch()) {</span>
+<span class="nc" id="L67">                return false;</span>
+            }
+
+<span class="nc bnc" id="L70" title="All 2 branches missed.">            if (clusterRole.epoch() == oldClusterRole.epoch() &amp;&amp;</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">                !Objects.equals(clusterRole.node(), oldClusterRole.node())) {</span>
+<span class="nc" id="L72">                return false;</span>
+            }
+<span class="nc" id="L74">            LOG.trace(&quot;Server {} epoch {} begin remove data old epoch {}, &quot;,</span>
+<span class="nc" id="L75">                      clusterRole.node(), clusterRole.epoch(), oldClusterRole.epoch());</span>
+<span class="nc" id="L76">            this.graph.systemTransaction().removeVertex((HugeVertex) oldClusterRoleOpt.get());</span>
+<span class="nc" id="L77">            this.graph.systemTransaction().commitOrRollback();</span>
+<span class="nc" id="L78">            LOG.trace(&quot;Server {} epoch {} success remove data old epoch {}, &quot;,</span>
+<span class="nc" id="L79">                      clusterRole.node(), clusterRole.epoch(), oldClusterRole.epoch());</span>
+        }
+        try {
+<span class="nc" id="L82">            GraphTransaction tx = this.graph.systemTransaction();</span>
+<span class="nc" id="L83">            tx.doUpdateIfAbsent(this.constructEntry(clusterRole));</span>
+<span class="nc" id="L84">            tx.commitOrRollback();</span>
+<span class="nc" id="L85">            LOG.trace(&quot;Server {} epoch {} success update data&quot;,</span>
+<span class="nc" id="L86">                      clusterRole.node(), clusterRole.epoch());</span>
+<span class="nc" id="L87">        } catch (Throwable ignore) {</span>
+<span class="nc" id="L88">            LOG.trace(&quot;Server {} epoch {} fail update data&quot;,</span>
+<span class="nc" id="L89">                      clusterRole.node(), clusterRole.epoch());</span>
+<span class="nc" id="L90">            return false;</span>
+<span class="nc" id="L91">        }</span>
+
+<span class="nc" id="L93">        return true;</span>
+    }
+
+    private BackendEntry constructEntry(ClusterRole clusterRole) {
+<span class="nc" id="L97">        List&lt;Object&gt; list = new ArrayList&lt;&gt;(8);</span>
+<span class="nc" id="L98">        list.add(T.label);</span>
+<span class="nc" id="L99">        list.add(P.ROLE_DATA);</span>
+
+<span class="nc" id="L101">        list.add(P.NODE);</span>
+<span class="nc" id="L102">        list.add(clusterRole.node());</span>
+
+<span class="nc" id="L104">        list.add(P.URL);</span>
+<span class="nc" id="L105">        list.add(clusterRole.url());</span>
+
+<span class="nc" id="L107">        list.add(P.CLOCK);</span>
+<span class="nc" id="L108">        list.add(clusterRole.clock());</span>
+
+<span class="nc" id="L110">        list.add(P.EPOCH);</span>
+<span class="nc" id="L111">        list.add(clusterRole.epoch());</span>
+
+<span class="nc" id="L113">        list.add(P.TYPE);</span>
+<span class="nc" id="L114">        list.add(&quot;default&quot;);</span>
+
+<span class="nc" id="L116">        HugeVertex vertex = this.graph.systemTransaction()</span>
+<span class="nc" id="L117">                                      .constructVertex(false, list.toArray());</span>
+
+<span class="nc" id="L119">        return this.graph.serializer().writeVertex(vertex);</span>
+    }
+
+    @Override
+    public Optional&lt;ClusterRole&gt; query() {
+<span class="nc" id="L124">        Optional&lt;Vertex&gt; vertex = this.queryVertex();</span>
+<span class="nc bnc" id="L125" title="All 4 branches missed.">        if (!vertex.isPresent() &amp;&amp; !this.firstTime) {</span>
+            // If query nothing, retry once
+            try {
+<span class="nc" id="L128">                Thread.sleep(RETRY_QUERY_TIMEOUT);</span>
+<span class="nc" id="L129">            } catch (InterruptedException ignored) {</span>
+<span class="nc" id="L130">            }</span>
+
+<span class="nc" id="L132">            vertex = this.queryVertex();</span>
+        }
+<span class="nc" id="L134">        this.firstTime = false;</span>
+<span class="nc" id="L135">        return vertex.map(this::from);</span>
+    }
+
+    private ClusterRole from(Vertex vertex) {
+<span class="nc" id="L139">        String node = (String) vertex.property(P.NODE).value();</span>
+<span class="nc" id="L140">        String url = (String) vertex.property(P.URL).value();</span>
+<span class="nc" id="L141">        Long clock = (Long) vertex.property(P.CLOCK).value();</span>
+<span class="nc" id="L142">        Integer epoch = (Integer) vertex.property(P.EPOCH).value();</span>
+
+<span class="nc" id="L144">        return new ClusterRole(node, url, epoch, clock);</span>
+    }
+
+    private Optional&lt;Vertex&gt; queryVertex() {
+<span class="nc" id="L148">        GraphTransaction tx = this.graph.systemTransaction();</span>
+<span class="nc" id="L149">        ConditionQuery query = new ConditionQuery(HugeType.VERTEX);</span>
+<span class="nc" id="L150">        VertexLabel vl = this.graph.graph().vertexLabel(P.ROLE_DATA);</span>
+<span class="nc" id="L151">        query.eq(HugeKeys.LABEL, vl.id());</span>
+<span class="nc" id="L152">        query.query(Condition.eq(vl.primaryKeys().get(0), &quot;default&quot;));</span>
+<span class="nc" id="L153">        query.showHidden(true);</span>
+<span class="nc" id="L154">        Iterator&lt;Vertex&gt; vertexIterator = tx.queryVertices(query);</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        if (vertexIterator.hasNext()) {</span>
+<span class="nc" id="L156">            return Optional.of(vertexIterator.next());</span>
+        }
+
+<span class="nc" id="L159">        return Optional.empty();</span>
+    }
+
+<span class="nc" id="L162">    public static final class P {</span>
+
+<span class="nc" id="L164">        public static final String ROLE_DATA = Graph.Hidden.hide(&quot;role_data&quot;);</span>
+
+<span class="nc" id="L166">        public static final String LABEL = T.label.getAccessor();</span>
+
+<span class="nc" id="L168">        public static final String NODE = Graph.Hidden.hide(&quot;role_node&quot;);</span>
+
+<span class="nc" id="L170">        public static final String CLOCK = Graph.Hidden.hide(&quot;role_clock&quot;);</span>
+
+<span class="nc" id="L172">        public static final String EPOCH = Graph.Hidden.hide(&quot;role_epoch&quot;);</span>
+
+<span class="nc" id="L174">        public static final String URL = Graph.Hidden.hide(&quot;role_url&quot;);</span>
+
+<span class="nc" id="L176">        public static final String TYPE = Graph.Hidden.hide(&quot;role_type&quot;);</span>
+    }
+
+
+    public static final class Schema extends SchemaDefine {
+
+        public Schema(HugeGraphParams graph) {
+<span class="nc" id="L183">            super(graph, P.ROLE_DATA);</span>
+<span class="nc" id="L184">        }</span>
+
+        @Override
+        public void initSchemaIfNeeded() {
+<span class="nc bnc" id="L188" title="All 2 branches missed.">            if (this.existVertexLabel(this.label)) {</span>
+<span class="nc" id="L189">                return;</span>
+            }
+
+<span class="nc" id="L192">            String[] properties = this.initProperties();</span>
+
+<span class="nc" id="L194">            VertexLabel label = this.schema()</span>
+<span class="nc" id="L195">                                    .vertexLabel(this.label)</span>
+<span class="nc" id="L196">                                    .enableLabelIndex(true)</span>
+<span class="nc" id="L197">                                    .usePrimaryKeyId()</span>
+<span class="nc" id="L198">                                    .primaryKeys(P.TYPE)</span>
+<span class="nc" id="L199">                                    .properties(properties)</span>
+<span class="nc" id="L200">                                    .build();</span>
+<span class="nc" id="L201">            this.graph.schemaTransaction().addVertexLabel(label);</span>
+<span class="nc" id="L202">        }</span>
+
+        private String[] initProperties() {
+<span class="nc" id="L205">            List&lt;String&gt; props = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L207">            props.add(createPropertyKey(P.NODE, DataType.TEXT));</span>
+<span class="nc" id="L208">            props.add(createPropertyKey(P.URL, DataType.TEXT));</span>
+<span class="nc" id="L209">            props.add(createPropertyKey(P.CLOCK, DataType.LONG));</span>
+<span class="nc" id="L210">            props.add(createPropertyKey(P.EPOCH, DataType.INT));</span>
+<span class="nc" id="L211">            props.add(createPropertyKey(P.TYPE, DataType.TEXT));</span>
+
+<span class="nc" id="L213">            return super.initProperties(props);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

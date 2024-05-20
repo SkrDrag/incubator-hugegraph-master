@@ -1,0 +1,759 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IndexLabelBuilder.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.schema.builder</a> &gt; <span class="el_source">IndexLabelBuilder.java</span></div><h1>IndexLabelBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.schema.builder;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeoutException;
+import java.util.function.BiPredicate;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.exception.ExistedException;
+import org.apache.hugegraph.exception.NotAllowException;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.schema.Userdata;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Action;
+import org.apache.hugegraph.type.define.CollectionType;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.IndexType;
+import org.apache.hugegraph.type.define.SchemaStatus;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.collection.IdSet;
+
+<span class="nc" id="L54">public class IndexLabelBuilder extends AbstractBuilder</span>
+                               implements IndexLabel.Builder {
+
+    private Id id;
+    private String name;
+    private HugeType baseType;
+    private String baseValue;
+    private IndexType indexType;
+    private List&lt;String&gt; indexFields;
+    private Userdata userdata;
+    private boolean checkExist;
+    private boolean rebuild;
+
+    public IndexLabelBuilder(SchemaTransaction transaction,
+                             HugeGraph graph, String name) {
+<span class="nc" id="L69">        super(transaction, graph);</span>
+<span class="nc" id="L70">        E.checkNotNull(name, &quot;name&quot;);</span>
+<span class="nc" id="L71">        this.id = null;</span>
+<span class="nc" id="L72">        this.name = name;</span>
+<span class="nc" id="L73">        this.baseType = null;</span>
+<span class="nc" id="L74">        this.baseValue = null;</span>
+<span class="nc" id="L75">        this.indexType = null;</span>
+<span class="nc" id="L76">        this.indexFields = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L77">        this.userdata = new Userdata();</span>
+<span class="nc" id="L78">        this.checkExist = true;</span>
+<span class="nc" id="L79">        this.rebuild = true;</span>
+<span class="nc" id="L80">    }</span>
+
+    public IndexLabelBuilder(SchemaTransaction transaction,
+                             HugeGraph graph, IndexLabel copy) {
+<span class="nc" id="L84">        super(transaction, graph);</span>
+<span class="nc" id="L85">        E.checkNotNull(copy, &quot;copy&quot;);</span>
+        // Get base element from self graph
+<span class="nc" id="L87">        SchemaLabel schemaLabel = IndexLabel.getBaseLabel(graph,</span>
+<span class="nc" id="L88">                                                          copy.baseType(),</span>
+<span class="nc" id="L89">                                                          copy.baseValue());</span>
+<span class="nc" id="L90">        this.id = null;</span>
+<span class="nc" id="L91">        this.name = copy.name();</span>
+<span class="nc" id="L92">        this.baseType = copy.baseType();</span>
+<span class="nc" id="L93">        this.baseValue = schemaLabel.name();</span>
+<span class="nc" id="L94">        this.indexType = copy.indexType();</span>
+<span class="nc" id="L95">        this.indexFields = copy.graph().mapPkId2Name(copy.indexFields());</span>
+<span class="nc" id="L96">        this.userdata = new Userdata(copy.userdata());</span>
+<span class="nc" id="L97">        this.checkExist = false;</span>
+<span class="nc" id="L98">        this.rebuild = true;</span>
+<span class="nc" id="L99">    }</span>
+
+    @Override
+    public IndexLabel build() {
+<span class="nc" id="L103">        Id id = this.validOrGenerateId(HugeType.INDEX_LABEL,</span>
+                                       this.id, this.name);
+<span class="nc" id="L105">        this.checkBaseType();</span>
+<span class="nc" id="L106">        this.checkIndexType();</span>
+
+<span class="nc" id="L108">        HugeGraph graph = this.graph();</span>
+<span class="nc" id="L109">        this.checkFields4Range();</span>
+<span class="nc" id="L110">        IndexLabel indexLabel = new IndexLabel(graph, id, this.name);</span>
+<span class="nc" id="L111">        indexLabel.baseType(this.baseType);</span>
+<span class="nc" id="L112">        SchemaLabel schemaLabel = this.loadBaseLabel();</span>
+<span class="nc" id="L113">        indexLabel.baseValue(schemaLabel.id());</span>
+<span class="nc" id="L114">        indexLabel.indexType(this.indexType);</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        for (String field : this.indexFields) {</span>
+<span class="nc" id="L116">            PropertyKey propertyKey = graph.propertyKey(field);</span>
+<span class="nc" id="L117">            indexLabel.indexField(propertyKey.id());</span>
+<span class="nc" id="L118">        }</span>
+<span class="nc" id="L119">        indexLabel.userdata(this.userdata);</span>
+<span class="nc" id="L120">        return indexLabel;</span>
+    }
+
+    /**
+     * Check whether this has same properties with existedIndexLabel.
+     * Only baseType, baseValue, indexType, indexFields are checked.
+     * The id, checkExist, userdata are not checked.
+     * @param existedIndexLabel to be compared with
+     * @return true if this has same properties with existedIndexLabel
+     */
+    private boolean hasSameProperties(IndexLabel existedIndexLabel) {
+        // baseType is null, it means HugeType.SYS_SCHEMA
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        if ((this.baseType == null &amp;&amp;</span>
+<span class="nc bnc" id="L133" title="All 4 branches missed.">             existedIndexLabel.baseType() != HugeType.SYS_SCHEMA) ||</span>
+            (this.baseType != null &amp;&amp;
+<span class="nc bnc" id="L135" title="All 2 branches missed.">             this.baseType != existedIndexLabel.baseType())) {</span>
+<span class="nc" id="L136">            return false;</span>
+        }
+
+<span class="nc" id="L139">        SchemaLabel schemaLabel = this.loadBaseLabel();</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        if (!schemaLabel.id().equals(existedIndexLabel.baseValue())) {</span>
+<span class="nc" id="L141">            return false;</span>
+        }
+
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (this.indexType == null) {</span>
+            // The default index type is SECONDARY
+<span class="nc bnc" id="L146" title="All 2 branches missed.">            if (existedIndexLabel.indexType() != IndexType.SECONDARY) {</span>
+<span class="nc" id="L147">                return false;</span>
+            }
+        } else {
+            // NOTE: IndexType.RANGE.isRange() return false
+<span class="nc bnc" id="L151" title="All 2 branches missed.">            if (this.indexType == IndexType.RANGE) {</span>
+                // existedIndexLabel index type format: RANGE_INT, RANGE_LONG
+<span class="nc bnc" id="L153" title="All 2 branches missed.">                if (!existedIndexLabel.indexType().isRange()) {</span>
+<span class="nc" id="L154">                    return false;</span>
+                }
+<span class="nc bnc" id="L156" title="All 2 branches missed.">            } else if (this.indexType != existedIndexLabel.indexType()) {</span>
+<span class="nc" id="L157">                return false;</span>
+            }
+        }
+
+<span class="nc" id="L161">        List&lt;Id&gt; existedIndexFieldIds = existedIndexLabel.indexFields();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (this.indexFields.size() != existedIndexFieldIds.size()) {</span>
+<span class="nc" id="L163">            return false;</span>
+        }
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        for (String field : this.indexFields) {</span>
+<span class="nc" id="L166">            PropertyKey propertyKey = graph().propertyKey(field);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">            if (!existedIndexFieldIds.contains(propertyKey.id())) {</span>
+<span class="nc" id="L168">                return false;</span>
+            }
+<span class="nc" id="L170">        }</span>
+        // all properties are same, return true.
+<span class="nc" id="L172">        return true;</span>
+    }
+
+    /**
+     * Create index label with async mode
+     */
+    @Override
+    public SchemaElement.TaskWithSchema createWithTask() {
+<span class="nc" id="L180">        HugeType type = HugeType.INDEX_LABEL;</span>
+<span class="nc" id="L181">        this.checkSchemaName(this.name);</span>
+
+<span class="nc" id="L183">        return this.lockCheckAndCreateSchema(type, this.name, name -&gt; {</span>
+<span class="nc" id="L184">            IndexLabel indexLabel = this.indexLabelOrNull(name);</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">            if (indexLabel != null) {</span>
+<span class="nc bnc" id="L186" title="All 4 branches missed.">                if (this.checkExist || !hasSameProperties(indexLabel)) {</span>
+<span class="nc" id="L187">                    throw new ExistedException(type, name);</span>
+                }
+<span class="nc" id="L189">                return new SchemaElement.TaskWithSchema(indexLabel,</span>
+                                                        IdGenerator.ZERO);
+            }
+<span class="nc" id="L192">            this.checkSchemaIdIfRestoringMode(type, this.id);</span>
+
+<span class="nc" id="L194">            this.checkBaseType();</span>
+<span class="nc" id="L195">            this.checkIndexType();</span>
+
+<span class="nc bnc" id="L197" title="All 2 branches missed.">            if (VertexLabel.OLAP_VL.name().equals(this.baseValue)) {</span>
+<span class="nc" id="L198">                return new SchemaElement.TaskWithSchema(this.build(),</span>
+                                                        IdGenerator.ZERO);
+            }
+
+<span class="nc" id="L202">            SchemaLabel schemaLabel = this.loadBaseLabel();</span>
+
+            /*
+             * If new index label is prefix of existed index label, or has
+             * the same fields, fail to create new index label.
+             */
+<span class="nc" id="L208">            this.checkFields(schemaLabel.properties());</span>
+<span class="nc" id="L209">            this.checkRepeatIndex(schemaLabel);</span>
+<span class="nc" id="L210">            Userdata.check(this.userdata, Action.INSERT);</span>
+
+            // Async delete index label which is prefix of the new index label
+            // TODO: use event to replace direct call
+<span class="nc" id="L214">            Set&lt;Id&gt; removeTasks = this.removeSubIndex(schemaLabel);</span>
+
+<span class="nc" id="L216">            indexLabel = this.build();</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">            assert indexLabel.name().equals(name);</span>
+
+            /*
+             * If not rebuild, just create index label and return.
+             * The actual indexes may be rebuilt later as needed
+             */
+<span class="nc bnc" id="L223" title="All 2 branches missed.">            if (!this.rebuild) {</span>
+<span class="nc" id="L224">                indexLabel.status(SchemaStatus.CREATED);</span>
+<span class="nc" id="L225">                this.graph().addIndexLabel(schemaLabel, indexLabel);</span>
+<span class="nc" id="L226">                return new SchemaElement.TaskWithSchema(indexLabel,</span>
+                                                        IdGenerator.ZERO);
+            }
+
+            // Create index label (just schema)
+<span class="nc" id="L231">            indexLabel.status(SchemaStatus.CREATING);</span>
+<span class="nc" id="L232">            this.graph().addIndexLabel(schemaLabel, indexLabel);</span>
+            try {
+                // Async rebuild index
+<span class="nc" id="L235">                Id rebuildTask = this.rebuildIndex(indexLabel, removeTasks);</span>
+<span class="nc" id="L236">                E.checkNotNull(rebuildTask, &quot;rebuild-index task&quot;);</span>
+
+<span class="nc" id="L238">                return new SchemaElement.TaskWithSchema(indexLabel,</span>
+                                                        rebuildTask);
+<span class="nc" id="L240">            } catch (Throwable e) {</span>
+<span class="nc" id="L241">                this.updateSchemaStatus(indexLabel, SchemaStatus.INVALID);</span>
+<span class="nc" id="L242">                throw e;</span>
+            }
+        });
+    }
+
+    /**
+     * Create index label with sync mode
+     */
+    @Override
+    public IndexLabel create() {
+        // Create index label async
+<span class="nc" id="L253">        SchemaElement.TaskWithSchema createdIndexLabel = this.createWithTask();</span>
+
+<span class="nc" id="L255">        Id task = createdIndexLabel.task();</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        if (task == IdGenerator.ZERO) {</span>
+            /*
+             * Task id will be IdGenerator.ZERO if creating index label
+             * already exists or creating index label is for olap
+             */
+<span class="nc" id="L261">            return createdIndexLabel.indexLabel();</span>
+        }
+
+        // Wait task completed (change to sync mode)
+<span class="nc" id="L265">        HugeGraph graph = this.graph();</span>
+<span class="nc" id="L266">        long timeout = graph.option(CoreOptions.TASK_WAIT_TIMEOUT);</span>
+        try {
+<span class="nc" id="L268">            graph.taskScheduler().waitUntilTaskCompleted(task, timeout);</span>
+<span class="nc" id="L269">        } catch (TimeoutException e) {</span>
+<span class="nc" id="L270">            throw new HugeException(</span>
+                      &quot;Failed to wait index-creating task completed&quot;, e);
+<span class="nc" id="L272">        }</span>
+
+        // Return index label without task-info
+<span class="nc" id="L275">        return createdIndexLabel.indexLabel();</span>
+    }
+
+    @Override
+    public IndexLabel append() {
+<span class="nc" id="L280">        IndexLabel indexLabel = this.indexLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L281" title="All 2 branches missed.">        if (indexLabel == null) {</span>
+<span class="nc" id="L282">            throw new NotFoundException(&quot;Can't update index label '%s' &quot; +</span>
+                                        &quot;since it doesn't exist&quot;, this.name);
+        }
+<span class="nc" id="L285">        this.checkStableVars();</span>
+<span class="nc" id="L286">        Userdata.check(this.userdata, Action.APPEND);</span>
+<span class="nc" id="L287">        indexLabel.userdata(this.userdata);</span>
+<span class="nc" id="L288">        this.graph().updateIndexLabel(indexLabel);</span>
+<span class="nc" id="L289">        return indexLabel;</span>
+    }
+
+    @Override
+    public IndexLabel eliminate() {
+<span class="nc" id="L294">        IndexLabel indexLabel = this.indexLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">        if (indexLabel == null) {</span>
+<span class="nc" id="L296">            throw new NotFoundException(&quot;Can't update index label '%s' &quot; +</span>
+                                        &quot;since it doesn't exist&quot;, this.name);
+        }
+<span class="nc" id="L299">        this.checkStableVars();</span>
+<span class="nc" id="L300">        Userdata.check(this.userdata, Action.ELIMINATE);</span>
+
+<span class="nc" id="L302">        indexLabel.removeUserdata(this.userdata);</span>
+<span class="nc" id="L303">        this.graph().updateIndexLabel(indexLabel);</span>
+<span class="nc" id="L304">        return indexLabel;</span>
+    }
+
+    @Override
+    public Id remove() {
+<span class="nc" id="L309">        IndexLabel indexLabel = this.indexLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">        if (indexLabel == null) {</span>
+<span class="nc" id="L311">            return null;</span>
+        }
+<span class="nc" id="L313">        return this.graph().removeIndexLabel(indexLabel.id());</span>
+    }
+
+    @Override
+    public Id rebuild() {
+<span class="nc" id="L318">        IndexLabel indexLabel = this.indexLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        if (indexLabel == null) {</span>
+<span class="nc" id="L320">            return null;</span>
+        }
+<span class="nc" id="L322">        return this.graph().rebuildIndex(indexLabel);</span>
+    }
+
+    @Override
+    public IndexLabelBuilder id(long id) {
+<span class="nc bnc" id="L327" title="All 2 branches missed.">        E.checkArgument(id != 0L,</span>
+                        &quot;Not allowed to assign 0 as index label id&quot;);
+<span class="nc" id="L329">        this.id = IdGenerator.of(id);</span>
+<span class="nc" id="L330">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder onV(String baseValue) {
+<span class="nc" id="L335">        this.baseType = HugeType.VERTEX_LABEL;</span>
+<span class="nc" id="L336">        this.baseValue = baseValue;</span>
+<span class="nc" id="L337">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder onE(String baseValue) {
+<span class="nc" id="L342">        this.baseType = HugeType.EDGE_LABEL;</span>
+<span class="nc" id="L343">        this.baseValue = baseValue;</span>
+<span class="nc" id="L344">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder by(String... fields) {
+<span class="nc bnc" id="L349" title="All 2 branches missed.">        E.checkArgument(fields.length &gt; 0, &quot;Empty index fields&quot;);</span>
+<span class="nc" id="L350">        E.checkArgument(this.indexFields.isEmpty(),</span>
+                        &quot;Not allowed to assign index fields multitimes&quot;);
+
+<span class="nc" id="L353">        List&lt;String&gt; indexFields = Arrays.asList(fields);</span>
+<span class="nc" id="L354">        E.checkArgument(CollectionUtil.allUnique(indexFields),</span>
+                        &quot;Invalid index fields %s, which contains some &quot; +
+                        &quot;duplicate properties&quot;, indexFields);
+<span class="nc" id="L357">        this.indexFields.addAll(indexFields);</span>
+<span class="nc" id="L358">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder secondary() {
+<span class="nc" id="L363">        this.indexType = IndexType.SECONDARY;</span>
+<span class="nc" id="L364">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder range() {
+<span class="nc" id="L369">        this.indexType = IndexType.RANGE;</span>
+<span class="nc" id="L370">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder search() {
+<span class="nc" id="L375">        this.indexType = IndexType.SEARCH;</span>
+<span class="nc" id="L376">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder shard() {
+<span class="nc" id="L381">        this.indexType = IndexType.SHARD;</span>
+<span class="nc" id="L382">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder unique() {
+<span class="nc" id="L387">        this.indexType = IndexType.UNIQUE;</span>
+<span class="nc" id="L388">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder on(HugeType baseType, String baseValue) {
+<span class="nc bnc" id="L393" title="All 4 branches missed.">        E.checkArgument(baseType == HugeType.VERTEX_LABEL ||</span>
+                        baseType == HugeType.EDGE_LABEL,
+                        &quot;The base type of index label '%s' can only be &quot; +
+                        &quot;either VERTEX_LABEL or EDGE_LABEL&quot;, this.name);
+<span class="nc bnc" id="L397" title="All 2 branches missed.">        if (baseType == HugeType.VERTEX_LABEL) {</span>
+<span class="nc" id="L398">            this.onV(baseValue);</span>
+        } else {
+<span class="nc bnc" id="L400" title="All 2 branches missed.">            assert baseType == HugeType.EDGE_LABEL;</span>
+<span class="nc" id="L401">            this.onE(baseValue);</span>
+        }
+<span class="nc" id="L403">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder indexType(IndexType indexType) {
+<span class="nc" id="L408">        this.indexType = indexType;</span>
+<span class="nc" id="L409">        return this;</span>
+    }
+
+    @Override
+    public IndexLabel.Builder userdata(String key, Object value) {
+<span class="nc" id="L414">        this.userdata.put(key, value);</span>
+<span class="nc" id="L415">        return this;</span>
+    }
+
+    @Override
+    public IndexLabel.Builder userdata(Map&lt;String, Object&gt; userdata) {
+<span class="nc" id="L420">        this.userdata.putAll(userdata);</span>
+<span class="nc" id="L421">        return this;</span>
+    }
+
+    @Override
+    public IndexLabel.Builder rebuild(boolean rebuild) {
+<span class="nc" id="L426">        this.rebuild = rebuild;</span>
+<span class="nc" id="L427">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder ifNotExist() {
+<span class="nc" id="L432">        this.checkExist = false;</span>
+<span class="nc" id="L433">        return this;</span>
+    }
+
+    @Override
+    public IndexLabelBuilder checkExist(boolean checkExist) {
+<span class="nc" id="L438">        this.checkExist = checkExist;</span>
+<span class="nc" id="L439">        return this;</span>
+    }
+
+    private void checkBaseType() {
+<span class="nc bnc" id="L443" title="All 2 branches missed.">        if (this.baseType == null) {</span>
+<span class="nc" id="L444">            this.baseType = HugeType.SYS_SCHEMA;</span>
+        }
+<span class="nc" id="L446">    }</span>
+
+    private void checkIndexType() {
+<span class="nc bnc" id="L449" title="All 2 branches missed.">        if (this.indexType == null) {</span>
+<span class="nc" id="L450">            this.indexType = IndexType.SECONDARY;</span>
+        }
+<span class="nc" id="L452">    }</span>
+
+    private SchemaLabel loadBaseLabel() {
+<span class="nc" id="L455">        return IndexLabel.getBaseLabel(this.graph(),</span>
+                                       this.baseType, this.baseValue);
+    }
+
+    private void checkFields(Set&lt;Id&gt; propertyIds) {
+<span class="nc" id="L460">        List&lt;String&gt; fields = this.indexFields;</span>
+<span class="nc" id="L461">        E.checkNotEmpty(fields, &quot;index fields&quot;, this.name);</span>
+
+<span class="nc" id="L463">        Set&lt;Id&gt; olapPks = new IdSet(CollectionType.EC);</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">        for (String field : fields) {</span>
+<span class="nc" id="L465">            PropertyKey pkey = this.propertyKeyOrNull(field);</span>
+            // In general this will not happen
+<span class="nc bnc" id="L467" title="All 2 branches missed.">            E.checkArgument(pkey != null,</span>
+                            &quot;Can't build index on undefined property key &quot; +
+                            &quot;'%s' for '%s': '%s'&quot;, field,
+<span class="nc" id="L470">                            this.baseType.readableName(), this.baseValue);</span>
+<span class="nc" id="L471">            E.checkArgument(pkey.aggregateType().isIndexable(),</span>
+                            &quot;The aggregate type %s is not indexable&quot;,
+<span class="nc" id="L473">                            pkey.aggregateType());</span>
+
+<span class="nc bnc" id="L475" title="All 2 branches missed.">            if (pkey.cardinality().multiple()) {</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">                E.checkArgument(fields.size() == 1,</span>
+                                &quot;Not allowed to build union index on property&quot; +
+                                &quot; key '%s' whose cardinality is multiple&quot;,
+<span class="nc" id="L479">                                pkey.name());</span>
+            }
+
+<span class="nc bnc" id="L482" title="All 2 branches missed.">            if (pkey.olap()) {</span>
+<span class="nc" id="L483">                olapPks.add(pkey.id());</span>
+            }
+<span class="nc" id="L485">        }</span>
+
+<span class="nc bnc" id="L487" title="All 2 branches missed.">        if (!olapPks.isEmpty()) {</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">            E.checkArgument(olapPks.size() == 1,</span>
+                            &quot;Can't build index on multiple olap properties, &quot; +
+                            &quot;but got fields '%s' for index label '%s'&quot;,
+                            fields, this.name);
+<span class="nc bnc" id="L492" title="All 2 branches missed.">            E.checkArgument(olapPks.size() == fields.size(),</span>
+                            &quot;Can't build index on olap properties and oltp &quot; +
+                            &quot;properties in one index label, &quot; +
+                            &quot;but got fields '%s' for index label '%s'&quot;,
+                            fields, this.name);
+<span class="nc bnc" id="L497" title="All 4 branches missed.">            E.checkArgument(this.indexType == IndexType.SECONDARY ||</span>
+                            this.indexType == IndexType.RANGE,
+                            &quot;Only secondary and range index can be built on &quot; +
+                            &quot;olap property, but got index type '%s' on olap &quot; +
+                            &quot;property key '%s' for index label '%s'&quot;,
+<span class="nc" id="L502">                            this.indexType, fields.get(0), this.name);</span>
+        }
+
+<span class="nc" id="L505">        List&lt;String&gt; properties = this.graph().mapPkId2Name(propertyIds);</span>
+<span class="nc" id="L506">        E.checkArgument(properties.containsAll(fields),</span>
+                        &quot;Not all index fields '%s' are contained in &quot; +
+                        &quot;schema properties '%s'&quot;, fields, properties);
+
+        // Range index must build on single numeric column
+<span class="nc bnc" id="L511" title="All 2 branches missed.">        if (this.indexType == IndexType.RANGE) {</span>
+<span class="nc" id="L512">            this.checkFields4Range();</span>
+        }
+
+        // Search index must build on single text column
+<span class="nc bnc" id="L516" title="All 2 branches missed.">        if (this.indexType.isSearch()) {</span>
+<span class="nc bnc" id="L517" title="All 2 branches missed.">            E.checkArgument(fields.size() == 1,</span>
+                            &quot;Search index can only build on &quot; +
+                            &quot;one field, but got %s fields: '%s'&quot;,
+<span class="nc" id="L520">                            fields.size(), fields);</span>
+<span class="nc" id="L521">            String field = fields.iterator().next();</span>
+<span class="nc" id="L522">            DataType dataType = this.graph().propertyKey(field).dataType();</span>
+<span class="nc" id="L523">            E.checkArgument(dataType.isText(),</span>
+                            &quot;Search index can only build on text property, &quot; +
+                            &quot;but got %s(%s)&quot;, dataType, field);
+        }
+<span class="nc" id="L527">    }</span>
+
+    private void checkFields4Range() {
+<span class="nc bnc" id="L530" title="All 2 branches missed.">        if (this.indexType != IndexType.RANGE) {</span>
+<span class="nc" id="L531">            return;</span>
+        }
+<span class="nc" id="L533">        List&lt;String&gt; fields = this.indexFields;</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">        E.checkArgument(fields.size() == 1,</span>
+                        &quot;Range index can only build on &quot; +
+                        &quot;one field, but got %s fields: '%s'&quot;,
+<span class="nc" id="L537">                        fields.size(), fields);</span>
+<span class="nc" id="L538">        String field = fields.iterator().next();</span>
+<span class="nc" id="L539">        PropertyKey property = this.graph().propertyKey(field);</span>
+<span class="nc bnc" id="L540" title="All 2 branches missed.">        E.checkArgument(!property.cardinality().multiple(),</span>
+                        &quot;Not allowed to build range index on property &quot; +
+                        &quot;'%s' whose cardinality is multiple&quot;, field);
+<span class="nc" id="L543">        DataType dataType = this.graph().propertyKey(field).dataType();</span>
+<span class="nc bnc" id="L544" title="All 4 branches missed.">        E.checkArgument(dataType.isNumber() || dataType.isDate(),</span>
+                        &quot;Range index can only build on numeric or &quot; +
+                        &quot;date property, but got %s(%s)&quot;, dataType, field);
+<span class="nc bnc" id="L547" title="All 5 branches missed.">        switch (dataType) {</span>
+            case BYTE:
+            case INT:
+<span class="nc" id="L550">                this.indexType = IndexType.RANGE_INT;</span>
+<span class="nc" id="L551">                break;</span>
+            case FLOAT:
+<span class="nc" id="L553">                this.indexType = IndexType.RANGE_FLOAT;</span>
+<span class="nc" id="L554">                break;</span>
+            case LONG:
+            case DATE:
+<span class="nc" id="L557">                this.indexType = IndexType.RANGE_LONG;</span>
+<span class="nc" id="L558">                break;</span>
+            case DOUBLE:
+<span class="nc" id="L560">                this.indexType = IndexType.RANGE_DOUBLE;</span>
+<span class="nc" id="L561">                break;</span>
+            default:
+<span class="nc" id="L563">                throw new AssertionError(&quot;Invalid datatype: &quot; + dataType);</span>
+        }
+<span class="nc" id="L565">    }</span>
+
+    private void checkRepeatIndex(SchemaLabel schemaLabel) {
+<span class="nc" id="L568">        this.checkPrimaryKeyIndex(schemaLabel);</span>
+<span class="nc bnc" id="L569" title="All 6 branches missed.">        switch (this.indexType) {</span>
+            case RANGE_INT:
+            case RANGE_FLOAT:
+            case RANGE_LONG:
+            case RANGE_DOUBLE:
+<span class="nc" id="L574">                this.checkRepeatRangeIndex(schemaLabel);</span>
+<span class="nc" id="L575">                break;</span>
+            case SEARCH:
+<span class="nc" id="L577">                this.checkRepeatSearchIndex(schemaLabel);</span>
+<span class="nc" id="L578">                break;</span>
+            case SECONDARY:
+<span class="nc" id="L580">                this.checkRepeatSecondaryIndex(schemaLabel);</span>
+<span class="nc" id="L581">                break;</span>
+            case SHARD:
+<span class="nc" id="L583">                this.checkRepeatShardIndex(schemaLabel);</span>
+<span class="nc" id="L584">                break;</span>
+            case UNIQUE:
+<span class="nc" id="L586">                this.checkRepeatUniqueIndex(schemaLabel);</span>
+<span class="nc" id="L587">                break;</span>
+            default:
+<span class="nc" id="L589">                throw new AssertionError(String.format(</span>
+                          &quot;Unsupported index type: %s&quot;, this.indexType));
+        }
+<span class="nc" id="L592">    }</span>
+
+    private Set&lt;Id&gt; removeSubIndex(SchemaLabel schemaLabel) {
+<span class="nc" id="L595">        Set&lt;Id&gt; overrideIndexLabelIds = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L596" title="All 2 branches missed.">        for (Id id : schemaLabel.indexLabels()) {</span>
+<span class="nc" id="L597">            IndexLabel old = this.graph().indexLabel(id);</span>
+<span class="nc bnc" id="L598" title="All 2 branches missed.">            if (!this.hasSubIndex(old)) {</span>
+<span class="nc" id="L599">                continue;</span>
+            }
+<span class="nc" id="L601">            List&lt;String&gt; oldFields = this.graph()</span>
+<span class="nc" id="L602">                                         .mapPkId2Name(old.indexFields());</span>
+<span class="nc" id="L603">            List&lt;String&gt; newFields = this.indexFields;</span>
+            /*
+             * Remove the existed index label if:
+             * 1. new unique index label is subset of existed unique index label
+             * or
+             * 2. existed index label is prefix of new created index label
+             * (except for unique index)
+             */
+<span class="nc bnc" id="L611" title="All 4 branches missed.">            if (this.indexType.isUnique() &amp;&amp; oldFields.containsAll(newFields) ||</span>
+<span class="nc bnc" id="L612" title="All 2 branches missed.">                !this.indexType.isUnique() &amp;&amp;</span>
+<span class="nc bnc" id="L613" title="All 2 branches missed.">                CollectionUtil.prefixOf(oldFields, newFields)) {</span>
+<span class="nc" id="L614">                overrideIndexLabelIds.add(id);</span>
+            }
+<span class="nc" id="L616">        }</span>
+<span class="nc" id="L617">        Set&lt;Id&gt; tasks = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L618" title="All 2 branches missed.">        for (Id id : overrideIndexLabelIds) {</span>
+<span class="nc" id="L619">            Id task = this.graph().removeIndexLabel(id);</span>
+<span class="nc" id="L620">            E.checkNotNull(task, &quot;remove sub index label task&quot;);</span>
+<span class="nc" id="L621">            tasks.add(task);</span>
+<span class="nc" id="L622">        }</span>
+<span class="nc" id="L623">        return tasks;</span>
+    }
+
+    private void checkPrimaryKeyIndex(SchemaLabel schemaLabel) {
+<span class="nc bnc" id="L627" title="All 2 branches missed.">        if (schemaLabel instanceof VertexLabel) {</span>
+<span class="nc" id="L628">            VertexLabel vl = (VertexLabel) schemaLabel;</span>
+<span class="nc bnc" id="L629" title="All 2 branches missed.">            if (vl.idStrategy().isPrimaryKey()) {</span>
+<span class="nc bnc" id="L630" title="All 2 branches missed.">                if (this.indexType.isSecondary() ||</span>
+<span class="nc bnc" id="L631" title="All 2 branches missed.">                    this.indexType.isUnique() ||</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">                    this.indexType.isShard() &amp;&amp;</span>
+<span class="nc bnc" id="L633" title="All 2 branches missed.">                    this.allStringIndex(this.indexFields)) {</span>
+<span class="nc" id="L634">                    List&lt;String&gt; pks = this.graph()</span>
+<span class="nc" id="L635">                                           .mapPkId2Name(vl.primaryKeys());</span>
+<span class="nc bnc" id="L636" title="All 2 branches missed.">                    E.checkArgument(!this.indexFields.containsAll(pks),</span>
+                                    &quot;No need to build index on properties &quot; +
+                                    &quot;%s, because they contains all primary &quot; +
+                                    &quot;keys %s for vertex label '%s'&quot;,
+<span class="nc" id="L640">                                    this.indexFields, pks, vl.name());</span>
+                }
+            }
+        }
+<span class="nc" id="L644">    }</span>
+
+    private void checkRepeatRangeIndex(SchemaLabel schemaLabel) {
+<span class="nc" id="L647">        this.checkRepeatIndex(schemaLabel, IndexType.RANGE_INT,</span>
+                              IndexType.RANGE_FLOAT, IndexType.RANGE_LONG,
+                              IndexType.RANGE_DOUBLE);
+<span class="nc" id="L650">    }</span>
+
+    private void checkRepeatSearchIndex(SchemaLabel schemaLabel) {
+<span class="nc" id="L653">        this.checkRepeatIndex(schemaLabel, IndexType.SEARCH);</span>
+<span class="nc" id="L654">    }</span>
+
+    private void checkRepeatSecondaryIndex(SchemaLabel schemaLabel) {
+<span class="nc" id="L657">        this.checkRepeatIndex(schemaLabel, IndexType.RANGE_INT,</span>
+                              IndexType.RANGE_FLOAT, IndexType.RANGE_LONG,
+                              IndexType.RANGE_DOUBLE, IndexType.SECONDARY,
+                              IndexType.SHARD);
+<span class="nc" id="L661">    }</span>
+
+    private void checkRepeatShardIndex(SchemaLabel schemaLabel) {
+<span class="nc bnc" id="L664" title="All 2 branches missed.">        if (this.oneNumericField()) {</span>
+<span class="nc" id="L665">            checkRepeatIndex(schemaLabel, IndexType.RANGE_INT,</span>
+                             IndexType.RANGE_FLOAT, IndexType.RANGE_LONG,
+                             IndexType.RANGE_DOUBLE, IndexType.SHARD);
+<span class="nc bnc" id="L668" title="All 2 branches missed.">        } else if (this.allStringIndex(this.indexFields)) {</span>
+<span class="nc" id="L669">            this.checkRepeatIndex(schemaLabel, IndexType.SECONDARY,</span>
+                                  IndexType.SHARD);
+        } else {
+<span class="nc" id="L672">            this.checkRepeatIndex(schemaLabel, IndexType.SHARD);</span>
+        }
+<span class="nc" id="L674">    }</span>
+
+    private void checkRepeatUniqueIndex(SchemaLabel schemaLabel) {
+<span class="nc" id="L677">        this.checkRepeatIndex(schemaLabel, List::containsAll, IndexType.UNIQUE);</span>
+<span class="nc" id="L678">    }</span>
+
+    private void checkRepeatIndex(SchemaLabel schemaLabel,
+                                  IndexType... checkedTypes) {
+<span class="nc" id="L682">        this.checkRepeatIndex(schemaLabel, CollectionUtil::prefixOf,</span>
+                              checkedTypes);
+<span class="nc" id="L684">    }</span>
+
+    private void checkRepeatIndex(SchemaLabel schemaLabel,
+                                  BiPredicate&lt;List&lt;String&gt;, List&lt;String&gt;&gt; check,
+                                  IndexType... checkedTypes) {
+<span class="nc bnc" id="L689" title="All 2 branches missed.">        for (Id id : schemaLabel.indexLabels()) {</span>
+<span class="nc" id="L690">            IndexLabel old = this.graph().indexLabel(id);</span>
+<span class="nc bnc" id="L691" title="All 2 branches missed.">            if (!Arrays.asList(checkedTypes).contains(old.indexType())) {</span>
+<span class="nc" id="L692">                continue;</span>
+            }
+<span class="nc" id="L694">            List&lt;String&gt; newFields = this.indexFields;</span>
+<span class="nc" id="L695">            List&lt;String&gt; oldFields = this.graph()</span>
+<span class="nc" id="L696">                                         .mapPkId2Name(old.indexFields());</span>
+<span class="nc bnc" id="L697" title="All 2 branches missed.">            E.checkArgument(!check.test(newFields, oldFields),</span>
+                            &quot;Repeated new index label %s(%s) with fields %s &quot; +
+                            &quot;due to existed index label %s(%s) with fields %s&quot;,
+                            this.name, this.indexType, newFields,
+<span class="nc" id="L701">                            old.name(), old.indexType(), old.indexFields());</span>
+<span class="nc" id="L702">        }</span>
+<span class="nc" id="L703">    }</span>
+
+    private boolean hasSubIndex(IndexLabel indexLabel) {
+<span class="nc bnc" id="L706" title="All 2 branches missed.">        return (this.indexType == indexLabel.indexType()) ||</span>
+<span class="nc bnc" id="L707" title="All 2 branches missed.">               (this.indexType.isShard() &amp;&amp;</span>
+<span class="nc bnc" id="L708" title="All 2 branches missed.">                indexLabel.indexType().isSecondary()) ||</span>
+<span class="nc bnc" id="L709" title="All 2 branches missed.">               (this.indexType.isSecondary() &amp;&amp;</span>
+<span class="nc bnc" id="L710" title="All 2 branches missed.">                indexLabel.indexType().isShard() &amp;&amp;</span>
+<span class="nc bnc" id="L711" title="All 2 branches missed.">                this.allStringIndex(indexLabel.indexFields())) ||</span>
+<span class="nc bnc" id="L712" title="All 2 branches missed.">               (this.indexType.isRange() &amp;&amp;</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">                (indexLabel.indexType().isSecondary() ||</span>
+<span class="nc bnc" id="L714" title="All 2 branches missed.">                 indexLabel.indexType().isShard()));</span>
+    }
+
+    private boolean allStringIndex(List&lt;?&gt; fields) {
+<span class="nc bnc" id="L718" title="All 2 branches missed.">        for (Object field : fields) {</span>
+<span class="nc bnc" id="L719" title="All 2 branches missed.">            PropertyKey pk = field instanceof Id ?</span>
+<span class="nc" id="L720">                             this.graph().propertyKey((Id) field) :</span>
+<span class="nc" id="L721">                             this.graph().propertyKey((String) field);</span>
+<span class="nc" id="L722">            DataType dataType = pk.dataType();</span>
+<span class="nc bnc" id="L723" title="All 4 branches missed.">            if (dataType.isNumber() || dataType.isDate()) {</span>
+<span class="nc" id="L724">                return false;</span>
+            }
+<span class="nc" id="L726">        }</span>
+<span class="nc" id="L727">        return true;</span>
+    }
+
+    private boolean oneNumericField() {
+<span class="nc bnc" id="L731" title="All 2 branches missed.">        if (this.indexFields.size() != 1) {</span>
+<span class="nc" id="L732">            return false;</span>
+        }
+<span class="nc" id="L734">        String field = this.indexFields.get(0);</span>
+<span class="nc" id="L735">        PropertyKey propertyKey = this.graph().propertyKey(field);</span>
+<span class="nc" id="L736">        DataType dataType = propertyKey.dataType();</span>
+<span class="nc bnc" id="L737" title="All 4 branches missed.">        return dataType.isNumber() || dataType.isDate();</span>
+    }
+
+    private void checkStableVars() {
+<span class="nc bnc" id="L741" title="All 2 branches missed.">        if (this.baseType != null) {</span>
+<span class="nc" id="L742">            throw new NotAllowException(&quot;Not allowed to update base type &quot; +</span>
+                                        &quot;for index label '%s'&quot;, this.name);
+        }
+<span class="nc bnc" id="L745" title="All 2 branches missed.">        if (this.baseValue != null) {</span>
+<span class="nc" id="L746">            throw new NotAllowException(&quot;Not allowed to update base value &quot; +</span>
+                                        &quot;for index label '%s'&quot;, this.name);
+        }
+<span class="nc bnc" id="L749" title="All 2 branches missed.">        if (this.indexType != null) {</span>
+<span class="nc" id="L750">            throw new NotAllowException(&quot;Not allowed to update index type &quot; +</span>
+                                        &quot;for index label '%s'&quot;, this.name);
+        }
+<span class="nc bnc" id="L753" title="All 4 branches missed.">        if (this.indexFields != null &amp;&amp; !this.indexFields.isEmpty()) {</span>
+<span class="nc" id="L754">            throw new NotAllowException(&quot;Not allowed to update index fields &quot; +</span>
+                                        &quot;for index label '%s'&quot;, this.name);
+        }
+<span class="nc" id="L757">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

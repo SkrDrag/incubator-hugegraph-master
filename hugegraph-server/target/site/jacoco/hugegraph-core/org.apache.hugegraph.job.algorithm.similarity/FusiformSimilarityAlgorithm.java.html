@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>FusiformSimilarityAlgorithm.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.similarity</a> &gt; <span class="el_source">FusiformSimilarityAlgorithm.java</span></div><h1>FusiformSimilarityAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.similarity;
+
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.tinkerpop.gremlin.util.iterator.IteratorUtils;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.job.algorithm.AbstractAlgorithm;
+import org.apache.hugegraph.job.algorithm.Consumers.StopExecution;
+import org.apache.hugegraph.traversal.algorithm.FusiformSimilarityTraverser;
+import org.apache.hugegraph.traversal.algorithm.FusiformSimilarityTraverser.SimilarsMap;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.ParameterUtil;
+
+<span class="nc" id="L36">public class FusiformSimilarityAlgorithm extends AbstractAlgorithm {</span>
+
+    public static final String ALGO_NAME = &quot;fusiform_similarity&quot;;
+
+    public static final String KEY_MIN_NEIGHBORS = &quot;min_neighbors&quot;;
+    public static final String KEY_MIN_SIMILARS = &quot;min_similars&quot;;
+    public static final String KEY_TOP_SIMILARS = &quot;top_similars&quot;;
+    public static final String KEY_GROUP_PROPERTY = &quot;group_property&quot;;
+    public static final String KEY_MIN_GROUPS = &quot;min_groups&quot;;
+
+    public static final int DEFAULT_MIN_NEIGHBORS = 10;
+    public static final int DEFAULT_MIN_SIMILARS = 6;
+    public static final int DEFAULT_TOP_SIMILARS = 0;
+    public static final int DEFAULT_MIN_GROUPS = 0;
+
+    @Override
+    public String category() {
+<span class="nc" id="L53">        return CATEGORY_SIMI;</span>
+    }
+
+    @Override
+    public String name() {
+<span class="nc" id="L58">        return ALGO_NAME;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L63">        minNeighbors(parameters);</span>
+<span class="nc" id="L64">        alpha(parameters);</span>
+<span class="nc" id="L65">        minSimilars(parameters);</span>
+<span class="nc" id="L66">        topSimilars(parameters);</span>
+<span class="nc" id="L67">        groupProperty(parameters);</span>
+<span class="nc" id="L68">        minGroups(parameters);</span>
+<span class="nc" id="L69">        degree(parameters);</span>
+<span class="nc" id="L70">        limit(parameters);</span>
+<span class="nc" id="L71">        sourceLabel(parameters);</span>
+<span class="nc" id="L72">        sourceCLabel(parameters);</span>
+<span class="nc" id="L73">        direction(parameters);</span>
+<span class="nc" id="L74">        edgeLabel(parameters);</span>
+<span class="nc" id="L75">        workers(parameters);</span>
+<span class="nc" id="L76">    }</span>
+
+    @Override
+    public Object call(UserJob&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L80">        int workers = workers(parameters);</span>
+<span class="nc" id="L81">        try (Traverser traverser = new Traverser(job, workers)) {</span>
+<span class="nc" id="L82">            return traverser.fusiformSimilars(sourceLabel(parameters),</span>
+<span class="nc" id="L83">                                              sourceCLabel(parameters),</span>
+<span class="nc" id="L84">                                              direction(parameters),</span>
+<span class="nc" id="L85">                                              edgeLabel(parameters),</span>
+<span class="nc" id="L86">                                              minNeighbors(parameters),</span>
+<span class="nc" id="L87">                                              alpha(parameters),</span>
+<span class="nc" id="L88">                                              minSimilars(parameters),</span>
+<span class="nc" id="L89">                                              topSimilars(parameters),</span>
+<span class="nc" id="L90">                                              groupProperty(parameters),</span>
+<span class="nc" id="L91">                                              minGroups(parameters),</span>
+<span class="nc" id="L92">                                              degree(parameters),</span>
+<span class="nc" id="L93">                                              limit(parameters));</span>
+        }
+    }
+
+    protected static int minNeighbors(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_MIN_NEIGHBORS)) {</span>
+<span class="nc" id="L99">            return DEFAULT_MIN_NEIGHBORS;</span>
+        }
+<span class="nc" id="L101">        int minNeighbors = ParameterUtil.parameterInt(parameters,</span>
+                                                      KEY_MIN_NEIGHBORS);
+<span class="nc" id="L103">        HugeTraverser.checkPositive(minNeighbors, KEY_MIN_NEIGHBORS);</span>
+<span class="nc" id="L104">        return minNeighbors;</span>
+    }
+
+    protected static int minSimilars(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_MIN_SIMILARS)) {</span>
+<span class="nc" id="L109">            return DEFAULT_MIN_SIMILARS;</span>
+        }
+<span class="nc" id="L111">        int minSimilars = ParameterUtil.parameterInt(parameters,</span>
+                                                     KEY_MIN_SIMILARS);
+<span class="nc" id="L113">        HugeTraverser.checkPositive(minSimilars, KEY_MIN_SIMILARS);</span>
+<span class="nc" id="L114">        return minSimilars;</span>
+    }
+
+    protected static int topSimilars(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_TOP_SIMILARS)) {</span>
+<span class="nc" id="L119">            return DEFAULT_TOP_SIMILARS;</span>
+        }
+<span class="nc" id="L121">        int minSimilars = ParameterUtil.parameterInt(parameters,</span>
+                                                     KEY_TOP_SIMILARS);
+<span class="nc" id="L123">        HugeTraverser.checkNonNegative(minSimilars, KEY_TOP_SIMILARS);</span>
+<span class="nc" id="L124">        return minSimilars;</span>
+    }
+
+    protected static String groupProperty(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_GROUP_PROPERTY)) {</span>
+<span class="nc" id="L129">            return null;</span>
+        }
+<span class="nc" id="L131">        return ParameterUtil.parameterString(parameters, KEY_GROUP_PROPERTY);</span>
+    }
+
+    protected static int minGroups(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_MIN_GROUPS)) {</span>
+<span class="nc" id="L136">            return DEFAULT_MIN_GROUPS;</span>
+        }
+<span class="nc" id="L138">        int minGroups = ParameterUtil.parameterInt(parameters, KEY_MIN_GROUPS);</span>
+<span class="nc" id="L139">        HugeTraverser.checkPositive(minGroups, KEY_MIN_GROUPS);</span>
+<span class="nc" id="L140">        return minGroups;</span>
+    }
+
+    protected static long limit(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_LIMIT)) {</span>
+<span class="nc" id="L145">            return DEFAULT_LIMIT;</span>
+        }
+<span class="nc" id="L147">        long limit = ParameterUtil.parameterLong(parameters, KEY_LIMIT);</span>
+<span class="nc" id="L148">        HugeTraverser.checkLimit(limit);</span>
+<span class="nc" id="L149">        return limit;</span>
+    }
+
+    private static class Traverser extends AlgoTraverser {
+
+        public Traverser(UserJob&lt;Object&gt; job, int workers) {
+<span class="nc" id="L155">            super(job, ALGO_NAME, workers);</span>
+<span class="nc" id="L156">        }</span>
+
+        public Object fusiformSimilars(String sourceLabel, String sourceCLabel,
+                                       Directions direction, String label,
+                                       int minNeighbors, double alpha,
+                                       int minSimilars, long topSimilars,
+                                       String groupProperty, int minGroups,
+                                       long degree, long limit) {
+<span class="nc" id="L164">            HugeGraph graph = this.graph();</span>
+
+<span class="nc" id="L166">            FusiformSimilarityTraverser traverser =</span>
+                                        new FusiformSimilarityTraverser(graph);
+
+<span class="nc" id="L169">            AtomicLong count = new AtomicLong(0L);</span>
+<span class="nc" id="L170">            JsonMap similarsJson = new JsonMap();</span>
+<span class="nc" id="L171">            similarsJson.startObject();</span>
+
+<span class="nc" id="L173">            this.traverse(sourceLabel, sourceCLabel, v -&gt; {</span>
+<span class="nc" id="L174">                SimilarsMap similars = traverser.fusiformSimilarity(</span>
+<span class="nc" id="L175">                                       IteratorUtils.of(v), direction,</span>
+                                       label, minNeighbors, alpha,
+                                       minSimilars, (int) topSimilars,
+                                       groupProperty, minGroups, degree,
+                                       MAX_CAPACITY, NO_LIMIT, true);
+<span class="nc bnc" id="L180" title="All 2 branches missed.">                if (similars.isEmpty()) {</span>
+<span class="nc" id="L181">                    return;</span>
+                }
+<span class="nc" id="L183">                String result = JsonUtil.toJson(similars.toMap());</span>
+<span class="nc" id="L184">                result = result.substring(1, result.length() - 1);</span>
+<span class="nc" id="L185">                synchronized (similarsJson) {</span>
+<span class="nc bnc" id="L186" title="All 4 branches missed.">                    if (count.incrementAndGet() &gt; limit &amp;&amp; limit != NO_LIMIT) {</span>
+<span class="nc" id="L187">                        throw new StopExecution(&quot;exceed limit %s&quot;, limit);</span>
+                    }
+<span class="nc" id="L189">                    similarsJson.appendRaw(result);</span>
+<span class="nc" id="L190">                }</span>
+<span class="nc" id="L191">            });</span>
+
+<span class="nc" id="L193">            similarsJson.endObject();</span>
+
+<span class="nc" id="L195">            return similarsJson.asJson();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

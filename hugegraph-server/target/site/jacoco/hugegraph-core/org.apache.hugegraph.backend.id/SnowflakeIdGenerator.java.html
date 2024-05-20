@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SnowflakeIdGenerator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.id</a> &gt; <span class="el_source">SnowflakeIdGenerator.java</span></div><h1>SnowflakeIdGenerator.java</h1><pre class="source lang-java linenums">/*
+ * Copyright 2010-2012 Twitter, Inc.
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.id;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.TimeUtil;
+
+public class SnowflakeIdGenerator extends IdGenerator {
+
+<span class="nc" id="L33">    private static final Logger LOG = Log.logger(SnowflakeIdGenerator.class);</span>
+
+<span class="nc" id="L35">    private static final Map&lt;String, SnowflakeIdGenerator&gt; INSTANCES =</span>
+                         new ConcurrentHashMap&lt;&gt;();
+
+    private final boolean forceString;
+    private final IdWorker idWorker;
+
+    public static SnowflakeIdGenerator init(HugeGraphParams graph) {
+<span class="nc" id="L42">        String graphName = graph.name();</span>
+<span class="nc" id="L43">        SnowflakeIdGenerator generator = INSTANCES.get(graphName);</span>
+<span class="nc bnc" id="L44" title="All 2 branches missed.">        if (generator == null) {</span>
+<span class="nc" id="L45">            synchronized (INSTANCES) {</span>
+<span class="nc bnc" id="L46" title="All 2 branches missed.">                if (!INSTANCES.containsKey(graphName)) {</span>
+<span class="nc" id="L47">                    HugeConfig conf = graph.configuration();</span>
+<span class="nc" id="L48">                    INSTANCES.put(graphName, new SnowflakeIdGenerator(conf));</span>
+                }
+<span class="nc" id="L50">                generator = INSTANCES.get(graphName);</span>
+<span class="nc bnc" id="L51" title="All 2 branches missed.">                assert generator != null;</span>
+<span class="nc" id="L52">            }</span>
+        }
+<span class="nc" id="L54">        return generator;</span>
+    }
+
+    public static SnowflakeIdGenerator instance(HugeGraph graph) {
+<span class="nc" id="L58">        String graphName = graph.name();</span>
+<span class="nc" id="L59">        SnowflakeIdGenerator generator = INSTANCES.get(graphName);</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">        E.checkState(generator != null,</span>
+                     &quot;SnowflakeIdGenerator of graph '%s' is not initialized&quot;,
+                     graphName);
+<span class="nc" id="L63">        return generator;</span>
+    }
+
+<span class="nc" id="L66">    private SnowflakeIdGenerator(HugeConfig config) {</span>
+<span class="nc" id="L67">        long workerId = config.get(CoreOptions.SNOWFLAKE_WORKER_ID);</span>
+<span class="nc" id="L68">        long datacenterId = config.get(CoreOptions.SNOWFLAKE_DATACENTER_ID);</span>
+<span class="nc" id="L69">        this.forceString = config.get(CoreOptions.SNOWFLAKE_FORCE_STRING);</span>
+<span class="nc" id="L70">        this.idWorker = new IdWorker(workerId, datacenterId);</span>
+<span class="nc" id="L71">        LOG.debug(&quot;SnowflakeId Worker started: datacenter id {}, &quot; +</span>
+                  &quot;worker id {}, forced string id {}&quot;,
+<span class="nc" id="L73">                  datacenterId, workerId, this.forceString);</span>
+<span class="nc" id="L74">    }</span>
+
+    public Id generate() {
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        if (this.idWorker == null) {</span>
+<span class="nc" id="L78">            throw new HugeException(&quot;Please initialize before using&quot;);</span>
+        }
+<span class="nc" id="L80">        Id id = of(this.idWorker.nextId());</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (!this.forceString) {</span>
+<span class="nc" id="L82">            return id;</span>
+        } else {
+<span class="nc" id="L84">            return IdGenerator.of(id.asString());</span>
+        }
+    }
+
+    @Override
+    public Id generate(HugeVertex vertex) {
+<span class="nc" id="L90">        return this.generate();</span>
+    }
+
+    private static class IdWorker {
+
+        private final long workerId;
+        private final long datacenterId;
+<span class="nc" id="L97">        private long sequence = 0L; // AtomicLong</span>
+<span class="nc" id="L98">        private long lastTimestamp = -1L;</span>
+
+        private static final long WORKER_BIT = 5L;
+        private static final long MAX_WORKER_ID = -1L ^ (-1L &lt;&lt; WORKER_BIT);
+
+        private static final long DC_BIT = 5L;
+        private static final long MAX_DC_ID = -1L ^ (-1L &lt;&lt; DC_BIT);
+
+        private static final long SEQUENCE_BIT = 12L;
+        private static final long SEQUENCE_MASK = -1L ^ (-1L &lt;&lt; SEQUENCE_BIT);
+
+        private static final long WORKER_SHIFT = SEQUENCE_BIT;
+        private static final long DC_SHIFT = WORKER_SHIFT + WORKER_BIT;
+        private static final long TIMESTAMP_SHIFT = DC_SHIFT + DC_BIT;
+
+<span class="nc" id="L113">        public IdWorker(long workerId, long datacenterId) {</span>
+            // Sanity check for workerId
+<span class="nc bnc" id="L115" title="All 4 branches missed.">            if (workerId &gt; MAX_WORKER_ID || workerId &lt; 0) {</span>
+<span class="nc" id="L116">                throw new IllegalArgumentException(String.format(</span>
+                          &quot;Worker id can't &gt; %d or &lt; 0&quot;,
+<span class="nc" id="L118">                          MAX_WORKER_ID));</span>
+            }
+<span class="nc bnc" id="L120" title="All 4 branches missed.">            if (datacenterId &gt; MAX_DC_ID || datacenterId &lt; 0) {</span>
+<span class="nc" id="L121">                throw new IllegalArgumentException(String.format(</span>
+                          &quot;Datacenter id can't &gt; %d or &lt; 0&quot;,
+<span class="nc" id="L123">                          MAX_DC_ID));</span>
+            }
+<span class="nc" id="L125">            this.workerId = workerId;</span>
+<span class="nc" id="L126">            this.datacenterId = datacenterId;</span>
+<span class="nc" id="L127">            LOG.debug(&quot;Id Worker starting. timestamp left shift {},&quot; +</span>
+                      &quot;datacenter id bits {}, worker id bits {},&quot; +
+                      &quot;sequence bits {}&quot;,
+<span class="nc" id="L130">                      TIMESTAMP_SHIFT, DC_BIT, WORKER_BIT, SEQUENCE_BIT);</span>
+<span class="nc" id="L131">        }</span>
+
+        public synchronized long nextId() {
+<span class="nc" id="L134">            long timestamp = TimeUtil.timeGen();</span>
+
+<span class="nc bnc" id="L136" title="All 2 branches missed.">            if (timestamp &gt; this.lastTimestamp) {</span>
+<span class="nc" id="L137">                this.sequence = 0L;</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">            } else if (timestamp == this.lastTimestamp) {</span>
+<span class="nc" id="L139">                this.sequence = (this.sequence + 1) &amp; SEQUENCE_MASK;</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">                if (this.sequence == 0) {</span>
+<span class="nc" id="L141">                    timestamp = TimeUtil.tillNextMillis(this.lastTimestamp);</span>
+                }
+            } else {
+<span class="nc" id="L144">                LOG.error(&quot;Clock is moving backwards, &quot; +</span>
+                          &quot;rejecting requests until {}.&quot;,
+<span class="nc" id="L146">                          this.lastTimestamp);</span>
+<span class="nc" id="L147">                throw new HugeException(&quot;Clock moved backwards. Refusing to &quot; +</span>
+                                        &quot;generate id for %d milliseconds&quot;,
+<span class="nc" id="L149">                                        this.lastTimestamp - timestamp);</span>
+            }
+
+<span class="nc" id="L152">            this.lastTimestamp = timestamp;</span>
+
+<span class="nc" id="L154">            return (timestamp &lt;&lt; TIMESTAMP_SHIFT) |</span>
+                   (this.datacenterId &lt;&lt; DC_SHIFT) |
+                   (this.workerId &lt;&lt; WORKER_SHIFT) |
+                   (this.sequence);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

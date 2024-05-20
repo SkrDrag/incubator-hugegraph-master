@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Steps.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.algorithm.steps</a> &gt; <span class="el_source">Steps.java</span></div><h1>Steps.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.algorithm.steps;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.NO_LIMIT;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.traversal.optimize.TraversalUtil;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+
+public class Steps {
+
+    protected final Map&lt;Id, StepEntity&gt; edgeSteps;
+    protected final Map&lt;Id, StepEntity&gt; vertexSteps;
+    protected final Directions direction;
+    protected final long degree;
+    protected final long skipDegree;
+
+    public Steps(HugeGraph graph, Directions direction,
+                 Map&lt;String, Map&lt;String, Object&gt;&gt; vSteps,
+                 Map&lt;String, Map&lt;String, Object&gt;&gt; eSteps,
+<span class="nc" id="L47">                 long degree, long skipDegree) {</span>
+<span class="nc bnc" id="L48" title="All 4 branches missed.">        E.checkArgument(degree == NO_LIMIT || degree &gt; 0L,</span>
+<span class="nc" id="L49">                        &quot;The max degree must be &gt; 0 or == -1, but got: %s&quot;, degree);</span>
+<span class="nc" id="L50">        HugeTraverser.checkSkipDegree(skipDegree, degree, NO_LIMIT);</span>
+
+<span class="nc" id="L52">        this.direction = direction;</span>
+
+        // parse vertex steps
+<span class="nc" id="L55">        this.vertexSteps = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L56" title="All 4 branches missed.">        if (vSteps != null &amp;&amp; !vSteps.isEmpty()) {</span>
+<span class="nc" id="L57">            initVertexFilter(graph, vSteps);</span>
+        }
+
+        // parse edge steps
+<span class="nc" id="L61">        this.edgeSteps = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L62" title="All 4 branches missed.">        if (eSteps != null &amp;&amp; !eSteps.isEmpty()) {</span>
+<span class="nc" id="L63">            initEdgeFilter(graph, eSteps);</span>
+        }
+
+<span class="nc" id="L66">        this.degree = degree;</span>
+<span class="nc" id="L67">        this.skipDegree = skipDegree;</span>
+<span class="nc" id="L68">    }</span>
+
+    private void initVertexFilter(HugeGraph graph, Map&lt;String, Map&lt;String, Object&gt;&gt; vSteps) {
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        for (Map.Entry&lt;String, Map&lt;String, Object&gt;&gt; entry : vSteps.entrySet()) {</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            if (checkEntryEmpty(entry)) {</span>
+<span class="nc" id="L73">                continue;</span>
+            }
+<span class="nc bnc" id="L75" title="All 4 branches missed.">            E.checkArgument(entry.getKey() != null &amp;&amp; !entry.getKey().isEmpty(),</span>
+                            &quot;The vertex step label could not be null&quot;);
+
+<span class="nc" id="L78">            VertexLabel vertexLabel = graph.vertexLabel(entry.getKey());</span>
+<span class="nc" id="L79">            StepEntity stepEntity = handleStepEntity(graph, entry, vertexLabel.id());</span>
+<span class="nc" id="L80">            this.vertexSteps.put(vertexLabel.id(), stepEntity);</span>
+<span class="nc" id="L81">        }</span>
+<span class="nc" id="L82">    }</span>
+
+    private void initEdgeFilter(HugeGraph graph, Map&lt;String, Map&lt;String, Object&gt;&gt; eSteps) {
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        for (Map.Entry&lt;String, Map&lt;String, Object&gt;&gt; entry : eSteps.entrySet()) {</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">            if (checkEntryEmpty(entry)) {</span>
+<span class="nc" id="L87">                continue;</span>
+            }
+<span class="nc bnc" id="L89" title="All 4 branches missed.">            E.checkArgument(entry.getKey() != null &amp;&amp; !entry.getKey().isEmpty(),</span>
+                            &quot;The edge step label could not be null&quot;);
+
+<span class="nc" id="L92">            EdgeLabel edgeLabel = graph.edgeLabel(entry.getKey());</span>
+<span class="nc" id="L93">            StepEntity stepEntity = handleStepEntity(graph, entry, edgeLabel.id());</span>
+<span class="nc" id="L94">            this.edgeSteps.put(edgeLabel.id(), stepEntity);</span>
+<span class="nc" id="L95">        }</span>
+<span class="nc" id="L96">    }</span>
+
+    private StepEntity handleStepEntity(HugeGraph graph,
+                                        Map.Entry&lt;String, Map&lt;String, Object&gt;&gt; entry,
+                                        Id id) {
+<span class="nc" id="L101">        Map&lt;Id, Object&gt; properties = null;</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        if (entry.getValue() != null) {</span>
+<span class="nc" id="L103">            properties = TraversalUtil.transProperties(graph, entry.getValue());</span>
+        }
+<span class="nc" id="L105">        return new StepEntity(id, entry.getKey(), properties);</span>
+    }
+
+    private boolean checkEntryEmpty(Map.Entry&lt;String, Map&lt;String, Object&gt;&gt; entry) {
+<span class="nc bnc" id="L109" title="All 4 branches missed.">        return (entry.getKey() == null || entry.getKey().isEmpty()) &amp;&amp;</span>
+<span class="nc bnc" id="L110" title="All 4 branches missed.">               (entry.getValue() == null || entry.getValue().isEmpty());</span>
+    }
+
+    public long degree() {
+<span class="nc" id="L114">        return this.degree;</span>
+    }
+
+    public Map&lt;Id, StepEntity&gt; edgeSteps() {
+<span class="nc" id="L118">        return this.edgeSteps;</span>
+    }
+
+    public Map&lt;Id, StepEntity&gt; vertexSteps() {
+<span class="nc" id="L122">        return this.vertexSteps;</span>
+    }
+
+    public long skipDegree() {
+<span class="nc" id="L126">        return this.skipDegree;</span>
+    }
+
+    public Directions direction() {
+<span class="nc" id="L130">        return this.direction;</span>
+    }
+
+    public long limit() {
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        return this.skipDegree &gt; 0L ? this.skipDegree : this.degree;</span>
+    }
+
+    public List&lt;Id&gt; edgeLabels() {
+<span class="nc" id="L138">        return new ArrayList&lt;&gt;(this.edgeSteps.keySet());</span>
+    }
+
+    public boolean isEdgeEmpty() {
+<span class="nc" id="L142">        return this.edgeSteps.isEmpty();</span>
+    }
+
+    public boolean isVertexEmpty() {
+<span class="nc" id="L146">        return this.vertexSteps.isEmpty();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L151">        return &quot;Steps{&quot; +</span>
+               &quot;edgeSteps=&quot; + this.edgeSteps +
+               &quot;, vertexSteps=&quot; + this.vertexSteps +
+               &quot;, direction=&quot; + this.direction +
+               &quot;, degree=&quot; + this.degree +
+               &quot;, skipDegree=&quot; + this.skipDegree +
+               '}';
+    }
+
+    public static class StepEntity {
+
+        protected final Id id;
+        protected final String label;
+        protected final Map&lt;Id, Object&gt; properties;
+
+<span class="nc" id="L166">        public StepEntity(Id id, String label, Map&lt;Id, Object&gt; properties) {</span>
+<span class="nc" id="L167">            this.id = id;</span>
+<span class="nc" id="L168">            this.label = label;</span>
+<span class="nc" id="L169">            this.properties = properties;</span>
+<span class="nc" id="L170">        }</span>
+
+        public Id id() {
+<span class="nc" id="L173">            return this.id;</span>
+        }
+
+        public String label() {
+<span class="nc" id="L177">            return this.label;</span>
+        }
+
+        public Map&lt;Id, Object&gt; properties() {
+<span class="nc" id="L181">            return this.properties;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L186">            return String.format(&quot;StepEntity{id=%s,label=%s,&quot; +</span>
+                                 &quot;properties=%s}&quot;, this.id,
+                                 this.label, this.properties);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

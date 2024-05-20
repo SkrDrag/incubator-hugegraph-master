@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AuthOptions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.config</a> &gt; <span class="el_source">AuthOptions.java</span></div><h1>AuthOptions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.config;
+
+import static org.apache.hugegraph.config.OptionChecker.disallowEmpty;
+import static org.apache.hugegraph.config.OptionChecker.rangeDouble;
+import static org.apache.hugegraph.config.OptionChecker.rangeInt;
+
+public class AuthOptions extends OptionHolder {
+
+    private AuthOptions() {
+        super();
+    }
+
+    private static volatile AuthOptions instance;
+
+    public static synchronized AuthOptions instance() {
+<span class="nc bnc" id="L33" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L34">            instance = new AuthOptions();</span>
+<span class="nc" id="L35">            instance.registerOptions();</span>
+        }
+<span class="nc" id="L37">        return instance;</span>
+    }
+
+<span class="nc" id="L40">    public static final ConfigOption&lt;String&gt; AUTHENTICATOR =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.authenticator&quot;,
+                    &quot;The class path of authenticator implementation. &quot; +
+                    &quot;e.g., org.apache.hugegraph.auth.StandardAuthenticator, &quot; +
+                    &quot;or org.apache.hugegraph.auth.ConfigAuthenticator.&quot;,
+                    null,
+                    &quot;&quot;
+            );
+
+<span class="nc" id="L50">    public static final ConfigOption&lt;String&gt; AUTH_GRAPH_STORE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.graph_store&quot;,
+                    &quot;The name of graph used to store authentication information, &quot; +
+                    &quot;like users, only for org.apache.hugegraph.auth.StandardAuthenticator.&quot;,
+<span class="nc" id="L55">                    disallowEmpty(),</span>
+                    &quot;hugegraph&quot;
+            );
+
+<span class="nc" id="L59">    public static final ConfigOption&lt;String&gt; AUTH_ADMIN_TOKEN =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.admin_token&quot;,
+                    &quot;Token for administrator operations, &quot; +
+                    &quot;only for org.apache.hugegraph.auth.ConfigAuthenticator.&quot;,
+<span class="nc" id="L64">                    disallowEmpty(),</span>
+                    &quot;162f7848-0b6d-4faf-b557-3a0797869c55&quot;
+            );
+
+<span class="nc" id="L68">    public static final ConfigListOption&lt;String&gt; AUTH_USER_TOKENS =</span>
+            new ConfigListOption&lt;&gt;(
+                    &quot;auth.user_tokens&quot;,
+                    &quot;The map of user tokens with name and password, &quot; +
+                    &quot;only for org.apache.hugegraph.auth.ConfigAuthenticator.&quot;,
+<span class="nc" id="L73">                    disallowEmpty(),</span>
+                    &quot;hugegraph:9fd95c9c-711b-415b-b85f-d4df46ba5c31&quot;
+            );
+
+<span class="nc" id="L77">    public static final ConfigOption&lt;String&gt; AUTH_REMOTE_URL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.remote_url&quot;,
+                    &quot;If the address is empty, it provide auth service, &quot; +
+                    &quot;otherwise it is auth client and also provide auth service &quot; +
+                    &quot;through rpc forwarding. The remote url can be set to &quot; +
+                    &quot;multiple addresses, which are concat by ','.&quot;,
+                    null,
+                    &quot;&quot;
+            );
+
+<span class="nc" id="L88">    public static final ConfigOption&lt;String&gt; AUTH_TOKEN_SECRET =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.token_secret&quot;,
+                    &quot;Secret key of HS256 algorithm.&quot;,
+<span class="nc" id="L92">                    disallowEmpty(),</span>
+                    &quot;FXQXbJtbCLxODc6tGci732pkH1cyf8Qg&quot;
+            );
+
+<span class="nc" id="L96">    public static final ConfigOption&lt;Double&gt; AUTH_AUDIT_LOG_RATE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.audit_log_rate&quot;,
+                    &quot;The max rate of audit log output per user, &quot; +
+                    &quot;default value is 1000 records per second.&quot;,
+<span class="nc" id="L101">                    rangeDouble(0.0, Double.MAX_VALUE),</span>
+<span class="nc" id="L102">                    1000.0</span>
+            );
+
+<span class="nc" id="L105">    public static final ConfigOption&lt;Long&gt; AUTH_CACHE_EXPIRE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.cache_expire&quot;,
+                    &quot;The expiration time in seconds of auth cache in &quot; +
+                    &quot;auth client and auth server.&quot;,
+<span class="nc" id="L110">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L111">                    (60 * 10L)</span>
+            );
+
+<span class="nc" id="L114">    public static final ConfigOption&lt;Long&gt; AUTH_CACHE_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.cache_capacity&quot;,
+                    &quot;The max cache capacity of each auth cache item.&quot;,
+<span class="nc" id="L118">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L119">                    (1024 * 10L)</span>
+            );
+
+<span class="nc" id="L122">    public static final ConfigOption&lt;Long&gt; AUTH_TOKEN_EXPIRE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.token_expire&quot;,
+                    &quot;The expiration time in seconds after token created&quot;,
+<span class="nc" id="L126">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L127">                    (3600 * 24L)</span>
+            );
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

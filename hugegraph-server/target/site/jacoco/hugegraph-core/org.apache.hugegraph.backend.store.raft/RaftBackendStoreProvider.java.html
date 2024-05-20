@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RaftBackendStoreProvider.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.raft</a> &gt; <span class="el_source">RaftBackendStoreProvider.java</span></div><h1>RaftBackendStoreProvider.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.raft;
+
+import java.util.Set;
+import java.util.concurrent.Future;
+
+import org.slf4j.Logger;
+
+import com.alipay.remoting.rpc.RpcServer;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.StoreAction;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.StoreType;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.event.EventListener;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Events;
+import org.apache.hugegraph.util.Log;
+import com.google.common.collect.ImmutableSet;
+
+public class RaftBackendStoreProvider implements BackendStoreProvider {
+
+<span class="nc" id="L42">    private static final Logger LOG = Log.logger(RaftBackendStoreProvider.class);</span>
+
+    private final BackendStoreProvider provider;
+    private final RaftContext context;
+
+    private RaftBackendStore schemaStore;
+    private RaftBackendStore graphStore;
+    private RaftBackendStore systemStore;
+    public RaftBackendStoreProvider(HugeGraphParams params,
+<span class="nc" id="L51">                                    BackendStoreProvider provider) {</span>
+<span class="nc" id="L52">        this.provider = provider;</span>
+<span class="nc" id="L53">        this.schemaStore = null;</span>
+<span class="nc" id="L54">        this.graphStore = null;</span>
+<span class="nc" id="L55">        this.systemStore = null;</span>
+<span class="nc" id="L56">        this.context = new RaftContext(params);</span>
+<span class="nc" id="L57">    }</span>
+
+    public RaftGroupManager raftNodeManager() {
+<span class="nc" id="L60">        return this.context().raftNodeManager();</span>
+    }
+
+    private RaftContext context() {
+<span class="nc bnc" id="L64" title="All 2 branches missed.">        if (this.context == null) {</span>
+<span class="nc" id="L65">            E.checkState(false, &quot;Please ensure init raft context&quot;);</span>
+        }
+<span class="nc" id="L67">        return this.context;</span>
+    }
+
+    private Set&lt;RaftBackendStore&gt; stores() {
+<span class="nc" id="L71">        return ImmutableSet.of(this.schemaStore, this.graphStore,</span>
+                               this.systemStore);
+    }
+
+    private void checkOpened() {
+<span class="nc bnc" id="L76" title="All 8 branches missed.">        E.checkState(this.graph() != null &amp;&amp;</span>
+                     this.schemaStore != null &amp;&amp;
+                     this.graphStore != null &amp;&amp;
+                     this.systemStore != null,
+                     &quot;The RaftBackendStoreProvider has not been opened&quot;);
+<span class="nc" id="L81">    }</span>
+
+    private void checkNonSharedStore(BackendStore store) {
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        E.checkArgument(!store.features().supportsSharedStorage(),</span>
+                        &quot;Can't enable raft mode with %s backend&quot;,
+<span class="nc" id="L86">                        this.type());</span>
+<span class="nc" id="L87">    }</span>
+
+    @Override
+    public String type() {
+<span class="nc" id="L91">        return this.provider.type();</span>
+    }
+
+    @Override
+    public String driverVersion() {
+<span class="nc" id="L96">        return this.provider.driverVersion();</span>
+    }
+
+    @Override
+    public String storedVersion() {
+<span class="nc" id="L101">        return this.provider.storedVersion();</span>
+    }
+
+    @Override
+    public String graph() {
+<span class="nc" id="L106">        return this.provider.graph();</span>
+    }
+
+    @Override
+    public synchronized BackendStore loadSchemaStore(HugeConfig config) {
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (this.schemaStore == null) {</span>
+<span class="nc" id="L112">            LOG.info(&quot;Init raft backend schema store&quot;);</span>
+<span class="nc" id="L113">            BackendStore store = this.provider.loadSchemaStore(config);</span>
+<span class="nc" id="L114">            this.checkNonSharedStore(store);</span>
+<span class="nc" id="L115">            this.schemaStore = new RaftBackendStore(store, this.context());</span>
+<span class="nc" id="L116">            this.context().addStore(StoreType.SCHEMA, this.schemaStore);</span>
+        }
+<span class="nc" id="L118">        return this.schemaStore;</span>
+    }
+
+    @Override
+    public synchronized BackendStore loadGraphStore(HugeConfig config) {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (this.graphStore == null) {</span>
+<span class="nc" id="L124">            LOG.info(&quot;Init raft backend graph store&quot;);</span>
+<span class="nc" id="L125">            BackendStore store = this.provider.loadGraphStore(config);</span>
+<span class="nc" id="L126">            this.checkNonSharedStore(store);</span>
+<span class="nc" id="L127">            this.graphStore = new RaftBackendStore(store, this.context());</span>
+<span class="nc" id="L128">            this.context().addStore(StoreType.GRAPH, this.graphStore);</span>
+        }
+<span class="nc" id="L130">        return this.graphStore;</span>
+    }
+
+    @Override
+    public synchronized BackendStore loadSystemStore(HugeConfig config) {
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        if (this.systemStore == null) {</span>
+<span class="nc" id="L136">            LOG.info(&quot;Init raft backend system store&quot;);</span>
+<span class="nc" id="L137">            BackendStore store = this.provider.loadSystemStore(config);</span>
+<span class="nc" id="L138">            this.checkNonSharedStore(store);</span>
+<span class="nc" id="L139">            this.systemStore = new RaftBackendStore(store, this.context());</span>
+<span class="nc" id="L140">            this.context().addStore(StoreType.SYSTEM, this.systemStore);</span>
+        }
+<span class="nc" id="L142">        return this.systemStore;</span>
+    }
+
+    @Override
+    public void open(String name) {
+<span class="nc" id="L147">        this.provider.open(name);</span>
+<span class="nc" id="L148">    }</span>
+
+    @Override
+    public void waitReady(RpcServer rpcServer) {
+<span class="nc" id="L152">        this.context().initRaftNode(rpcServer);</span>
+<span class="nc" id="L153">        LOG.info(&quot;The raft node is initialized&quot;);</span>
+
+<span class="nc" id="L155">        this.context().waitRaftNodeStarted();</span>
+<span class="nc" id="L156">        LOG.info(&quot;The raft store is started&quot;);</span>
+<span class="nc" id="L157">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L161">        this.provider.close();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (this.context != null) {</span>
+<span class="nc" id="L163">            this.context.close();</span>
+        }
+<span class="nc" id="L165">    }</span>
+
+    @Override
+    public void init() {
+<span class="nc" id="L169">        this.checkOpened();</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        for (RaftBackendStore store : this.stores()) {</span>
+<span class="nc" id="L171">            store.init();</span>
+<span class="nc" id="L172">        }</span>
+<span class="nc" id="L173">        this.notifyAndWaitEvent(Events.STORE_INIT);</span>
+
+<span class="nc" id="L175">        LOG.debug(&quot;Graph '{}' store has been initialized&quot;, this.graph());</span>
+<span class="nc" id="L176">    }</span>
+
+    @Override
+    public void clear() {
+<span class="nc" id="L180">        this.checkOpened();</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        for (RaftBackendStore store : this.stores()) {</span>
+            // Just clear tables of store, not clear space
+<span class="nc" id="L183">            store.clear(false);</span>
+<span class="nc" id="L184">        }</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        for (RaftBackendStore store : this.stores()) {</span>
+            // Only clear space of store
+<span class="nc" id="L187">            store.clear(true);</span>
+<span class="nc" id="L188">        }</span>
+<span class="nc" id="L189">        this.notifyAndWaitEvent(Events.STORE_CLEAR);</span>
+
+<span class="nc" id="L191">        LOG.debug(&quot;Graph '{}' store has been cleared&quot;, this.graph());</span>
+<span class="nc" id="L192">    }</span>
+
+    @Override
+    public void truncate() {
+<span class="nc" id="L196">        this.checkOpened();</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        for (RaftBackendStore store : this.stores()) {</span>
+<span class="nc" id="L198">            store.truncate();</span>
+<span class="nc" id="L199">        }</span>
+<span class="nc" id="L200">        this.notifyAndWaitEvent(Events.STORE_TRUNCATE);</span>
+<span class="nc" id="L201">        LOG.debug(&quot;Graph '{}' store has been truncated&quot;, this.graph());</span>
+        /*
+         * Take the initiative to generate a snapshot, it can avoid this
+         * situation: when the server restart need to read the database
+         * (such as checkBackendVersionInfo), it happens that raft replays
+         * the truncate log, at the same time, the store has been cleared
+         * (truncate) but init-store has not been completed, which will
+         * cause reading errors.
+         * When restarting, load the snapshot first and then read backend,
+         * will not encounter such an intermediate state.
+         */
+<span class="nc" id="L212">        this.createSnapshot();</span>
+<span class="nc" id="L213">    }</span>
+
+    @Override
+    public boolean initialized() {
+<span class="nc bnc" id="L217" title="All 4 branches missed.">        return this.provider.initialized() &amp;&amp; this.context != null;</span>
+    }
+
+    @Override
+    public void createSnapshot() {
+        // TODO: snapshot for StoreType.ALL instead of StoreType.GRAPH
+<span class="nc" id="L223">        StoreCommand command = new StoreCommand(StoreType.GRAPH,</span>
+                                                StoreAction.SNAPSHOT, null);
+<span class="nc" id="L225">        RaftStoreClosure closure = new RaftStoreClosure(command);</span>
+<span class="nc" id="L226">        RaftClosure&lt;?&gt; future = this.context().node().submitAndWait(command,</span>
+                                                                    closure);
+<span class="nc bnc" id="L228" title="All 2 branches missed.">        E.checkState(future != null, &quot;The snapshot future can't be null&quot;);</span>
+        try {
+<span class="nc" id="L230">            future.waitFinished();</span>
+<span class="nc" id="L231">            LOG.debug(&quot;Graph '{}' has writed snapshot&quot;, this.graph());</span>
+<span class="nc" id="L232">        } catch (Throwable e) {</span>
+<span class="nc" id="L233">            throw new BackendException(&quot;Failed to create snapshot&quot;, e);</span>
+<span class="nc" id="L234">        }</span>
+<span class="nc" id="L235">    }</span>
+
+    @Override
+    public void onCloneConfig(HugeConfig config, String newGraph) {
+<span class="nc" id="L239">        this.provider.onCloneConfig(config, newGraph);</span>
+<span class="nc" id="L240">    }</span>
+
+    @Override
+    public void onDeleteConfig(HugeConfig config) {
+<span class="nc" id="L244">        this.provider.onDeleteConfig(config);</span>
+<span class="nc" id="L245">    }</span>
+
+    @Override
+    public void resumeSnapshot() {
+        // Jraft doesn't expose API to load snapshot
+<span class="nc" id="L250">        throw new UnsupportedOperationException(&quot;resumeSnapshot&quot;);</span>
+    }
+
+    @Override
+    public void listen(EventListener listener) {
+<span class="nc" id="L255">        this.provider.listen(listener);</span>
+<span class="nc" id="L256">    }</span>
+
+    @Override
+    public void unlisten(EventListener listener) {
+<span class="nc" id="L260">        this.provider.unlisten(listener);</span>
+<span class="nc" id="L261">    }</span>
+
+    @Override
+    public EventHub storeEventHub() {
+<span class="nc" id="L265">        return this.provider.storeEventHub();</span>
+    }
+
+    protected final void notifyAndWaitEvent(String event) {
+<span class="nc" id="L269">        Future&lt;?&gt; future = this.storeEventHub().notify(event, this);</span>
+        try {
+<span class="nc" id="L271">            future.get();</span>
+<span class="nc" id="L272">        } catch (Throwable e) {</span>
+<span class="nc" id="L273">            LOG.warn(&quot;Error when waiting for event execution: {}&quot;, event, e);</span>
+<span class="nc" id="L274">        }</span>
+<span class="nc" id="L275">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,588 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Query.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.query</a> &gt; <span class="el_source">Query.java</span></div><h1>Query.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.query;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Aggregate.AggregateFunc;
+import org.apache.hugegraph.exception.LimitExceedException;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.CollectionType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.collection.IdSet;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+
+public class Query implements Cloneable {
+
+    // TODO: we should better not use Long.Max as the unify limit number
+    public static final long NO_LIMIT = Long.MAX_VALUE;
+
+    public static final long COMMIT_BATCH = 500L;
+    public static final long QUERY_BATCH = 100L;
+
+    public static final long NO_CAPACITY = -1L;
+    public static final long DEFAULT_CAPACITY = 800000L; // HugeGraph-777
+
+<span class="nc" id="L53">    private static final ThreadLocal&lt;Long&gt; CAPACITY_CONTEXT = new ThreadLocal&lt;&gt;();</span>
+
+<span class="nc" id="L55">    protected static final Query NONE = new Query(HugeType.UNKNOWN);</span>
+
+<span class="nc" id="L57">    private static final Set&lt;Id&gt; EMPTY_OLAP_PKS = ImmutableSet.of();</span>
+
+    private HugeType resultType;
+    private Map&lt;HugeKeys, Order&gt; orders;
+    private long offset;
+    private long actualOffset;
+    private long actualStoreOffset;
+    private long limit;
+    private String page;
+    private long capacity;
+    private boolean showHidden;
+    private boolean showDeleting;
+    private boolean showExpired;
+    private boolean olap;
+    private Set&lt;Id&gt; olapPks;
+
+    private Aggregate aggregate;
+
+    private Query originQuery;
+
+    public Query(HugeType resultType) {
+<span class="nc" id="L78">        this(resultType, null);</span>
+<span class="nc" id="L79">    }</span>
+
+<span class="nc" id="L81">    public Query(HugeType resultType, Query originQuery) {</span>
+<span class="nc" id="L82">        this.resultType = resultType;</span>
+<span class="nc" id="L83">        this.originQuery = originQuery;</span>
+
+<span class="nc" id="L85">        this.orders = null;</span>
+
+<span class="nc" id="L87">        this.offset = 0L;</span>
+<span class="nc" id="L88">        this.actualOffset = 0L;</span>
+<span class="nc" id="L89">        this.actualStoreOffset = 0L;</span>
+<span class="nc" id="L90">        this.limit = NO_LIMIT;</span>
+<span class="nc" id="L91">        this.page = null;</span>
+
+<span class="nc" id="L93">        this.capacity = defaultCapacity();</span>
+
+<span class="nc" id="L95">        this.showHidden = false;</span>
+<span class="nc" id="L96">        this.showDeleting = false;</span>
+
+<span class="nc" id="L98">        this.aggregate = null;</span>
+<span class="nc" id="L99">        this.showExpired = false;</span>
+<span class="nc" id="L100">        this.olap = false;</span>
+<span class="nc" id="L101">        this.olapPks = EMPTY_OLAP_PKS;</span>
+<span class="nc" id="L102">    }</span>
+
+    public void copyBasic(Query query) {
+<span class="nc" id="L105">        E.checkNotNull(query, &quot;query&quot;);</span>
+<span class="nc" id="L106">        this.offset = query.offset();</span>
+<span class="nc" id="L107">        this.limit = query.limit();</span>
+<span class="nc" id="L108">        this.page = query.page();</span>
+<span class="nc" id="L109">        this.capacity = query.capacity();</span>
+<span class="nc" id="L110">        this.showHidden = query.showHidden();</span>
+<span class="nc" id="L111">        this.showDeleting = query.showDeleting();</span>
+<span class="nc" id="L112">        this.aggregate = query.aggregate();</span>
+<span class="nc" id="L113">        this.showExpired = query.showExpired();</span>
+<span class="nc" id="L114">        this.olap = query.olap();</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (query.orders != null) {</span>
+<span class="nc" id="L116">            this.orders(query.orders);</span>
+        }
+<span class="nc" id="L118">    }</span>
+
+    public HugeType resultType() {
+<span class="nc" id="L121">        return this.resultType;</span>
+    }
+
+    public void resultType(HugeType resultType) {
+<span class="nc" id="L125">        this.resultType = resultType;</span>
+<span class="nc" id="L126">    }</span>
+
+    public Query originQuery() {
+<span class="nc" id="L129">        return this.originQuery;</span>
+    }
+
+    public Query rootOriginQuery() {
+<span class="nc" id="L133">        Query root = this;</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        while (root.originQuery != null) {</span>
+<span class="nc" id="L135">            root = root.originQuery;</span>
+        }
+<span class="nc" id="L137">        return root;</span>
+    }
+
+    protected void originQuery(Query originQuery) {
+<span class="nc" id="L141">        this.originQuery = originQuery;</span>
+<span class="nc" id="L142">    }</span>
+
+    public Map&lt;HugeKeys, Order&gt; orders() {
+<span class="nc" id="L145">        return Collections.unmodifiableMap(this.getOrNewOrders());</span>
+    }
+
+    public void orders(Map&lt;HugeKeys, Order&gt; orders) {
+<span class="nc" id="L149">        this.orders = InsertionOrderUtil.newMap(orders);</span>
+<span class="nc" id="L150">    }</span>
+
+    public void order(HugeKeys key, Order order) {
+<span class="nc" id="L153">        this.getOrNewOrders().put(key, order);</span>
+<span class="nc" id="L154">    }</span>
+
+    protected Map&lt;HugeKeys, Order&gt; getOrNewOrders() {
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        if (this.orders != null) {</span>
+<span class="nc" id="L158">            return this.orders;</span>
+        }
+<span class="nc" id="L160">        this.orders = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L161">        return this.orders;</span>
+    }
+
+    public long offset() {
+<span class="nc" id="L165">        return this.offset;</span>
+    }
+
+    public void offset(long offset) {
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        E.checkArgument(offset &gt;= 0L, &quot;Invalid offset %s&quot;, offset);</span>
+<span class="nc" id="L170">        this.offset = offset;</span>
+<span class="nc" id="L171">    }</span>
+
+    public void copyOffset(Query parent) {
+<span class="nc bnc" id="L174" title="All 4 branches missed.">        assert this.offset == 0L || this.offset == parent.offset;</span>
+<span class="nc bnc" id="L175" title="All 4 branches missed.">        assert this.actualOffset == 0L ||</span>
+               this.actualOffset == parent.actualOffset;
+<span class="nc" id="L177">        this.offset = parent.offset;</span>
+<span class="nc" id="L178">        this.actualOffset = parent.actualOffset;</span>
+<span class="nc" id="L179">    }</span>
+
+    public long actualOffset() {
+<span class="nc" id="L182">        return this.actualOffset;</span>
+    }
+
+    public void resetActualOffset() {
+<span class="nc" id="L186">        this.actualOffset = 0L;</span>
+<span class="nc" id="L187">        this.actualStoreOffset = 0L;</span>
+<span class="nc" id="L188">    }</span>
+
+    public long goOffset(long offset) {
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        E.checkArgument(offset &gt;= 0L, &quot;Invalid offset value: %s&quot;, offset);</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">        if (this.originQuery != null) {</span>
+<span class="nc" id="L193">            this.goParentOffset(offset);</span>
+        }
+<span class="nc" id="L195">        return this.goSelfOffset(offset);</span>
+    }
+
+    private void goParentOffset(long offset) {
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        assert offset &gt;= 0L;</span>
+<span class="nc" id="L200">        Query parent = this.originQuery;</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        while (parent != null) {</span>
+<span class="nc" id="L202">            parent.actualOffset += offset;</span>
+<span class="nc" id="L203">            parent = parent.originQuery;</span>
+        }
+<span class="nc" id="L205">    }</span>
+
+    private long goSelfOffset(long offset) {
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        assert offset &gt;= 0L;</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (this.originQuery != null) {</span>
+<span class="nc" id="L210">            this.originQuery.goStoreOffsetBySubQuery(offset);</span>
+        }
+<span class="nc" id="L212">        this.actualOffset += offset;</span>
+<span class="nc" id="L213">        return this.actualOffset;</span>
+    }
+
+    private long goStoreOffsetBySubQuery(long offset) {
+<span class="nc" id="L217">        Query parent = this.originQuery;</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        while (parent != null) {</span>
+<span class="nc" id="L219">            parent.actualStoreOffset += offset;</span>
+<span class="nc" id="L220">            parent = parent.originQuery;</span>
+        }
+<span class="nc" id="L222">        this.actualStoreOffset += offset;</span>
+<span class="nc" id="L223">        return this.actualStoreOffset;</span>
+    }
+
+    public &lt;T&gt; Set&lt;T&gt; skipOffsetIfNeeded(Set&lt;T&gt; elems) {
+        /*
+         * Skip index(index query with offset) for performance optimization.
+         * We assume one result is returned by each index, but if there are
+         * overridden index it will cause confusing offset and results.
+         */
+<span class="nc" id="L232">        long fromIndex = this.offset() - this.actualOffset();</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (fromIndex &lt; 0L) {</span>
+            // Skipping offset is overhead, no need to skip
+<span class="nc" id="L235">            fromIndex = 0L;</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        } else if (fromIndex &gt; 0L) {</span>
+<span class="nc" id="L237">            this.goOffset(fromIndex);</span>
+        }
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        E.checkArgument(fromIndex &lt;= Integer.MAX_VALUE,</span>
+                        &quot;Offset must be &lt;= 0x7fffffff, but got '%s'&quot;,
+<span class="nc" id="L241">                        fromIndex);</span>
+
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        if (fromIndex &gt;= elems.size()) {</span>
+<span class="nc" id="L244">            return ImmutableSet.of();</span>
+        }
+<span class="nc" id="L246">        long toIndex = this.total();</span>
+<span class="nc bnc" id="L247" title="All 4 branches missed.">        if (this.noLimit() || toIndex &gt; elems.size()) {</span>
+<span class="nc" id="L248">            toIndex = elems.size();</span>
+        }
+<span class="nc bnc" id="L250" title="All 4 branches missed.">        if (fromIndex == 0L &amp;&amp; toIndex == elems.size()) {</span>
+<span class="nc" id="L251">            return elems;</span>
+        }
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        assert fromIndex &lt; elems.size();</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        assert toIndex &lt;= elems.size();</span>
+<span class="nc" id="L255">        return CollectionUtil.subSet(elems, (int) fromIndex, (int) toIndex);</span>
+    }
+
+    public long remaining() {
+<span class="nc bnc" id="L259" title="All 2 branches missed.">        if (this.limit == NO_LIMIT) {</span>
+<span class="nc" id="L260">            return NO_LIMIT;</span>
+        } else {
+<span class="nc" id="L262">            return this.total() - this.actualOffset();</span>
+        }
+    }
+
+    public long total() {
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        if (this.limit == NO_LIMIT) {</span>
+<span class="nc" id="L268">            return NO_LIMIT;</span>
+        } else {
+<span class="nc" id="L270">            return this.offset + this.limit;</span>
+        }
+    }
+
+    public long limit() {
+<span class="nc bnc" id="L275" title="All 2 branches missed.">        if (this.capacity != NO_CAPACITY) {</span>
+<span class="nc bnc" id="L276" title="All 4 branches missed.">            E.checkArgument(this.limit == Query.NO_LIMIT ||</span>
+                            this.limit &lt;= this.capacity,
+                            &quot;Invalid limit %s, must be &lt;= capacity(%s)&quot;,
+<span class="nc" id="L279">                            this.limit, this.capacity);</span>
+        }
+<span class="nc" id="L281">        return this.limit;</span>
+    }
+
+    public void limit(long limit) {
+<span class="nc bnc" id="L285" title="All 4 branches missed.">        E.checkArgument(limit &gt;= 0L || limit == NO_LIMIT,</span>
+<span class="nc" id="L286">                        &quot;Invalid limit %s&quot;, limit);</span>
+<span class="nc" id="L287">        this.limit = limit;</span>
+<span class="nc" id="L288">    }</span>
+
+    public boolean noLimit() {
+<span class="nc bnc" id="L291" title="All 2 branches missed.">        return this.limit() == NO_LIMIT;</span>
+    }
+
+    public boolean noLimitAndOffset() {
+<span class="nc bnc" id="L295" title="All 4 branches missed.">        return this.limit() == NO_LIMIT &amp;&amp; this.offset() == 0L;</span>
+    }
+
+    public boolean reachLimit(long count) {
+<span class="nc" id="L299">        long limit = this.limit();</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        if (limit == NO_LIMIT) {</span>
+<span class="nc" id="L301">            return false;</span>
+        }
+<span class="nc bnc" id="L303" title="All 2 branches missed.">        return count &gt;= (limit + this.offset());</span>
+    }
+
+    /**
+     * Set or update the offset and limit by a range [start, end)
+     * NOTE: it will use the min range one: max start and min end
+     *
+     * @param start the range start, include it
+     * @param end   the range end, exclude it
+     */
+    public long range(long start, long end) {
+        // Update offset
+<span class="nc" id="L315">        long offset = this.offset();</span>
+<span class="nc" id="L316">        start = Math.max(start, offset);</span>
+<span class="nc" id="L317">        this.offset(start);</span>
+
+        // Update limit
+<span class="nc bnc" id="L320" title="All 2 branches missed.">        if (end != -1L) {</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">            if (!this.noLimit()) {</span>
+<span class="nc" id="L322">                end = Math.min(end, offset + this.limit());</span>
+            } else {
+<span class="nc bnc" id="L324" title="All 2 branches missed.">                assert end &lt; Query.NO_LIMIT;</span>
+            }
+<span class="nc bnc" id="L326" title="All 2 branches missed.">            E.checkArgument(end &gt;= start,</span>
+<span class="nc" id="L327">                            &quot;Invalid range: [%s, %s)&quot;, start, end);</span>
+<span class="nc" id="L328">            this.limit(end - start);</span>
+        } else {
+            // Keep the origin limit
+<span class="nc bnc" id="L331" title="All 2 branches missed.">            assert this.limit() &lt;= Query.NO_LIMIT;</span>
+        }
+<span class="nc" id="L333">        return this.limit;</span>
+    }
+
+    public String page() {
+<span class="nc bnc" id="L337" title="All 2 branches missed.">        if (this.page != null) {</span>
+<span class="nc bnc" id="L338" title="All 2 branches missed.">            E.checkState(this.limit() != 0L,</span>
+                         &quot;Can't set limit=0 when using paging&quot;);
+<span class="nc bnc" id="L340" title="All 2 branches missed.">            E.checkState(this.offset() == 0L,</span>
+                         &quot;Can't set offset when using paging, but got '%s'&quot;,
+<span class="nc" id="L342">                         this.offset());</span>
+        }
+<span class="nc" id="L344">        return this.page;</span>
+    }
+
+    public String pageWithoutCheck() {
+<span class="nc" id="L348">        return this.page;</span>
+    }
+
+    public void page(String page) {
+<span class="nc" id="L352">        this.page = page;</span>
+<span class="nc" id="L353">    }</span>
+
+    public boolean paging() {
+<span class="nc bnc" id="L356" title="All 2 branches missed.">        return this.page != null;</span>
+    }
+
+    public void olap(boolean olap) {
+<span class="nc" id="L360">        this.olap = olap;</span>
+<span class="nc" id="L361">    }</span>
+
+    public boolean olap() {
+<span class="nc" id="L364">        return this.olap;</span>
+    }
+
+    public void olapPks(Set&lt;Id&gt; olapPks) {
+<span class="nc bnc" id="L368" title="All 2 branches missed.">        for (Id olapPk : olapPks) {</span>
+<span class="nc" id="L369">            this.olapPk(olapPk);</span>
+<span class="nc" id="L370">        }</span>
+<span class="nc" id="L371">    }</span>
+
+    public void olapPk(Id olapPk) {
+<span class="nc bnc" id="L374" title="All 2 branches missed.">        if (this.olapPks == EMPTY_OLAP_PKS) {</span>
+<span class="nc" id="L375">            this.olapPks = new IdSet(CollectionType.EC);</span>
+        }
+<span class="nc" id="L377">        this.olapPks.add(olapPk);</span>
+<span class="nc" id="L378">    }</span>
+
+    public Set&lt;Id&gt; olapPks() {
+<span class="nc" id="L381">        return this.olapPks;</span>
+    }
+
+    public long capacity() {
+<span class="nc" id="L385">        return this.capacity;</span>
+    }
+
+    public void capacity(long capacity) {
+<span class="nc" id="L389">        this.capacity = capacity;</span>
+<span class="nc" id="L390">    }</span>
+
+    public boolean bigCapacity() {
+<span class="nc bnc" id="L393" title="All 4 branches missed.">        return this.capacity == NO_CAPACITY || this.capacity &gt; DEFAULT_CAPACITY;</span>
+    }
+
+    public void checkCapacity(long count) throws LimitExceedException {
+        // Throw LimitExceedException if reach capacity
+<span class="nc bnc" id="L398" title="All 4 branches missed.">        if (this.capacity != Query.NO_CAPACITY &amp;&amp; count &gt; this.capacity) {</span>
+<span class="nc" id="L399">            final int MAX_CHARS = 256;</span>
+<span class="nc" id="L400">            String query = this.toString();</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">            if (query.length() &gt; MAX_CHARS) {</span>
+<span class="nc" id="L402">                query = query.substring(0, MAX_CHARS) + &quot;...&quot;;</span>
+            }
+<span class="nc" id="L404">            throw new LimitExceedException(</span>
+                      &quot;Too many records(must &lt;= %s) for the query: %s&quot;,
+<span class="nc" id="L406">                      this.capacity, query);</span>
+        }
+<span class="nc" id="L408">    }</span>
+
+    public Aggregate aggregate() {
+<span class="nc" id="L411">        return this.aggregate;</span>
+    }
+
+    public Aggregate aggregateNotNull() {
+<span class="nc bnc" id="L415" title="All 2 branches missed.">        E.checkArgument(this.aggregate != null,</span>
+                        &quot;The aggregate must be set for number query&quot;);
+<span class="nc" id="L417">        return this.aggregate;</span>
+    }
+
+    public void aggregate(AggregateFunc func, String property) {
+<span class="nc" id="L421">        this.aggregate = new Aggregate(func, property);</span>
+<span class="nc" id="L422">    }</span>
+
+    public void aggregate(Aggregate aggregate) {
+<span class="nc" id="L425">        this.aggregate = aggregate;</span>
+<span class="nc" id="L426">    }</span>
+
+    public boolean showHidden() {
+<span class="nc" id="L429">        return this.showHidden;</span>
+    }
+
+    public void showHidden(boolean showHidden) {
+<span class="nc" id="L433">        this.showHidden = showHidden;</span>
+<span class="nc" id="L434">    }</span>
+
+    public boolean showDeleting() {
+<span class="nc" id="L437">        return this.showDeleting;</span>
+    }
+
+    public void showDeleting(boolean showDeleting) {
+<span class="nc" id="L441">        this.showDeleting = showDeleting;</span>
+<span class="nc" id="L442">    }</span>
+
+    public boolean showExpired() {
+<span class="nc" id="L445">        return this.showExpired;</span>
+    }
+
+    public void showExpired(boolean showExpired) {
+<span class="nc" id="L449">        this.showExpired = showExpired;</span>
+<span class="nc" id="L450">    }</span>
+
+    public Collection&lt;Id&gt; ids() {
+<span class="nc" id="L453">        return ImmutableList.of();</span>
+    }
+
+    public Collection&lt;Condition&gt; conditions() {
+<span class="nc" id="L457">        return ImmutableList.of();</span>
+    }
+
+    public int idsSize() {
+<span class="nc" id="L461">        return 0;</span>
+    }
+
+    public int conditionsSize() {
+<span class="nc" id="L465">        return 0;</span>
+    }
+
+    public boolean empty() {
+<span class="nc bnc" id="L469" title="All 4 branches missed.">        return this.idsSize() == 0 &amp;&amp; this.conditionsSize() == 0;</span>
+    }
+
+    public boolean test(HugeElement element) {
+<span class="nc" id="L473">        return true;</span>
+    }
+
+    public Query copy() {
+        try {
+<span class="nc" id="L478">            return (Query) this.clone();</span>
+<span class="nc" id="L479">        } catch (CloneNotSupportedException e) {</span>
+<span class="nc" id="L480">            throw new BackendException(e);</span>
+        }
+    }
+
+    @Override
+    public boolean equals(Object object) {
+<span class="nc bnc" id="L486" title="All 2 branches missed.">        if (!(object instanceof Query)) {</span>
+<span class="nc" id="L487">            return false;</span>
+        }
+<span class="nc" id="L489">        Query other = (Query) object;</span>
+<span class="nc bnc" id="L490" title="All 2 branches missed.">        return this.resultType.equals(other.resultType) &amp;&amp;</span>
+<span class="nc bnc" id="L491" title="All 6 branches missed.">               this.orders().equals(other.orders()) &amp;&amp;</span>
+               this.offset == other.offset &amp;&amp;
+               this.limit == other.limit &amp;&amp;
+<span class="nc bnc" id="L494" title="All 2 branches missed.">               Objects.equals(this.page, other.page) &amp;&amp;</span>
+<span class="nc bnc" id="L495" title="All 2 branches missed.">               this.ids().equals(other.ids()) &amp;&amp;</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">               this.conditions().equals(other.conditions());</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc" id="L501">        return this.resultType.hashCode() ^</span>
+<span class="nc" id="L502">               this.orders().hashCode() ^</span>
+<span class="nc" id="L503">               Long.hashCode(this.offset) ^</span>
+<span class="nc" id="L504">               Long.hashCode(this.limit) ^</span>
+<span class="nc" id="L505">               Objects.hashCode(this.page) ^</span>
+<span class="nc" id="L506">               this.ids().hashCode() ^</span>
+<span class="nc" id="L507">               this.conditions().hashCode();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L512">        Map&lt;String, Object&gt; pairs = InsertionOrderUtil.newMap();</span>
+<span class="nc bnc" id="L513" title="All 2 branches missed.">        if (this.page != null) {</span>
+<span class="nc" id="L514">            pairs.put(&quot;page&quot;, String.format(&quot;'%s'&quot;, this.page));</span>
+        }
+<span class="nc bnc" id="L516" title="All 2 branches missed.">        if (this.offset != 0) {</span>
+<span class="nc" id="L517">            pairs.put(&quot;offset&quot;, this.offset);</span>
+        }
+<span class="nc bnc" id="L519" title="All 2 branches missed.">        if (this.limit != NO_LIMIT) {</span>
+<span class="nc" id="L520">            pairs.put(&quot;limit&quot;, this.limit);</span>
+        }
+<span class="nc bnc" id="L522" title="All 2 branches missed.">        if (!this.orders().isEmpty()) {</span>
+<span class="nc" id="L523">            pairs.put(&quot;order by&quot;, this.orders());</span>
+        }
+
+<span class="nc" id="L526">        StringBuilder sb = new StringBuilder(128);</span>
+<span class="nc" id="L527">        sb.append(&quot;`Query &quot;);</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">        if (this.aggregate != null) {</span>
+<span class="nc" id="L529">            sb.append(this.aggregate);</span>
+        } else {
+<span class="nc" id="L531">            sb.append('*');</span>
+        }
+<span class="nc" id="L533">        sb.append(&quot; from &quot;).append(this.resultType);</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; entry : pairs.entrySet()) {</span>
+<span class="nc" id="L535">            sb.append(' ').append(entry.getKey())</span>
+<span class="nc" id="L536">              .append(' ').append(entry.getValue()).append(',');</span>
+<span class="nc" id="L537">        }</span>
+<span class="nc bnc" id="L538" title="All 2 branches missed.">        if (!pairs.isEmpty()) {</span>
+            // Delete last comma
+<span class="nc" id="L540">            sb.deleteCharAt(sb.length() - 1);</span>
+        }
+
+<span class="nc bnc" id="L543" title="All 2 branches missed.">        if (!this.empty()) {</span>
+<span class="nc" id="L544">            sb.append(&quot; where&quot;);</span>
+        }
+
+        // Append ids
+<span class="nc bnc" id="L548" title="All 2 branches missed.">        if (!this.ids().isEmpty()) {</span>
+<span class="nc" id="L549">            sb.append(&quot; id in &quot;).append(this.ids());</span>
+        }
+
+        // Append conditions
+<span class="nc bnc" id="L553" title="All 2 branches missed.">        if (!this.conditions().isEmpty()) {</span>
+<span class="nc bnc" id="L554" title="All 2 branches missed.">            if (!this.ids().isEmpty()) {</span>
+<span class="nc" id="L555">                sb.append(&quot; and&quot;);</span>
+            }
+<span class="nc" id="L557">            sb.append(&quot; &quot;).append(this.conditions());</span>
+        }
+
+<span class="nc" id="L560">        sb.append('`');</span>
+<span class="nc" id="L561">        return sb.toString();</span>
+    }
+
+    public static long defaultCapacity(long capacity) {
+<span class="nc" id="L565">        Long old = CAPACITY_CONTEXT.get();</span>
+<span class="nc" id="L566">        CAPACITY_CONTEXT.set(capacity);</span>
+<span class="nc bnc" id="L567" title="All 2 branches missed.">        return old != null ? old : DEFAULT_CAPACITY;</span>
+    }
+
+    public static long defaultCapacity() {
+<span class="nc" id="L571">        Long capacity = CAPACITY_CONTEXT.get();</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">        return capacity != null ? capacity : DEFAULT_CAPACITY;</span>
+    }
+
+    public static void checkForceCapacity(long count) throws LimitExceedException {
+<span class="nc bnc" id="L576" title="All 2 branches missed.">        if (count &gt; Query.DEFAULT_CAPACITY) {</span>
+<span class="nc" id="L577">            throw new LimitExceedException(</span>
+                      &quot;Too many records(must &lt;= %s) for one query&quot;,
+<span class="nc" id="L579">                      Query.DEFAULT_CAPACITY);</span>
+        }
+<span class="nc" id="L581">    }</span>
+
+<span class="nc" id="L583">    public enum Order {</span>
+<span class="nc" id="L584">        ASC,</span>
+<span class="nc" id="L585">        DESC</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,403 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HbaseTable.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-hbase</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.hbase</a> &gt; <span class="el_source">HbaseTable.java</span></div><h1>HbaseTable.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.hbase;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CellScanner;
+import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.RegionMetrics;
+import org.apache.hadoop.hbase.ServerName;
+import org.apache.hadoop.hbase.Size;
+import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.client.Admin;
+import org.apache.hadoop.hbase.client.RegionInfo;
+import org.apache.hadoop.hbase.client.Result;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.query.Aggregate;
+import org.apache.hugegraph.backend.query.Aggregate.AggregateFunc;
+import org.apache.hugegraph.backend.query.Condition.Relation;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.IdPrefixQuery;
+import org.apache.hugegraph.backend.query.IdRangeQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.serializer.BinaryBackendEntry;
+import org.apache.hugegraph.backend.serializer.BinaryEntryIterator;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumn;
+import org.apache.hugegraph.backend.store.BackendEntryIterator;
+import org.apache.hugegraph.backend.store.BackendTable;
+import org.apache.hugegraph.backend.store.Shard;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.StringEncoding;
+import com.google.common.collect.ImmutableList;
+
+public class HbaseTable extends BackendTable&lt;HbaseSessions.Session, BackendEntry&gt; {
+
+<span class="nc" id="L70">    private static final Logger LOG = Log.logger(HbaseStore.class);</span>
+
+<span class="nc" id="L72">    protected static final byte[] CF = &quot;f&quot;.getBytes();</span>
+
+    private final HbaseShardSplitter shardSplitter;
+
+    private final boolean enablePartition;
+
+    public HbaseTable(String table, boolean enablePartition) {
+<span class="nc" id="L79">        super(table);</span>
+<span class="nc" id="L80">        this.enablePartition = enablePartition;</span>
+<span class="nc" id="L81">        this.shardSplitter = new HbaseShardSplitter(this.table());</span>
+<span class="nc" id="L82">    }</span>
+
+    public HbaseTable(String table) {
+<span class="nc" id="L85">        this(table, false);</span>
+<span class="nc" id="L86">    }</span>
+
+    public static List&lt;byte[]&gt; cfs() {
+<span class="nc" id="L89">        return ImmutableList.of(CF);</span>
+    }
+
+    @Override
+    protected void registerMetaHandlers() {
+<span class="nc" id="L94">        this.registerMetaHandler(&quot;splits&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">            E.checkArgument(args.length == 1,</span>
+                            &quot;The args count of %s must be 1&quot;, meta);
+<span class="nc" id="L97">            long splitSize = (long) args[0];</span>
+<span class="nc" id="L98">            return this.shardSplitter.getSplits(session, splitSize);</span>
+        });
+<span class="nc" id="L100">    }</span>
+
+    @Override
+    public void init(HbaseSessions.Session session) {
+        // pass
+<span class="nc" id="L105">    }</span>
+
+    @Override
+    public void clear(HbaseSessions.Session session) {
+        // pass
+<span class="nc" id="L110">    }</span>
+
+    @Override
+    public void insert(HbaseSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        assert !entry.columns().isEmpty();</span>
+<span class="nc" id="L115">        session.put(this.table(), CF, entry.id().asBytes(), entry.columns());</span>
+<span class="nc" id="L116">    }</span>
+
+    @Override
+    public void delete(HbaseSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (entry.columns().isEmpty()) {</span>
+<span class="nc" id="L121">            session.delete(this.table(), CF, entry.id().asBytes());</span>
+        } else {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">            for (BackendColumn col : entry.columns()) {</span>
+<span class="nc" id="L124">                session.remove(table(), CF, entry.id().asBytes(), col.name);</span>
+<span class="nc" id="L125">            }</span>
+        }
+<span class="nc" id="L127">    }</span>
+
+    @Override
+    public void append(HbaseSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        assert entry.columns().size() == 1;</span>
+<span class="nc" id="L132">        this.insert(session, entry);</span>
+<span class="nc" id="L133">    }</span>
+
+    @Override
+    public void eliminate(HbaseSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        assert entry.columns().size() == 1;</span>
+<span class="nc" id="L138">        this.delete(session, entry);</span>
+<span class="nc" id="L139">    }</span>
+
+    @Override
+    public boolean queryExist(HbaseSessions.Session session, BackendEntry entry) {
+<span class="nc" id="L143">        Id id = entry.id();</span>
+<span class="nc" id="L144">        try (HbaseSessions.RowIterator iter = this.queryById(session, id)) {</span>
+<span class="nc" id="L145">            return iter.hasNext();</span>
+        }
+    }
+
+    @Override
+    public Number queryNumber(HbaseSessions.Session session, Query query) {
+<span class="nc" id="L151">        Aggregate aggregate = query.aggregateNotNull();</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (aggregate.func() != AggregateFunc.COUNT) {</span>
+<span class="nc" id="L153">            throw new NotSupportException(aggregate.toString());</span>
+        }
+
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        assert aggregate.func() == AggregateFunc.COUNT;</span>
+<span class="nc" id="L157">        try (HbaseSessions.CountSession countSession = session.countSession()) {</span>
+<span class="nc" id="L158">            return this.query(countSession, query);</span>
+<span class="nc" id="L159">        } catch (IOException e) {</span>
+<span class="nc" id="L160">            throw new BackendException(e);</span>
+        }
+    }
+
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(HbaseSessions.Session session, Query query) {
+<span class="nc bnc" id="L166" title="All 4 branches missed.">        if (query.limit() == 0L &amp;&amp; !query.noLimit()) {</span>
+<span class="nc" id="L167">            LOG.debug(&quot;Return empty result(limit=0) for query {}&quot;, query);</span>
+<span class="nc" id="L168">            return Collections.emptyIterator();</span>
+        }
+
+<span class="nc" id="L171">        HbaseSessions.HbaseSession&lt;HbaseSessions.RowIterator&gt; hbaseSession = session;</span>
+<span class="nc" id="L172">        return this.newEntryIterator(query, this.query(hbaseSession, query));</span>
+    }
+
+    protected &lt;R&gt; R query(HbaseSessions.HbaseSession&lt;R&gt; session, Query query) {
+        // Query all
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        if (query.empty()) {</span>
+<span class="nc" id="L178">            return this.queryAll(session, query);</span>
+        }
+
+        // Query by prefix
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        if (query instanceof IdPrefixQuery) {</span>
+<span class="nc" id="L183">            IdPrefixQuery pq = (IdPrefixQuery) query;</span>
+<span class="nc" id="L184">            return this.queryByPrefix(session, pq);</span>
+        }
+
+        // Query by range
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (query instanceof IdRangeQuery) {</span>
+<span class="nc" id="L189">            IdRangeQuery rq = (IdRangeQuery) query;</span>
+<span class="nc" id="L190">            return this.queryByRange(session, rq);</span>
+        }
+
+        // Query by id
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        if (query.conditionsSize() == 0) {</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            assert query.idsSize() &gt; 0;</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">            if (query.idsSize() == 1) {</span>
+<span class="nc" id="L197">                Id id = query.ids().iterator().next();</span>
+<span class="nc" id="L198">                return this.queryById(session, id);</span>
+            } else {
+<span class="nc" id="L200">                return this.queryByIds(session, query.ids());</span>
+            }
+        }
+
+        // Query by condition (or condition + id)
+<span class="nc" id="L205">        ConditionQuery cq = (ConditionQuery) query;</span>
+<span class="nc" id="L206">        return this.queryByCond(session, cq);</span>
+    }
+
+    protected &lt;R&gt; R queryAll(HbaseSessions.HbaseSession&lt;R&gt; session, Query query) {
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        if (query.paging()) {</span>
+<span class="nc" id="L211">            PageState page = PageState.fromString(query.page());</span>
+<span class="nc" id="L212">            byte[] begin = page.position();</span>
+<span class="nc" id="L213">            return session.scan(this.table(), begin, null);</span>
+        } else {
+<span class="nc" id="L215">            return session.scan(this.table(), -1);</span>
+        }
+    }
+
+    protected &lt;R&gt; R queryById(HbaseSessions.HbaseSession&lt;R&gt; session, Id id) {
+<span class="nc" id="L220">        return session.get(this.table(), null, id.asBytes());</span>
+    }
+
+    protected &lt;R&gt; R queryByIds(HbaseSessions.HbaseSession&lt;R&gt; session, Collection&lt;Id&gt; ids) {
+<span class="nc" id="L224">        Set&lt;byte[]&gt; rowkeys = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L226">            rowkeys.add(id.asBytes());</span>
+<span class="nc" id="L227">        }</span>
+<span class="nc" id="L228">        return session.get(this.table(), null, rowkeys);</span>
+    }
+
+    protected &lt;R&gt; R queryByPrefix(HbaseSessions.HbaseSession&lt;R&gt; session,
+                                  IdPrefixQuery query) {
+<span class="nc" id="L233">        return session.scan(this.table(), query.start().asBytes(),</span>
+<span class="nc" id="L234">                            query.inclusiveStart(), query.prefix().asBytes());</span>
+    }
+
+    protected &lt;R&gt; R queryByRange(HbaseSessions.HbaseSession&lt;R&gt; session, IdRangeQuery query) {
+<span class="nc" id="L238">        byte[] start = query.start().asBytes();</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        byte[] end = query.end() == null ? null : query.end().asBytes();</span>
+<span class="nc" id="L240">        return session.scan(this.table(), start, query.inclusiveStart(),</span>
+<span class="nc" id="L241">                            end, query.inclusiveEnd());</span>
+    }
+
+    protected &lt;R&gt; R queryByCond(HbaseSessions.HbaseSession&lt;R&gt; session, ConditionQuery query) {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (query.containsScanRelation()) {</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">            E.checkArgument(query.relations().size() == 1,</span>
+                            &quot;Invalid scan with multi conditions: %s&quot;, query);
+<span class="nc" id="L248">            Relation scan = query.relations().iterator().next();</span>
+<span class="nc" id="L249">            Shard shard = (Shard) scan.value();</span>
+<span class="nc" id="L250">            return this.queryByRange(session, shard, query.page());</span>
+        }
+<span class="nc" id="L252">        throw new NotSupportException(&quot;query: %s&quot;, query);</span>
+    }
+
+    protected &lt;R&gt; R queryByRange(HbaseSessions.HbaseSession&lt;R&gt; session,
+                                 Shard shard, String page) {
+<span class="nc" id="L257">        byte[] start = this.shardSplitter.position(shard.start());</span>
+<span class="nc" id="L258">        byte[] end = this.shardSplitter.position(shard.end());</span>
+<span class="nc bnc" id="L259" title="All 4 branches missed.">        if (page != null &amp;&amp; !page.isEmpty()) {</span>
+<span class="nc" id="L260">            byte[] position = PageState.fromString(page).position();</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">            E.checkArgument(start == null ||</span>
+<span class="nc bnc" id="L262" title="All 2 branches missed.">                            Bytes.compare(position, start) &gt;= 0,</span>
+                            &quot;Invalid page out of lower bound&quot;);
+<span class="nc" id="L264">            start = position;</span>
+        }
+<span class="nc" id="L266">        return session.scan(this.table(), start, end);</span>
+    }
+
+    protected BackendEntryIterator newEntryIterator(Query query,
+                                                    HbaseSessions.RowIterator rows) {
+<span class="nc" id="L271">        return new BinaryEntryIterator&lt;&gt;(rows, query, (entry, row) -&gt; {</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">            E.checkState(!row.isEmpty(), &quot;Can't parse empty HBase result&quot;);</span>
+<span class="nc" id="L273">            byte[] id = row.getRow();</span>
+<span class="nc bnc" id="L274" title="All 4 branches missed.">            if (entry == null || !Bytes.prefixWith(id, entry.id().asBytes())) {</span>
+<span class="nc" id="L275">                HugeType type = query.resultType();</span>
+                // NOTE: only support BinaryBackendEntry currently
+<span class="nc" id="L277">                entry = new BinaryBackendEntry(type, id, this.enablePartition);</span>
+            }
+            try {
+<span class="nc" id="L280">                this.parseRowColumns(row, entry, query, this.enablePartition);</span>
+<span class="nc" id="L281">            } catch (IOException e) {</span>
+<span class="nc" id="L282">                throw new BackendException(&quot;Failed to read HBase columns&quot;, e);</span>
+<span class="nc" id="L283">            }</span>
+<span class="nc" id="L284">            return entry;</span>
+        });
+    }
+
+    protected void parseRowColumns(Result row, BackendEntry entry, Query query,
+                                   boolean enablePartition)
+                                   throws IOException {
+<span class="nc" id="L291">        CellScanner cellScanner = row.cellScanner();</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">        while (cellScanner.advance()) {</span>
+<span class="nc" id="L293">            Cell cell = cellScanner.current();</span>
+<span class="nc" id="L294">            entry.columns(BackendColumn.of(CellUtil.cloneQualifier(cell),</span>
+<span class="nc" id="L295">                                           CellUtil.cloneValue(cell)));</span>
+<span class="nc" id="L296">        }</span>
+<span class="nc" id="L297">    }</span>
+
+    private static class HbaseShardSplitter extends ShardSplitter&lt;HbaseSessions.Session&gt; {
+
+        public HbaseShardSplitter(String table) {
+<span class="nc" id="L302">            super(table);</span>
+<span class="nc" id="L303">        }</span>
+
+        @Override
+        public List&lt;Shard&gt; getSplits(HbaseSessions.Session session, long splitSize) {
+<span class="nc bnc" id="L307" title="All 2 branches missed.">            E.checkArgument(splitSize &gt;= MIN_SHARD_SIZE,</span>
+                            &quot;The split-size must be &gt;= %s bytes, but got %s&quot;,
+<span class="nc" id="L309">                            MIN_SHARD_SIZE, splitSize);</span>
+<span class="nc" id="L310">            List&lt;Shard&gt; shards = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L311">            String namespace = session.namespace();</span>
+<span class="nc" id="L312">            String table = this.table();</span>
+
+            // Calc data size for each region
+<span class="nc" id="L315">            Map&lt;String, Double&gt; regionSizes = regionSizes(session, namespace,</span>
+                                                          table);
+            // Get token range of each region
+<span class="nc" id="L318">            Map&lt;String, Range&gt; regionRanges = regionRanges(session, namespace,</span>
+                                                           table);
+            // Split regions to shards
+<span class="nc bnc" id="L321" title="All 2 branches missed.">            for (Map.Entry&lt;String, Double&gt; rs : regionSizes.entrySet()) {</span>
+<span class="nc" id="L322">                String region = rs.getKey();</span>
+<span class="nc" id="L323">                double size = rs.getValue();</span>
+<span class="nc" id="L324">                Range range = regionRanges.get(region);</span>
+<span class="nc" id="L325">                int count = calcSplitCount(size, splitSize);</span>
+<span class="nc" id="L326">                shards.addAll(range.splitEven(count));</span>
+<span class="nc" id="L327">            }</span>
+<span class="nc" id="L328">            return shards;</span>
+        }
+
+        private static Map&lt;String, Double&gt; regionSizes(HbaseSessions.Session session,
+                                                       String namespace,
+                                                       String table) {
+<span class="nc" id="L334">            Map&lt;String, Double&gt; regionSizes = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L335">            try (Admin admin = session.hbase().getAdmin()) {</span>
+<span class="nc" id="L336">                TableName tableName = TableName.valueOf(namespace, table);</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">                for (ServerName serverName : admin.getRegionServers()) {</span>
+<span class="nc" id="L338">                    List&lt;RegionMetrics&gt; metrics = admin.getRegionMetrics(</span>
+                                                  serverName, tableName);
+<span class="nc bnc" id="L340" title="All 2 branches missed.">                    for (RegionMetrics metric : metrics) {</span>
+<span class="nc" id="L341">                        double size = metric.getStoreFileSize()</span>
+<span class="nc" id="L342">                                            .get(Size.Unit.BYTE);</span>
+<span class="nc" id="L343">                        size += metric.getMemStoreSize().get(Size.Unit.BYTE);</span>
+<span class="nc" id="L344">                        regionSizes.put(metric.getNameAsString(), size);</span>
+<span class="nc" id="L345">                    }</span>
+<span class="nc" id="L346">                }</span>
+<span class="nc" id="L347">            } catch (Throwable e) {</span>
+<span class="nc" id="L348">                throw new BackendException(String.format(</span>
+                          &quot;Failed to get region sizes of %s(%s)&quot;,
+                          table, namespace), e);
+<span class="nc" id="L351">            }</span>
+<span class="nc" id="L352">            return regionSizes;</span>
+        }
+
+        private static Map&lt;String, Range&gt; regionRanges(HbaseSessions.Session session,
+                                                       String namespace,
+                                                       String table) {
+<span class="nc" id="L358">            Map&lt;String, Range&gt; regionRanges = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L359">            TableName tableName = TableName.valueOf(namespace, table);</span>
+<span class="nc" id="L360">            try (Admin admin = session.hbase().getAdmin()) {</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">                for (RegionInfo regionInfo : admin.getRegions(tableName)) {</span>
+<span class="nc" id="L362">                    byte[] start = regionInfo.getStartKey();</span>
+<span class="nc" id="L363">                    byte[] end = regionInfo.getEndKey();</span>
+<span class="nc" id="L364">                    regionRanges.put(regionInfo.getRegionNameAsString(),</span>
+                                     new Range(start, end));
+<span class="nc" id="L366">                }</span>
+<span class="nc" id="L367">            } catch (Throwable e) {</span>
+<span class="nc" id="L368">                throw new BackendException(String.format(</span>
+                          &quot;Failed to get region ranges of %s(%s)&quot;,
+                          table, namespace), e);
+<span class="nc" id="L371">            }</span>
+<span class="nc" id="L372">            return regionRanges;</span>
+        }
+
+        private static int calcSplitCount(double totalSize, long splitSize) {
+<span class="nc" id="L376">            return (int) Math.ceil(totalSize / splitSize);</span>
+        }
+
+        @Override
+        public byte[] position(String position) {
+<span class="nc bnc" id="L381" title="All 4 branches missed.">            if (START.equals(position) || END.equals(position)) {</span>
+<span class="nc" id="L382">                return null;</span>
+            }
+<span class="nc" id="L384">            return StringEncoding.decodeBase64(position);</span>
+        }
+
+        @Override
+        public long estimateDataSize(HbaseSessions.Session session) {
+            try {
+<span class="nc" id="L390">                return session.storeSize(this.table());</span>
+<span class="nc" id="L391">            } catch (IOException ignored) {</span>
+<span class="nc" id="L392">                return -1L;</span>
+            }
+        }
+
+        @Override
+        public long estimateNumKeys(HbaseSessions.Session session) {
+            // TODO: improve
+<span class="nc" id="L399">            return 100000L;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

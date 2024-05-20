@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AccessLogFilter.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.filter</a> &gt; <span class="el_source">AccessLogFilter.java</span></div><h1>AccessLogFilter.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.filter;
+
+import static org.apache.hugegraph.api.filter.PathFilter.REQUEST_TIME;
+import static org.apache.hugegraph.metrics.MetricsUtil.METRICS_PATH_FAILED_COUNTER;
+import static org.apache.hugegraph.metrics.MetricsUtil.METRICS_PATH_RESPONSE_TIME_HISTOGRAM;
+import static org.apache.hugegraph.metrics.MetricsUtil.METRICS_PATH_SUCCESS_COUNTER;
+import static org.apache.hugegraph.metrics.MetricsUtil.METRICS_PATH_TOTAL_COUNTER;
+
+import java.io.IOException;
+import java.net.URI;
+
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.metrics.MetricsUtil;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.HttpMethod;
+import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.container.ContainerResponseContext;
+import jakarta.ws.rs.container.ContainerResponseFilter;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.ext.Provider;
+
+// TODO: should add test for this class
+@Provider
+@Singleton
+<span class="nc" id="L46">public class AccessLogFilter implements ContainerResponseFilter {</span>
+
+<span class="nc" id="L48">    private static final Logger LOG = Log.logger(AccessLogFilter.class);</span>
+
+    private static final String DELIMITER = &quot;/&quot;;
+    private static final String GRAPHS = &quot;graphs&quot;;
+    private static final String GREMLIN = &quot;gremlin&quot;;
+    private static final String CYPHER = &quot;cypher&quot;;
+
+    @Context
+    private jakarta.inject.Provider&lt;HugeConfig&gt; configProvider;
+
+    public static boolean needRecordLog(ContainerRequestContext context) {
+        // TODO: add test for 'path' result ('/gremlin' or 'gremlin')
+<span class="nc" id="L60">        String path = context.getUriInfo().getPath();</span>
+
+        // GraphsAPI/CypherAPI/Job GremlinAPI
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (path.startsWith(GRAPHS)) {</span>
+<span class="nc bnc" id="L64" title="All 4 branches missed.">            if (HttpMethod.GET.equals(context.getMethod()) || path.endsWith(CYPHER)) {</span>
+<span class="nc" id="L65">                return true;</span>
+            }
+        }
+        // Direct GremlinAPI
+<span class="nc" id="L69">        return path.endsWith(GREMLIN);</span>
+    }
+
+    private String join(String path1, String path2) {
+<span class="nc" id="L73">        return String.join(DELIMITER, path1, path2);</span>
+    }
+
+    /**
+     * Use filter to log request info
+     *
+     * @param requestContext  requestContext
+     * @param responseContext responseContext
+     */
+    @Override
+    public void filter(ContainerRequestContext requestContext,
+                       ContainerResponseContext responseContext) throws IOException {
+        // Grab corresponding request / response info from context;
+<span class="nc" id="L86">        URI uri = requestContext.getUriInfo().getRequestUri();</span>
+<span class="nc" id="L87">        String path = uri.getRawPath();</span>
+<span class="nc" id="L88">        String method = requestContext.getMethod();</span>
+<span class="nc" id="L89">        String metricsName = join(path, method);</span>
+
+<span class="nc" id="L91">        MetricsUtil.registerCounter(join(metricsName, METRICS_PATH_TOTAL_COUNTER)).inc();</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">        if (statusOk(responseContext.getStatus())) {</span>
+<span class="nc" id="L93">            MetricsUtil.registerCounter(join(metricsName, METRICS_PATH_SUCCESS_COUNTER)).inc();</span>
+        } else {
+<span class="nc" id="L95">            MetricsUtil.registerCounter(join(metricsName, METRICS_PATH_FAILED_COUNTER)).inc();</span>
+        }
+
+<span class="nc" id="L98">        Object requestTime = requestContext.getProperty(REQUEST_TIME);</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        if (requestTime != null) {</span>
+<span class="nc" id="L100">            long now = System.currentTimeMillis();</span>
+<span class="nc" id="L101">            long start = (Long) requestTime;</span>
+<span class="nc" id="L102">            long executeTime = now - start;</span>
+
+<span class="nc" id="L104">            MetricsUtil.registerHistogram(join(metricsName, METRICS_PATH_RESPONSE_TIME_HISTOGRAM))</span>
+<span class="nc" id="L105">                       .update(executeTime);</span>
+
+<span class="nc" id="L107">            HugeConfig config = configProvider.get();</span>
+<span class="nc" id="L108">            long timeThreshold = config.get(ServerOptions.SLOW_QUERY_LOG_TIME_THRESHOLD);</span>
+            // Record slow query if meet needs, watch out the perf
+<span class="nc bnc" id="L110" title="All 4 branches missed.">            if (timeThreshold &gt; 0 &amp;&amp; executeTime &gt; timeThreshold &amp;&amp;</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">                needRecordLog(requestContext)) {</span>
+                // TODO: set RequestBody null, handle it later &amp; should record &quot;client IP&quot;
+<span class="nc" id="L113">                LOG.info(&quot;[Slow Query] execTime={}ms, body={}, method={}, path={}, query={}&quot;,</span>
+<span class="nc" id="L114">                         executeTime, null, method, path, uri.getQuery());</span>
+            }
+        }
+<span class="nc" id="L117">    }</span>
+
+    private boolean statusOk(int status) {
+<span class="nc bnc" id="L120" title="All 4 branches missed.">        return status &gt;= 200 &amp;&amp; status &lt; 300;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

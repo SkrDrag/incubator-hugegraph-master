@@ -1,0 +1,282 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CollectionFactory.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util.collection</a> &gt; <span class="el_source">CollectionFactory.java</span></div><h1>CollectionFactory.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util.collection;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.eclipse.collections.api.map.primitive.IntObjectMap;
+import org.eclipse.collections.api.map.primitive.MutableIntObjectMap;
+import org.eclipse.collections.impl.list.mutable.FastList;
+import org.eclipse.collections.impl.map.mutable.UnifiedMap;
+import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
+import org.eclipse.collections.impl.set.mutable.UnifiedSet;
+
+import org.apache.hugegraph.type.define.CollectionType;
+import org.apache.hugegraph.util.E;
+
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
+
+public class CollectionFactory {
+
+    private final CollectionType type;
+
+<span class="nc" id="L47">    public CollectionFactory() {</span>
+<span class="nc" id="L48">        this.type = CollectionType.EC;</span>
+<span class="nc" id="L49">    }</span>
+
+<span class="nc" id="L51">    public CollectionFactory(CollectionType type) {</span>
+<span class="nc" id="L52">        this.type = type;</span>
+<span class="nc" id="L53">    }</span>
+
+    public &lt;V&gt; List&lt;V&gt; newList() {
+<span class="nc" id="L56">        return newList(this.type);</span>
+    }
+
+    public &lt;V&gt; List&lt;V&gt; newList(int initialCapacity) {
+<span class="nc" id="L60">        return newList(this.type, initialCapacity);</span>
+    }
+
+    public &lt;V&gt; List&lt;V&gt; newList(Collection&lt;V&gt; collection) {
+<span class="nc" id="L64">        return newList(this.type, collection);</span>
+    }
+
+    public static &lt;V&gt; List&lt;V&gt; newList(CollectionType type) {
+<span class="nc bnc" id="L68" title="All 4 branches missed.">        switch (type) {</span>
+            case EC:
+<span class="nc" id="L70">                return new FastList&lt;&gt;();</span>
+            case JCF:
+<span class="nc" id="L72">                return new ArrayList&lt;&gt;();</span>
+            case FU:
+<span class="nc" id="L74">                return new ObjectArrayList&lt;&gt;();</span>
+            default:
+<span class="nc" id="L76">                throw new AssertionError(</span>
+                          &quot;Unsupported collection type: &quot; + type);
+        }
+    }
+
+    public static &lt;V&gt; List&lt;V&gt; newList(CollectionType type,
+                                      int initialCapacity) {
+<span class="nc bnc" id="L83" title="All 4 branches missed.">        switch (type) {</span>
+            case EC:
+<span class="nc" id="L85">                return new FastList&lt;&gt;(initialCapacity);</span>
+            case JCF:
+<span class="nc" id="L87">                return new ArrayList&lt;&gt;(initialCapacity);</span>
+            case FU:
+<span class="nc" id="L89">                return new ObjectArrayList&lt;&gt;(initialCapacity);</span>
+            default:
+<span class="nc" id="L91">                throw new AssertionError(</span>
+                          &quot;Unsupported collection type: &quot; + type);
+        }
+    }
+
+    public static &lt;V&gt; List&lt;V&gt; newList(CollectionType type,
+                                      Collection&lt;V&gt; collection) {
+<span class="nc bnc" id="L98" title="All 4 branches missed.">        switch (type) {</span>
+            case EC:
+<span class="nc" id="L100">                return new FastList&lt;&gt;(collection);</span>
+            case JCF:
+<span class="nc" id="L102">                return new ArrayList&lt;&gt;(collection);</span>
+            case FU:
+<span class="nc" id="L104">                return new ObjectArrayList&lt;&gt;(collection);</span>
+            default:
+<span class="nc" id="L106">                throw new AssertionError(</span>
+                          &quot;Unsupported collection type: &quot; + type);
+        }
+    }
+
+    public &lt;V&gt; Set&lt;V&gt; newSet() {
+<span class="nc" id="L112">        return newSet(this.type);</span>
+    }
+
+    public &lt;V&gt; Set&lt;V&gt; newSet(int initialCapacity) {
+<span class="nc" id="L116">        return newSet(this.type, initialCapacity);</span>
+    }
+
+    public &lt;V&gt; Set&lt;V&gt; newSet(Collection&lt;V&gt; collection) {
+<span class="nc" id="L120">        return newSet(this.type, collection);</span>
+    }
+
+    public static &lt;V&gt; Set&lt;V&gt; newSet(CollectionType type) {
+<span class="nc bnc" id="L124" title="All 4 branches missed.">        switch (type) {</span>
+            case EC:
+<span class="nc" id="L126">                return new UnifiedSet&lt;&gt;();</span>
+            case JCF:
+<span class="nc" id="L128">                return new HashSet&lt;&gt;();</span>
+            case FU:
+<span class="nc" id="L130">                return new ObjectOpenHashSet&lt;&gt;();</span>
+            default:
+<span class="nc" id="L132">                throw new AssertionError(</span>
+                          &quot;Unsupported collection type: &quot; + type);
+        }
+    }
+
+    public static &lt;V&gt; Set&lt;V&gt; newSet(CollectionType type,
+                                    int initialCapacity) {
+<span class="nc bnc" id="L139" title="All 4 branches missed.">        switch (type) {</span>
+            case EC:
+<span class="nc" id="L141">                return new UnifiedSet&lt;&gt;(initialCapacity);</span>
+            case JCF:
+<span class="nc" id="L143">                return new HashSet&lt;&gt;(initialCapacity);</span>
+            case FU:
+<span class="nc" id="L145">                return new ObjectOpenHashSet&lt;&gt;(initialCapacity);</span>
+            default:
+<span class="nc" id="L147">                throw new AssertionError(</span>
+                          &quot;Unsupported collection type: &quot; + type);
+        }
+    }
+
+    public static &lt;V&gt; Set&lt;V&gt; newSet(CollectionType type,
+                                    Collection&lt;V&gt; collection) {
+<span class="nc bnc" id="L154" title="All 4 branches missed.">        switch (type) {</span>
+            case EC:
+<span class="nc" id="L156">                return new UnifiedSet&lt;&gt;(collection);</span>
+            case JCF:
+<span class="nc" id="L158">                return new HashSet&lt;&gt;(collection);</span>
+            case FU:
+<span class="nc" id="L160">                return new ObjectOpenHashSet&lt;&gt;(collection);</span>
+            default:
+<span class="nc" id="L162">                throw new AssertionError(</span>
+                          &quot;Unsupported collection type: &quot; + type);
+        }
+    }
+
+    public &lt;K, V&gt; Map&lt;K, V&gt; newMap() {
+<span class="nc" id="L168">        return newMap(this.type);</span>
+    }
+
+    public &lt;K, V&gt; Map&lt;K, V&gt; newMap(int initialCapacity) {
+<span class="nc" id="L172">        return newMap(this.type, initialCapacity);</span>
+    }
+
+    public &lt;K, V&gt; Map&lt;K, V&gt; newMap(Map&lt;? extends K, ? extends V&gt; map) {
+<span class="nc" id="L176">        return newMap(this.type, map);</span>
+    }
+
+    public static &lt;K, V&gt; Map&lt;K, V&gt; newMap(CollectionType type) {
+        /*
+         * EC is faster 10%-20% than JCF, and it's more stable &amp; less
+         * memory cost(size is bigger, EC is better).
+         */
+<span class="nc bnc" id="L184" title="All 4 branches missed.">        switch (type) {</span>
+            case EC:
+<span class="nc" id="L186">                return new UnifiedMap&lt;&gt;();</span>
+            case JCF:
+<span class="nc" id="L188">                return new HashMap&lt;&gt;();</span>
+            case FU:
+<span class="nc" id="L190">                return new Object2ObjectOpenHashMap&lt;&gt;();</span>
+            default:
+<span class="nc" id="L192">                throw new AssertionError(</span>
+                          &quot;Unsupported collection type: &quot; + type);
+        }
+    }
+
+    public static &lt;K, V&gt; Map&lt;K, V&gt; newMap(CollectionType type,
+                                          int initialCapacity) {
+<span class="nc bnc" id="L199" title="All 4 branches missed.">        switch (type) {</span>
+            case EC:
+<span class="nc" id="L201">                return new UnifiedMap&lt;&gt;(initialCapacity);</span>
+            case JCF:
+<span class="nc" id="L203">                return new HashMap&lt;&gt;(initialCapacity);</span>
+            case FU:
+<span class="nc" id="L205">                return new Object2ObjectOpenHashMap&lt;&gt;(initialCapacity);</span>
+            default:
+<span class="nc" id="L207">                throw new AssertionError(</span>
+                          &quot;Unsupported collection type: &quot; + type);
+        }
+    }
+
+    public static &lt;K, V&gt; Map&lt;K, V&gt; newMap(CollectionType type,
+                                          Map&lt;? extends K, ? extends V&gt; map) {
+<span class="nc bnc" id="L214" title="All 4 branches missed.">        switch (type) {</span>
+            case EC:
+<span class="nc" id="L216">                return new UnifiedMap&lt;&gt;(map);</span>
+            case JCF:
+<span class="nc" id="L218">                return new HashMap&lt;&gt;(map);</span>
+            case FU:
+<span class="nc" id="L220">                return new Object2ObjectOpenHashMap&lt;&gt;(map);</span>
+            default:
+<span class="nc" id="L222">                throw new AssertionError(</span>
+                          &quot;Unsupported collection type: &quot; + type);
+        }
+    }
+
+    public static &lt;V&gt; MutableIntObjectMap&lt;V&gt; newIntObjectMap() {
+<span class="nc" id="L228">        return new IntObjectHashMap&lt;&gt;();</span>
+    }
+
+    public static &lt;V&gt; MutableIntObjectMap&lt;V&gt; newIntObjectMap(
+                                             int initialCapacity) {
+<span class="nc" id="L233">        return new IntObjectHashMap&lt;&gt;(initialCapacity);</span>
+    }
+
+    public static &lt;V&gt; MutableIntObjectMap&lt;V&gt; newIntObjectMap(
+                                             IntObjectMap&lt;? extends V&gt; map) {
+<span class="nc" id="L238">        return new IntObjectHashMap&lt;&gt;(map);</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public static &lt;V&gt; MutableIntObjectMap&lt;V&gt; newIntObjectMap(
+                                             Object... objects) {
+<span class="nc" id="L244">        IntObjectHashMap&lt;V&gt; map = IntObjectHashMap.newMap();</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        E.checkArgument(objects.length % 2 == 0,</span>
+                        &quot;Must provide even arguments for &quot; +
+                        &quot;CollectionFactory.newIntObjectMap&quot;);
+<span class="nc bnc" id="L248" title="All 2 branches missed.">        for (int i = 0; i &lt; objects.length; i += 2) {</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            int key = objects[i] instanceof Id ?</span>
+<span class="nc" id="L250">                      (int) ((Id) objects[i]).asLong() : (int) objects[i];</span>
+<span class="nc" id="L251">            map.put(key, (V) objects[i + 1]);</span>
+        }
+<span class="nc" id="L253">        return map;</span>
+    }
+
+    public IdSet newIdSet() {
+<span class="nc" id="L257">        return newIdSet(this.type);</span>
+    }
+
+    public static IdSet newIdSet(CollectionType type) {
+<span class="nc" id="L261">        return new IdSet(type);</span>
+    }
+
+    public static IntSet newIntSet() {
+        /*
+         * Resume to the old version like this:
+         * return concurrent ? new IntHashSet().asSynchronized() :
+         *                     new IntHashSet();
+         */
+<span class="nc" id="L270">        return new IntSet.IntSetBySegments(Integer.MAX_VALUE);</span>
+    }
+
+    public static IntMap newIntMap() {
+        /*
+         * Resume to the old version like this:
+         * return concurrent ? new IntIntHashMap().asSynchronized() :
+         *                     new IntIntHashMap();
+         */
+<span class="nc" id="L279">        return new IntMap.IntMapBySegments(Integer.MAX_VALUE);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SortByCountIdHolderList.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.page</a> &gt; <span class="el_source">SortByCountIdHolderList.java</span></div><h1>SortByCountIdHolderList.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.page;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.IdHolder.FixedIdHolder;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import com.google.common.collect.ImmutableSet;
+
+public class SortByCountIdHolderList extends IdHolderList {
+
+    private static final long serialVersionUID = -7779357582250824558L;
+
+    private final List&lt;IdHolder&gt; mergedHolders;
+
+    public SortByCountIdHolderList(boolean paging) {
+<span class="nc" id="L39">        super(paging);</span>
+<span class="nc" id="L40">        this.mergedHolders = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L41">    }</span>
+
+    @Override
+    public boolean add(IdHolder holder) {
+<span class="nc bnc" id="L45" title="All 2 branches missed.">        if (this.paging()) {</span>
+<span class="nc" id="L46">            return super.add(holder);</span>
+        }
+<span class="nc" id="L48">        this.mergedHolders.add(holder);</span>
+
+<span class="nc bnc" id="L50" title="All 2 branches missed.">        if (super.isEmpty()) {</span>
+<span class="nc" id="L51">            Query parent = holder.query().originQuery();</span>
+<span class="nc" id="L52">            super.add(new SortByCountIdHolder(parent));</span>
+        }
+<span class="nc" id="L54">        SortByCountIdHolder sortHolder = (SortByCountIdHolder) this.get(0);</span>
+<span class="nc" id="L55">        sortHolder.merge(holder);</span>
+<span class="nc" id="L56">        return true;</span>
+    }
+
+    private class SortByCountIdHolder extends FixedIdHolder {
+
+        private final Map&lt;Id, Integer&gt; ids;
+
+<span class="nc" id="L63">        public SortByCountIdHolder(Query parent) {</span>
+<span class="nc" id="L64">            super(new MergedQuery(parent), ImmutableSet.of());</span>
+<span class="nc" id="L65">            this.ids = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L66">        }</span>
+
+        public void merge(IdHolder holder) {
+<span class="nc bnc" id="L69" title="All 2 branches missed.">            for (Id id : holder.all()) {</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">                this.ids.compute(id, (k, v) -&gt; v == null ? 1 : v + 1);</span>
+<span class="nc" id="L71">                Query.checkForceCapacity(this.ids.size());</span>
+<span class="nc" id="L72">            }</span>
+<span class="nc" id="L73">        }</span>
+
+        @Override
+        public boolean keepOrder() {
+<span class="nc" id="L77">            return true;</span>
+        }
+
+        @Override
+        public Set&lt;Id&gt; all() {
+<span class="nc" id="L82">            return CollectionUtil.sortByValue(this.ids, false).keySet();</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L87">            return String.format(&quot;%s{merged:%s}&quot;,</span>
+<span class="nc" id="L88">                                 this.getClass().getSimpleName(), this.query);</span>
+        }
+    }
+
+    private class MergedQuery extends Query {
+
+<span class="nc" id="L94">        public MergedQuery(Query parent) {</span>
+<span class="nc" id="L95">            super(parent.resultType(), parent);</span>
+<span class="nc" id="L96">        }</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L100">            return SortByCountIdHolderList.this.mergedHolders.toString();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

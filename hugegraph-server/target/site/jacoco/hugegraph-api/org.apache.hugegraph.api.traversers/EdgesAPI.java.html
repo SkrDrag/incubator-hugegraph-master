@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EdgesAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">EdgesAPI.java</span></div><h1>EdgesAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_PAGE_LIMIT;
+
+import java.util.Iterator;
+import java.util.List;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.CompressInterceptor.Compress;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.store.Shard;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/traversers/edges&quot;)
+@Singleton
+@Tag(name = &quot;EdgesAPI&quot;)
+<span class="nc" id="L54">public class EdgesAPI extends API {</span>
+
+<span class="nc" id="L56">    private static final Logger LOG = Log.logger(EdgesAPI.class);</span>
+
+    @GET
+    @Timed
+    @Compress
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;ids&quot;) List&lt;String&gt; stringIds) {
+<span class="nc" id="L65">        LOG.debug(&quot;Graph [{}] get edges by ids: {}&quot;, graph, stringIds);</span>
+
+<span class="nc bnc" id="L67" title="All 4 branches missed.">        E.checkArgument(stringIds != null &amp;&amp; !stringIds.isEmpty(),</span>
+                        &quot;The ids parameter can't be null or empty&quot;);
+
+<span class="nc" id="L70">        Object[] ids = new Id[stringIds.size()];</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        for (int i = 0; i &lt; ids.length; i++) {</span>
+<span class="nc" id="L72">            ids[i] = HugeEdge.getIdValue(stringIds.get(i), false);</span>
+        }
+
+<span class="nc" id="L75">        HugeGraph g = graph(manager, graph);</span>
+
+<span class="nc" id="L77">        Iterator&lt;Edge&gt; edges = g.edges(ids);</span>
+<span class="nc" id="L78">        return manager.serializer(g).writeEdges(edges, false);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;shards&quot;)
+    @Compress
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String shards(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @QueryParam(&quot;split_size&quot;) long splitSize) {
+<span class="nc" id="L89">        LOG.debug(&quot;Graph [{}] get vertex shards with split size '{}'&quot;,</span>
+<span class="nc" id="L90">                  graph, splitSize);</span>
+
+<span class="nc" id="L92">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L93">        List&lt;Shard&gt; shards = g.metadata(HugeType.EDGE_OUT, &quot;splits&quot;, splitSize);</span>
+<span class="nc" id="L94">        return manager.serializer(g).writeList(&quot;shards&quot;, shards);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;scan&quot;)
+    @Compress
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String scan(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;start&quot;) String start,
+                       @QueryParam(&quot;end&quot;) String end,
+                       @QueryParam(&quot;page&quot;) String page,
+                       @QueryParam(&quot;page_limit&quot;)
+                       @DefaultValue(DEFAULT_PAGE_LIMIT) long pageLimit) {
+<span class="nc" id="L109">        LOG.debug(&quot;Graph [{}] query edges by shard(start: {}, end: {}, &quot; +</span>
+                  &quot;page: {}) &quot;, graph, start, end, page);
+
+<span class="nc" id="L112">        HugeGraph g = graph(manager, graph);</span>
+
+<span class="nc" id="L114">        ConditionQuery query = new ConditionQuery(HugeType.EDGE_OUT);</span>
+<span class="nc" id="L115">        query.scan(start, end);</span>
+<span class="nc" id="L116">        query.page(page);</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (query.paging()) {</span>
+<span class="nc" id="L118">            query.limit(pageLimit);</span>
+        }
+<span class="nc" id="L120">        Iterator&lt;Edge&gt; edges = g.edges(query);</span>
+
+<span class="nc" id="L122">        return manager.serializer(g).writeEdges(edges, query.paging());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

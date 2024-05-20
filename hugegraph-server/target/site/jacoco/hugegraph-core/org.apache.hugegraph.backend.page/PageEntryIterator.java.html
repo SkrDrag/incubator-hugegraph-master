@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PageEntryIterator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.page</a> &gt; <span class="el_source">PageEntryIterator.java</span></div><h1>PageEntryIterator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.page;
+
+import java.util.NoSuchElementException;
+
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.iterator.CIter;
+import org.apache.hugegraph.util.E;
+
+<span class="nc" id="L30">public class PageEntryIterator&lt;R&gt; implements CIter&lt;R&gt; {</span>
+
+    private final QueryList&lt;R&gt; queries;
+    private final long pageSize;
+    private final PageInfo pageInfo;
+    private final QueryResults&lt;R&gt; queryResults; // for upper layer
+
+    private QueryList.PageResults&lt;R&gt; pageResults;
+    private long remaining;
+
+<span class="nc" id="L40">    public PageEntryIterator(QueryList&lt;R&gt; queries, long pageSize) {</span>
+<span class="nc" id="L41">        this.queries = queries;</span>
+<span class="nc" id="L42">        this.pageSize = pageSize;</span>
+<span class="nc" id="L43">        this.pageInfo = this.parsePageInfo();</span>
+<span class="nc" id="L44">        this.queryResults = new QueryResults&lt;&gt;(this, queries.parent());</span>
+
+<span class="nc" id="L46">        this.pageResults = QueryList.PageResults.emptyIterator();</span>
+<span class="nc" id="L47">        this.remaining = queries.parent().limit();</span>
+<span class="nc" id="L48">    }</span>
+
+    private PageInfo parsePageInfo() {
+<span class="nc" id="L51">        String page = this.queries.parent().pageWithoutCheck();</span>
+<span class="nc" id="L52">        PageInfo pageInfo = PageInfo.fromString(page);</span>
+<span class="nc bnc" id="L53" title="All 2 branches missed.">        E.checkState(pageInfo.offset() &lt; this.queries.total(),</span>
+                     &quot;Invalid page '%s' with an offset '%s' exceeds &quot; +
+<span class="nc" id="L55">                     &quot;the size of IdHolderList&quot;, page, pageInfo.offset());</span>
+<span class="nc" id="L56">        return pageInfo;</span>
+    }
+
+    @Override
+    public boolean hasNext() {
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        if (this.pageResults.get().hasNext()) {</span>
+<span class="nc" id="L62">            return true;</span>
+        }
+<span class="nc" id="L64">        return this.fetch();</span>
+    }
+
+    private boolean fetch() {
+<span class="nc bnc" id="L68" title="All 4 branches missed.">        if ((this.remaining != Query.NO_LIMIT &amp;&amp; this.remaining &lt;= 0L) ||</span>
+<span class="nc bnc" id="L69" title="All 2 branches missed.">            this.pageInfo.offset() &gt;= this.queries.total()) {</span>
+<span class="nc" id="L70">            return false;</span>
+        }
+
+<span class="nc" id="L73">        long pageSize = this.pageSize;</span>
+<span class="nc bnc" id="L74" title="All 4 branches missed.">        if (this.remaining != Query.NO_LIMIT &amp;&amp; this.remaining &lt; pageSize) {</span>
+<span class="nc" id="L75">            pageSize = this.remaining;</span>
+        }
+<span class="nc" id="L77">        this.closePageResults();</span>
+<span class="nc" id="L78">        this.pageResults = this.queries.fetchNext(this.pageInfo, pageSize);</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        assert this.pageResults != null;</span>
+<span class="nc" id="L80">        this.queryResults.setQuery(this.pageResults.query());</span>
+
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        if (this.pageResults.get().hasNext()) {</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">            if (!this.pageResults.hasNextPage()) {</span>
+<span class="nc" id="L84">                this.pageInfo.increase();</span>
+            } else {
+<span class="nc" id="L86">                this.pageInfo.page(this.pageResults.page());</span>
+            }
+<span class="nc" id="L88">            this.remaining -= this.pageResults.total();</span>
+<span class="nc" id="L89">            return true;</span>
+        } else {
+<span class="nc" id="L91">            this.pageInfo.increase();</span>
+<span class="nc" id="L92">            return this.fetch();</span>
+        }
+    }
+
+    private void closePageResults() {
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        if (this.pageResults != QueryList.PageResults.EMPTY) {</span>
+<span class="nc" id="L98">            CloseableIterator.closeIterator(this.pageResults.get());</span>
+        }
+<span class="nc" id="L100">    }</span>
+
+    @Override
+    public R next() {
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (!this.hasNext()) {</span>
+<span class="nc" id="L105">            throw new NoSuchElementException();</span>
+        }
+<span class="nc" id="L107">        return this.pageResults.get().next();</span>
+    }
+
+    @Override
+    public Object metadata(String meta, Object... args) {
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (PageInfo.PAGE.equals(meta)) {</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">            if (this.pageInfo.offset() &gt;= this.queries.total()) {</span>
+<span class="nc" id="L114">                return null;</span>
+            }
+<span class="nc" id="L116">            return this.pageInfo;</span>
+        }
+<span class="nc" id="L118">        throw new NotSupportException(&quot;Invalid meta '%s'&quot;, meta);</span>
+    }
+
+    @Override
+    public void close() throws Exception {
+<span class="nc" id="L123">        this.closePageResults();</span>
+<span class="nc" id="L124">    }</span>
+
+    public QueryResults&lt;R&gt; results() {
+<span class="nc" id="L127">        return this.queryResults;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

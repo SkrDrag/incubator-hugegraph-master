@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BetweennessCentralityAlgorithmV2.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.cent</a> &gt; <span class="el_source">BetweennessCentralityAlgorithmV2.java</span></div><h1>BetweennessCentralityAlgorithmV2.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.cent;
+
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+
+import org.apache.commons.lang3.mutable.MutableFloat;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.job.algorithm.BfsTraverser;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.type.define.Directions;
+
+<span class="nc" id="L35">public class BetweennessCentralityAlgorithmV2 extends AbstractCentAlgorithm {</span>
+
+    @Override
+    public String name() {
+<span class="nc" id="L39">        return &quot;betweenness_centrality&quot;;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L44">        super.checkParameters(parameters);</span>
+<span class="nc" id="L45">    }</span>
+
+    @Override
+    public Object call(UserJob&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L49">        try (Traverser traverser = new Traverser(job)) {</span>
+<span class="nc" id="L50">            return traverser.betweenessCentrality(direction(parameters),</span>
+<span class="nc" id="L51">                                                  edgeLabel(parameters),</span>
+<span class="nc" id="L52">                                                  depth(parameters),</span>
+<span class="nc" id="L53">                                                  degree(parameters),</span>
+<span class="nc" id="L54">                                                  sample(parameters),</span>
+<span class="nc" id="L55">                                                  sourceLabel(parameters),</span>
+<span class="nc" id="L56">                                                  sourceSample(parameters),</span>
+<span class="nc" id="L57">                                                  sourceCLabel(parameters),</span>
+<span class="nc" id="L58">                                                  top(parameters));</span>
+        }
+    }
+
+<span class="nc" id="L62">    private static class Traverser extends BfsTraverser&lt;BetweennessNode&gt; {</span>
+
+        private Map&lt;Id, MutableFloat&gt; globalBetweennesses;
+
+        private Traverser(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L67">            super(job);</span>
+<span class="nc" id="L68">        }</span>
+
+        private Object betweenessCentrality(Directions direction,
+                                            String label,
+                                            int depth,
+                                            long degree,
+                                            long sample,
+                                            String sourceLabel,
+                                            long sourceSample,
+                                            String sourceCLabel,
+                                            long topN) {
+<span class="nc bnc" id="L79" title="All 2 branches missed.">            assert depth &gt; 0;</span>
+<span class="nc bnc" id="L80" title="All 4 branches missed.">            assert degree &gt; 0L || degree == NO_LIMIT;</span>
+<span class="nc bnc" id="L81" title="All 4 branches missed.">            assert topN &gt;= 0L || topN == NO_LIMIT;</span>
+
+<span class="nc" id="L83">            this.globalBetweennesses = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L84">            Id edgeLabelId = null;</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            if (label != null) {</span>
+<span class="nc" id="L86">                edgeLabelId = this.graph().edgeLabel(label).id();</span>
+            }
+
+            // TODO: sample the startVertices
+<span class="nc" id="L90">            Iterator&lt;Vertex&gt; startVertices = this.vertices(sourceLabel,</span>
+                                                           sourceCLabel,
+                                                           Query.NO_LIMIT);
+<span class="nc bnc" id="L93" title="All 2 branches missed.">            while (startVertices.hasNext()) {</span>
+<span class="nc" id="L94">                Id startVertex = ((HugeVertex) startVertices.next()).id();</span>
+<span class="nc" id="L95">                this.globalBetweennesses.putIfAbsent(startVertex,</span>
+                                                     new MutableFloat());
+<span class="nc" id="L97">                this.compute(startVertex, direction, edgeLabelId,</span>
+                             degree, depth);
+<span class="nc" id="L99">            }</span>
+<span class="nc bnc" id="L100" title="All 4 branches missed.">            if (topN &gt; 0L || topN == NO_LIMIT) {</span>
+<span class="nc" id="L101">                return HugeTraverser.topN(this.globalBetweennesses,</span>
+                                          true, topN);
+            } else {
+<span class="nc" id="L104">                return this.globalBetweennesses;</span>
+            }
+        }
+
+        @Override
+        protected BetweennessNode createNode(BetweennessNode parentNode) {
+<span class="nc" id="L110">            return new BetweennessNode(parentNode);</span>
+        }
+
+        @Override
+        protected void meetNode(Id currentVertex, BetweennessNode currentNode,
+                                Id parentVertex, BetweennessNode parentNode,
+                                boolean firstTime) {
+<span class="nc" id="L117">            currentNode.addParentNode(parentNode, parentVertex);</span>
+<span class="nc" id="L118">        }</span>
+
+        @Override
+        protected BetweennessNode createStartNode() {
+<span class="nc" id="L122">            return new BetweennessNode(1, 0);</span>
+        }
+
+        @Override
+        protected void backtrack(Id startVertex, Id currentVertex,
+                                 Map&lt;Id, BetweennessNode&gt; localNodes) {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">            if (startVertex.equals(currentVertex)) {</span>
+<span class="nc" id="L129">                return;</span>
+            }
+<span class="nc" id="L131">            MutableFloat betweenness = this.globalBetweennesses.get(</span>
+                                       currentVertex);
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            if (betweenness == null) {</span>
+<span class="nc" id="L134">                betweenness = new MutableFloat(0.0F);</span>
+<span class="nc" id="L135">                this.globalBetweennesses.put(currentVertex, betweenness);</span>
+            }
+<span class="nc" id="L137">            BetweennessNode node = localNodes.get(currentVertex);</span>
+<span class="nc" id="L138">            betweenness.add(node.betweenness());</span>
+
+            // Contribute to parents
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            for (Id v : node.parents()) {</span>
+<span class="nc" id="L142">                BetweennessNode parentNode = localNodes.get(v);</span>
+<span class="nc" id="L143">                parentNode.increaseBetweenness(node);</span>
+            }
+<span class="nc" id="L145">        }</span>
+    }
+
+    /**
+     * Temp data structure for a vertex used in computing process.
+     */
+    private static class BetweennessNode extends BfsTraverser.Node {
+
+        private float betweenness;
+
+        public BetweennessNode(BetweennessNode parentNode) {
+<span class="nc" id="L156">            this(0, parentNode.distance() + 1);</span>
+<span class="nc" id="L157">        }</span>
+
+        public BetweennessNode(int pathCount, int distance) {
+<span class="nc" id="L160">            super(pathCount, distance);</span>
+<span class="nc" id="L161">            this.betweenness = 0.0F;</span>
+<span class="nc" id="L162">        }</span>
+
+        public void increaseBetweenness(BetweennessNode childNode) {
+<span class="nc" id="L165">            float increase = (float) this.pathCount() / childNode.pathCount() *</span>
+                             (1.0F + childNode.betweenness);
+<span class="nc" id="L167">            this.betweenness += increase;</span>
+<span class="nc" id="L168">        }</span>
+
+        public float betweenness() {
+<span class="nc" id="L171">            return this.betweenness;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

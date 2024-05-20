@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IdSet.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util.collection</a> &gt; <span class="el_source">IdSet.java</span></div><h1>IdSet.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util.collection;
+
+import java.util.AbstractSet;
+import java.util.Iterator;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.eclipse.collections.api.iterator.MutableLongIterator;
+import org.eclipse.collections.impl.set.mutable.primitive.LongHashSet;
+
+import org.apache.hugegraph.iterator.ExtendableIterator;
+import org.apache.hugegraph.type.define.CollectionType;
+
+public class IdSet extends AbstractSet&lt;Id&gt; {
+
+    private final LongHashSet numberIds;
+    private final Set&lt;Id&gt; nonNumberIds;
+
+<span class="nc" id="L37">    public IdSet(CollectionType type) {</span>
+<span class="nc" id="L38">        this.numberIds = new LongHashSet();</span>
+<span class="nc" id="L39">        this.nonNumberIds = CollectionFactory.newSet(type);</span>
+<span class="nc" id="L40">    }</span>
+
+    @Override
+    public int size() {
+<span class="nc" id="L44">        return this.numberIds.size() + this.nonNumberIds.size();</span>
+    }
+
+    @Override
+    public boolean isEmpty() {
+<span class="nc bnc" id="L49" title="All 4 branches missed.">        return this.numberIds.isEmpty() &amp;&amp; this.nonNumberIds.isEmpty();</span>
+    }
+
+    @Override
+    public boolean contains(Object object) {
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        if (!(object instanceof Id)) {</span>
+<span class="nc" id="L55">            return false;</span>
+        }
+<span class="nc" id="L57">        Id id = (Id) object;</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        if (id.type() == Id.IdType.LONG) {</span>
+<span class="nc" id="L59">            return this.numberIds.contains(id.asLong());</span>
+        } else {
+<span class="nc" id="L61">            return this.nonNumberIds.contains(id);</span>
+        }
+    }
+
+    @Override
+    public Iterator&lt;Id&gt; iterator() {
+<span class="nc" id="L67">        return new ExtendableIterator&lt;&gt;(</span>
+<span class="nc" id="L68">               this.nonNumberIds.iterator(),</span>
+<span class="nc" id="L69">               new EcLongIdIterator(this.numberIds.longIterator()));</span>
+    }
+
+    @Override
+    public boolean add(Id id) {
+<span class="nc bnc" id="L74" title="All 2 branches missed.">        if (id.type() == Id.IdType.LONG) {</span>
+<span class="nc" id="L75">            return this.numberIds.add(id.asLong());</span>
+        } else {
+<span class="nc" id="L77">            return this.nonNumberIds.add(id);</span>
+        }
+    }
+
+    public boolean remove(Id id) {
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        if (id.type() == Id.IdType.LONG) {</span>
+<span class="nc" id="L83">            return this.numberIds.remove(id.asLong());</span>
+        } else {
+<span class="nc" id="L85">            return this.nonNumberIds.remove(id);</span>
+        }
+    }
+
+    @Override
+    public void clear() {
+<span class="nc" id="L91">        this.numberIds.clear();</span>
+<span class="nc" id="L92">        this.nonNumberIds.clear();</span>
+<span class="nc" id="L93">    }</span>
+
+    private static class EcLongIdIterator implements Iterator&lt;Id&gt; {
+
+        private final MutableLongIterator iterator;
+
+<span class="nc" id="L99">        public EcLongIdIterator(MutableLongIterator iter) {</span>
+<span class="nc" id="L100">            this.iterator = iter;</span>
+<span class="nc" id="L101">        }</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="nc" id="L105">            return this.iterator.hasNext();</span>
+        }
+
+        @Override
+        public Id next() {
+<span class="nc" id="L110">            return IdGenerator.of(this.iterator.next());</span>
+        }
+
+        @Override
+        public void remove() {
+<span class="nc" id="L115">            this.iterator.remove();</span>
+<span class="nc" id="L116">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

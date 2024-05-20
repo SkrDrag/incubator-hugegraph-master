@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IdUtil.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.id</a> &gt; <span class="el_source">IdUtil.java</span></div><h1>IdUtil.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.id;
+
+import java.nio.ByteBuffer;
+
+import org.apache.commons.lang3.StringUtils;
+
+import org.apache.hugegraph.backend.id.Id.IdType;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+
+<span class="nc" id="L27">public final class IdUtil {</span>
+
+    public static String writeStoredString(Id id) {
+        String idString;
+<span class="nc bnc" id="L31" title="All 3 branches missed.">        switch (id.type()) {</span>
+            case LONG:
+            case STRING:
+            case UUID:
+<span class="nc" id="L35">                idString = IdGenerator.asStoredString(id);</span>
+<span class="nc" id="L36">                break;</span>
+            case EDGE:
+<span class="nc" id="L38">                idString = EdgeId.asStoredString(id);</span>
+<span class="nc" id="L39">                break;</span>
+            default:
+<span class="nc" id="L41">                throw new AssertionError(&quot;Invalid id type &quot; + id.type());</span>
+        }
+<span class="nc" id="L43">        return id.type().prefix() + idString;</span>
+    }
+
+    public static Id readStoredString(String id) {
+<span class="nc" id="L47">        IdType type = IdType.valueOfPrefix(id);</span>
+<span class="nc" id="L48">        String idContent = id.substring(1);</span>
+<span class="nc bnc" id="L49" title="All 3 branches missed.">        switch (type) {</span>
+            case LONG:
+            case STRING:
+            case UUID:
+<span class="nc" id="L53">                return IdGenerator.ofStoredString(idContent, type);</span>
+            case EDGE:
+<span class="nc" id="L55">                return EdgeId.parseStoredString(idContent);</span>
+            default:
+<span class="nc" id="L57">                throw new IllegalArgumentException(&quot;Invalid id: &quot; + id);</span>
+        }
+    }
+
+    public static Object writeBinString(Id id) {
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        int len = id.edge() ? BytesBuffer.BUF_EDGE_ID : id.length() + 1;</span>
+<span class="nc" id="L63">        BytesBuffer buffer = BytesBuffer.allocate(len).writeId(id);</span>
+<span class="nc" id="L64">        buffer.forReadWritten();</span>
+<span class="nc" id="L65">        return buffer.asByteBuffer();</span>
+    }
+
+    public static Id readBinString(Object id) {
+<span class="nc" id="L69">        BytesBuffer buffer = BytesBuffer.wrap((ByteBuffer) id);</span>
+<span class="nc" id="L70">        return buffer.readId();</span>
+    }
+
+    public static String writeString(Id id) {
+<span class="nc" id="L74">        String idString = id.asString();</span>
+<span class="nc" id="L75">        return id.type().prefix() + idString;</span>
+    }
+
+    public static Id readString(String id) {
+<span class="nc" id="L79">        IdType type = IdType.valueOfPrefix(id);</span>
+<span class="nc" id="L80">        String idContent = id.substring(1);</span>
+<span class="nc bnc" id="L81" title="All 4 branches missed.">        switch (type) {</span>
+            case LONG:
+<span class="nc" id="L83">                return IdGenerator.of(Long.parseLong(idContent));</span>
+            case STRING:
+            case UUID:
+<span class="nc bnc" id="L86" title="All 2 branches missed.">                return IdGenerator.of(idContent, type == IdType.UUID);</span>
+            case EDGE:
+<span class="nc" id="L88">                return EdgeId.parse(idContent);</span>
+            default:
+<span class="nc" id="L90">                throw new IllegalArgumentException(&quot;Invalid id: &quot; + id);</span>
+        }
+    }
+
+    public static String writeLong(Id id) {
+<span class="nc" id="L95">        return String.valueOf(id.asLong());</span>
+    }
+
+    public static Id readLong(String id) {
+<span class="nc" id="L99">        return IdGenerator.of(Long.parseLong(id));</span>
+    }
+
+    public static String escape(char splitor, char escape, String... values) {
+<span class="nc" id="L103">        int length = values.length + 4;</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        for (String value : values) {</span>
+<span class="nc" id="L105">            length += value.length();</span>
+        }
+<span class="nc" id="L107">        StringBuilder escaped = new StringBuilder(length);</span>
+        // Do escape for every item in values
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        for (String value : values) {</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">            if (escaped.length() &gt; 0) {</span>
+<span class="nc" id="L111">                escaped.append(splitor);</span>
+            }
+
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            if (value.indexOf(splitor) == -1) {</span>
+<span class="nc" id="L115">                escaped.append(value);</span>
+<span class="nc" id="L116">                continue;</span>
+            }
+
+            // Do escape for current item
+<span class="nc bnc" id="L120" title="All 2 branches missed.">            for (int i = 0, n = value.length(); i &lt; n; i++) {</span>
+<span class="nc" id="L121">                char ch = value.charAt(i);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">                if (ch == splitor) {</span>
+<span class="nc" id="L123">                    escaped.append(escape);</span>
+                }
+<span class="nc" id="L125">                escaped.append(ch);</span>
+            }
+        }
+<span class="nc" id="L128">        return escaped.toString();</span>
+    }
+
+    public static String[] unescape(String id, String splitor, String escape) {
+        /*
+         * Note that the `splitter`/`escape` maybe special characters in regular
+         * expressions, but this is a frequently called method, for faster
+         * execution, we forbid the use of special characters as delimiter
+         * or escape sign.
+         *
+         * The `limit` param -1 in split method can ensure empty string be
+         * split to a part.
+         */
+<span class="nc" id="L141">        String[] parts = id.split(&quot;(?&lt;!&quot; + escape + &quot;)&quot; + splitor, -1);</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        for (int i = 0; i &lt; parts.length; i++) {</span>
+<span class="nc" id="L143">            parts[i] = StringUtils.replace(parts[i], escape + splitor,</span>
+                                           splitor);
+        }
+<span class="nc" id="L146">        return parts;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

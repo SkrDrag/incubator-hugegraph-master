@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="8.45">
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-rocksdb\src\main\java\org\apache\hugegraph\backend\store\rocksdbsst\RocksDBSstSessions.java">
+<error line="129" column="64" severity="info" message="WhitespaceAround: &apos;{&apos; is not preceded with whitespace." source="com.puppycrawl.tools.checkstyle.checks.whitespace.WhitespaceAroundCheck"/>
+</file>
+</checkstyle>

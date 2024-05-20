@@ -1,0 +1,364 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RocksDBTable.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-rocksdb</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.rocksdb</a> &gt; <span class="el_source">RocksDBTable.java</span></div><h1>RocksDBTable.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.rocksdb;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.query.Aggregate;
+import org.apache.hugegraph.backend.query.Aggregate.AggregateFunc;
+import org.apache.hugegraph.backend.query.Condition.Relation;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.IdPrefixQuery;
+import org.apache.hugegraph.backend.query.IdRangeQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.serializer.BinaryBackendEntry;
+import org.apache.hugegraph.backend.serializer.BinaryEntryIterator;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumn;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumnIterator;
+import org.apache.hugegraph.backend.store.BackendEntryIterator;
+import org.apache.hugegraph.backend.store.BackendTable;
+import org.apache.hugegraph.backend.store.Shard;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.iterator.FlatMapperIterator;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.StringEncoding;
+import org.apache.tinkerpop.gremlin.util.iterator.IteratorUtils;
+import org.slf4j.Logger;
+
+public class RocksDBTable extends BackendTable&lt;RocksDBSessions.Session, BackendEntry&gt; {
+
+<span class="nc" id="L57">    private static final Logger LOG = Log.logger(RocksDBTable.class);</span>
+
+    private final RocksDBShardSplitter shardSplitter;
+
+    public RocksDBTable(String database, String table) {
+<span class="nc" id="L62">        super(String.format(&quot;%s+%s&quot;, database, table));</span>
+<span class="nc" id="L63">        this.shardSplitter = new RocksDBShardSplitter(this.table());</span>
+<span class="nc" id="L64">    }</span>
+
+    @Override
+    protected void registerMetaHandlers() {
+<span class="nc" id="L68">        this.registerMetaHandler(&quot;splits&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc bnc" id="L69" title="All 2 branches missed.">            E.checkArgument(args.length == 1, &quot;The args count of %s must be 1&quot;, meta);</span>
+<span class="nc" id="L70">            long splitSize = (long) args[0];</span>
+<span class="nc" id="L71">            return this.shardSplitter.getSplits(session, splitSize);</span>
+        });
+<span class="nc" id="L73">    }</span>
+
+    @Override
+    public void init(RocksDBSessions.Session session) {
+        // pass
+<span class="nc" id="L78">    }</span>
+
+    @Override
+    public void clear(RocksDBSessions.Session session) {
+        // pass
+<span class="nc" id="L83">    }</span>
+
+    @Override
+    public void insert(RocksDBSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        assert !entry.columns().isEmpty();</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        for (BackendColumn col : entry.columns()) {</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            assert entry.belongToMe(col) : entry;</span>
+<span class="nc" id="L90">            session.put(this.table(), col.name, col.value);</span>
+<span class="nc" id="L91">        }</span>
+<span class="nc" id="L92">    }</span>
+
+    @Override
+    public void delete(RocksDBSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        if (entry.columns().isEmpty()) {</span>
+<span class="nc" id="L97">            session.delete(this.table(), entry.id().asBytes());</span>
+        } else {
+<span class="nc bnc" id="L99" title="All 2 branches missed.">            for (BackendColumn col : entry.columns()) {</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">                assert entry.belongToMe(col) : entry;</span>
+<span class="nc" id="L101">                session.delete(this.table(), col.name);</span>
+<span class="nc" id="L102">            }</span>
+        }
+<span class="nc" id="L104">    }</span>
+
+    @Override
+    public void append(RocksDBSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        assert entry.columns().size() == 1;</span>
+<span class="nc" id="L109">        this.insert(session, entry);</span>
+<span class="nc" id="L110">    }</span>
+
+    @Override
+    public void eliminate(RocksDBSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        assert entry.columns().size() == 1;</span>
+<span class="nc" id="L115">        this.delete(session, entry);</span>
+<span class="nc" id="L116">    }</span>
+
+    @Override
+    public boolean queryExist(RocksDBSessions.Session session, BackendEntry entry) {
+<span class="nc" id="L120">        Id id = entry.id();</span>
+<span class="nc" id="L121">        try (BackendColumnIterator iter = this.queryById(session, id)) {</span>
+<span class="nc" id="L122">            return iter.hasNext();</span>
+        }
+    }
+
+    @Override
+    public Number queryNumber(RocksDBSessions.Session session, Query query) {
+<span class="nc" id="L128">        Aggregate aggregate = query.aggregateNotNull();</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (aggregate.func() != AggregateFunc.COUNT) {</span>
+<span class="nc" id="L130">            throw new NotSupportException(aggregate.toString());</span>
+        }
+
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        assert aggregate.func() == AggregateFunc.COUNT;</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        assert query.noLimit();</span>
+<span class="nc" id="L135">        try (BackendColumnIterator results = this.queryBy(session, query)) {</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">            if (results instanceof RocksDBSessions.Countable) {</span>
+<span class="nc" id="L137">                return ((RocksDBSessions.Countable) results).count();</span>
+            }
+<span class="nc" id="L139">            return IteratorUtils.count(results);</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        }</span>
+    }
+
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(RocksDBSessions.Session session, Query query) {
+<span class="nc bnc" id="L145" title="All 4 branches missed.">        if (query.limit() == 0L &amp;&amp; !query.noLimit()) {</span>
+<span class="nc" id="L146">            LOG.debug(&quot;Return empty result(limit=0) for query {}&quot;, query);</span>
+<span class="nc" id="L147">            return Collections.emptyIterator();</span>
+        }
+<span class="nc" id="L149">        return newEntryIterator(this.queryBy(session, query), query);</span>
+    }
+
+    protected BackendColumnIterator queryBy(RocksDBSessions.Session session, Query query) {
+        // Query all
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (query.empty()) {</span>
+<span class="nc" id="L155">            return this.queryAll(session, query);</span>
+        }
+
+        // Query by prefix
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (query instanceof IdPrefixQuery) {</span>
+<span class="nc" id="L160">            IdPrefixQuery pq = (IdPrefixQuery) query;</span>
+<span class="nc" id="L161">            return this.queryByPrefix(session, pq);</span>
+        }
+
+        // Query by range
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        if (query instanceof IdRangeQuery) {</span>
+<span class="nc" id="L166">            IdRangeQuery rq = (IdRangeQuery) query;</span>
+<span class="nc" id="L167">            return this.queryByRange(session, rq);</span>
+        }
+
+        // Query by id
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        if (query.conditionsSize() == 0) {</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">            assert query.idsSize() &gt; 0;</span>
+<span class="nc" id="L173">            return this.queryByIds(session, query.ids());</span>
+        }
+
+        // Query by condition (or condition + id)
+<span class="nc" id="L177">        ConditionQuery cq = (ConditionQuery) query;</span>
+<span class="nc" id="L178">        return this.queryByCond(session, cq);</span>
+    }
+
+    protected BackendColumnIterator queryAll(RocksDBSessions.Session session, Query query) {
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        if (query.paging()) {</span>
+<span class="nc" id="L183">            PageState page = PageState.fromString(query.page());</span>
+<span class="nc" id="L184">            byte[] begin = page.position();</span>
+<span class="nc" id="L185">            return session.scan(this.table(), begin, null, RocksDBSessions.Session.SCAN_ANY);</span>
+        } else {
+<span class="nc" id="L187">            return session.scan(this.table());</span>
+        }
+    }
+
+    protected BackendColumnIterator queryById(RocksDBSessions.Session session, Id id) {
+        // TODO: change to get() after vertex and schema don't use id prefix
+<span class="nc" id="L193">        return session.scan(this.table(), id.asBytes());</span>
+    }
+
+    protected BackendColumnIterator queryByIds(RocksDBSessions.Session session,
+                                               Collection&lt;Id&gt; ids) {
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        if (ids.size() == 1) {</span>
+<span class="nc" id="L199">            return this.queryById(session, ids.iterator().next());</span>
+        }
+
+        // NOTE: this will lead to lazy create rocksdb iterator
+<span class="nc" id="L203">        return BackendColumnIterator.wrap(new FlatMapperIterator&lt;&gt;(</span>
+<span class="nc" id="L204">            ids.iterator(), id -&gt; this.queryById(session, id)</span>
+        ));
+    }
+
+    protected BackendColumnIterator getById(RocksDBSessions.Session session, Id id) {
+<span class="nc" id="L209">        byte[] value = session.get(this.table(), id.asBytes());</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L211">            return BackendColumnIterator.empty();</span>
+        }
+<span class="nc" id="L213">        BackendColumn col = BackendColumn.of(id.asBytes(), value);</span>
+<span class="nc" id="L214">        return BackendColumnIterator.iterator(col);</span>
+    }
+
+    protected BackendColumnIterator getByIds(RocksDBSessions.Session session, Set&lt;Id&gt; ids) {
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        if (ids.size() == 1) {</span>
+<span class="nc" id="L219">            return this.getById(session, ids.iterator().next());</span>
+        }
+
+<span class="nc" id="L222">        List&lt;byte[]&gt; keys = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L224">            keys.add(id.asBytes());</span>
+<span class="nc" id="L225">        }</span>
+<span class="nc" id="L226">        return session.get(this.table(), keys);</span>
+    }
+
+    protected BackendColumnIterator queryByPrefix(RocksDBSessions.Session session,
+                                                  IdPrefixQuery query) {
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        int type = query.inclusiveStart() ?</span>
+<span class="nc" id="L232">                   RocksDBSessions.Session.SCAN_GTE_BEGIN : RocksDBSessions.Session.SCAN_GT_BEGIN;</span>
+<span class="nc" id="L233">        type |= RocksDBSessions.Session.SCAN_PREFIX_END;</span>
+<span class="nc" id="L234">        return session.scan(this.table(), query.start().asBytes(), query.prefix().asBytes(), type);</span>
+    }
+
+    protected BackendColumnIterator queryByRange(RocksDBSessions.Session session,
+                                                 IdRangeQuery query) {
+<span class="nc" id="L239">        byte[] start = query.start().asBytes();</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        byte[] end = query.end() == null ? null : query.end().asBytes();</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">        int type = query.inclusiveStart() ?</span>
+<span class="nc" id="L242">                   RocksDBSessions.Session.SCAN_GTE_BEGIN : RocksDBSessions.Session.SCAN_GT_BEGIN;</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        if (end != null) {</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            type |= query.inclusiveEnd() ?</span>
+<span class="nc" id="L245">                    RocksDBSessions.Session.SCAN_LTE_END : RocksDBSessions.Session.SCAN_LT_END;</span>
+        }
+<span class="nc" id="L247">        return session.scan(this.table(), start, end, type);</span>
+    }
+
+    protected BackendColumnIterator queryByCond(RocksDBSessions.Session session,
+                                                ConditionQuery query) {
+<span class="nc bnc" id="L252" title="All 2 branches missed.">        if (query.containsScanRelation()) {</span>
+<span class="nc bnc" id="L253" title="All 2 branches missed.">            E.checkArgument(query.relations().size() == 1,</span>
+                            &quot;Invalid scan with multi conditions: %s&quot;, query);
+<span class="nc" id="L255">            Relation scan = query.relations().iterator().next();</span>
+<span class="nc" id="L256">            Shard shard = (Shard) scan.value();</span>
+<span class="nc" id="L257">            return this.queryByRange(session, shard, query.page());</span>
+        }
+<span class="nc" id="L259">        throw new NotSupportException(&quot;query: %s&quot;, query);</span>
+    }
+
+    protected BackendColumnIterator queryByRange(RocksDBSessions.Session session, Shard shard,
+                                                 String page) {
+<span class="nc" id="L264">        byte[] start = this.shardSplitter.position(shard.start());</span>
+<span class="nc" id="L265">        byte[] end = this.shardSplitter.position(shard.end());</span>
+<span class="nc bnc" id="L266" title="All 4 branches missed.">        if (page != null &amp;&amp; !page.isEmpty()) {</span>
+<span class="nc" id="L267">            byte[] position = PageState.fromString(page).position();</span>
+<span class="nc bnc" id="L268" title="All 4 branches missed.">            E.checkArgument(start == null || Bytes.compare(position, start) &gt;= 0,</span>
+                            &quot;Invalid page out of lower bound&quot;);
+<span class="nc" id="L270">            start = position;</span>
+        }
+<span class="nc bnc" id="L272" title="All 2 branches missed.">        if (start == null) {</span>
+<span class="nc" id="L273">            start = ShardSplitter.START_BYTES;</span>
+        }
+<span class="nc" id="L275">        int type = RocksDBSessions.Session.SCAN_GTE_BEGIN;</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">        if (end != null) {</span>
+<span class="nc" id="L277">            type |= RocksDBSessions.Session.SCAN_LT_END;</span>
+        }
+<span class="nc" id="L279">        return session.scan(this.table(), start, end, type);</span>
+    }
+
+    public boolean isOlap() {
+<span class="nc" id="L283">        return false;</span>
+    }
+
+    protected static BackendEntryIterator newEntryIterator(BackendColumnIterator cols,
+                                                           Query query) {
+<span class="nc" id="L288">        return new BinaryEntryIterator&lt;&gt;(cols, query, (entry, col) -&gt; {</span>
+<span class="nc bnc" id="L289" title="All 4 branches missed.">            if (entry == null || !entry.belongToMe(col)) {</span>
+<span class="nc" id="L290">                HugeType type = query.resultType();</span>
+                // NOTE: only support BinaryBackendEntry currently
+<span class="nc" id="L292">                entry = new BinaryBackendEntry(type, col.name);</span>
+<span class="nc" id="L293">            } else {</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">                assert !Bytes.equals(entry.id().asBytes(), col.name);</span>
+            }
+<span class="nc" id="L296">            entry.columns(col);</span>
+<span class="nc" id="L297">            return entry;</span>
+        });
+    }
+
+    protected static long sizeOfBackendEntry(BackendEntry entry) {
+<span class="nc" id="L302">        return BinaryEntryIterator.sizeOfEntry(entry);</span>
+    }
+
+    private static class RocksDBShardSplitter extends ShardSplitter&lt;RocksDBSessions.Session&gt; {
+
+        private static final String MEM_SIZE = &quot;rocksdb.size-all-mem-tables&quot;;
+        private static final String SST_SIZE = &quot;rocksdb.total-sst-files-size&quot;;
+        private static final String NUM_KEYS = &quot;rocksdb.estimate-num-keys&quot;;
+
+        public RocksDBShardSplitter(String table) {
+<span class="nc" id="L312">            super(table);</span>
+<span class="nc" id="L313">        }</span>
+
+        @Override
+        public List&lt;Shard&gt; getSplits(RocksDBSessions.Session session, long splitSize) {
+<span class="nc bnc" id="L317" title="All 2 branches missed.">            E.checkArgument(splitSize &gt;= MIN_SHARD_SIZE,</span>
+                            &quot;The split-size must be &gt;= %s bytes, but got %s&quot;,
+<span class="nc" id="L319">                            MIN_SHARD_SIZE, splitSize);</span>
+
+<span class="nc" id="L321">            Pair&lt;byte[], byte[]&gt; keyRange = session.keyRange(this.table());</span>
+<span class="nc bnc" id="L322" title="All 4 branches missed.">            if (keyRange == null || keyRange.getRight() == null) {</span>
+<span class="nc" id="L323">                return super.getSplits(session, splitSize);</span>
+            }
+
+<span class="nc" id="L326">            long size = this.estimateDataSize(session);</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">            if (size &lt;= 0) {</span>
+<span class="nc" id="L328">                size = this.estimateNumKeys(session) * ESTIMATE_BYTES_PER_KV;</span>
+            }
+
+<span class="nc" id="L331">            double count = Math.ceil(size / (double) splitSize);</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">            if (count &lt;= 0) {</span>
+<span class="nc" id="L333">                count = 1;</span>
+            }
+
+<span class="nc" id="L336">            Range range = new Range(keyRange.getLeft(), Range.increase(keyRange.getRight()));</span>
+<span class="nc" id="L337">            List&lt;Shard&gt; splits = new ArrayList&lt;&gt;((int) count);</span>
+<span class="nc" id="L338">            splits.addAll(range.splitEven((int) count));</span>
+<span class="nc" id="L339">            return splits;</span>
+        }
+
+        @Override
+        public long estimateDataSize(RocksDBSessions.Session session) {
+<span class="nc" id="L344">            long mem = Long.parseLong(session.property(this.table(), MEM_SIZE));</span>
+<span class="nc" id="L345">            long sst = Long.parseLong(session.property(this.table(), SST_SIZE));</span>
+<span class="nc" id="L346">            return mem + sst;</span>
+        }
+
+        @Override
+        public long estimateNumKeys(RocksDBSessions.Session session) {
+<span class="nc" id="L351">            return Long.parseLong(session.property(this.table(), NUM_KEYS));</span>
+        }
+
+        @Override
+        public byte[] position(String position) {
+            // TODO: START &amp; END is same &amp; be empty now? remove one?
+<span class="nc bnc" id="L357" title="All 4 branches missed.">            if (START.equals(position) || END.equals(position)) {</span>
+<span class="nc" id="L358">                return null;</span>
+            }
+<span class="nc" id="L360">            return StringEncoding.decodeBase64(position);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

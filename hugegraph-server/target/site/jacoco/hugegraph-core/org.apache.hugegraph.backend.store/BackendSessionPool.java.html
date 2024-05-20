@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BackendSessionPool.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">BackendSessionPool.java</span></div><h1>BackendSessionPool.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.commons.lang3.tuple.Pair;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.util.Log;
+
+public abstract class BackendSessionPool {
+
+<span class="nc" id="L34">    private static final Logger LOG = Log.logger(BackendSessionPool.class);</span>
+
+    private final HugeConfig config;
+    private final String name;
+    private final ThreadLocal&lt;BackendSession&gt; threadLocalSession;
+    private final AtomicInteger sessionCount;
+    private final Map&lt;Long, BackendSession&gt; sessions;
+    private final long reconnectDetectInterval;
+
+<span class="nc" id="L43">    public BackendSessionPool(HugeConfig config, String name) {</span>
+<span class="nc" id="L44">        this.config = config;</span>
+<span class="nc" id="L45">        this.name = name;</span>
+<span class="nc" id="L46">        this.threadLocalSession = new ThreadLocal&lt;&gt;();</span>
+<span class="nc" id="L47">        this.sessionCount = new AtomicInteger(0);</span>
+<span class="nc" id="L48">        this.sessions = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L49">        this.reconnectDetectInterval = this.config.get(</span>
+                                       CoreOptions.STORE_CONN_DETECT_INTERVAL);
+<span class="nc" id="L51">    }</span>
+
+    public HugeConfig config() {
+<span class="nc" id="L54">        return this.config;</span>
+    }
+
+    public final BackendSession getOrNewSession() {
+<span class="nc" id="L58">        BackendSession session = this.threadLocalSession.get();</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">        if (session == null) {</span>
+<span class="nc" id="L60">            session = this.newSession();</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">            assert session != null;</span>
+<span class="nc" id="L62">            this.threadLocalSession.set(session);</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">            assert !this.sessions.containsKey(Thread.currentThread().getId());</span>
+<span class="nc" id="L64">            this.sessions.put(Thread.currentThread().getId(), session);</span>
+<span class="nc" id="L65">            int sessionCount = this.sessionCount.incrementAndGet();</span>
+<span class="nc" id="L66">            LOG.debug(&quot;Now(after connect({})) session count is: {}&quot;,</span>
+<span class="nc" id="L67">                      this, sessionCount);</span>
+<span class="nc" id="L68">        } else {</span>
+<span class="nc" id="L69">            this.detectSession(session);</span>
+        }
+<span class="nc" id="L71">        return session;</span>
+    }
+
+    public BackendSession useSession() {
+<span class="nc" id="L75">        BackendSession session = this.threadLocalSession.get();</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        if (session != null) {</span>
+<span class="nc" id="L77">            session.attach();</span>
+<span class="nc" id="L78">            this.detectSession(session);</span>
+        } else {
+<span class="nc" id="L80">            session = this.getOrNewSession();</span>
+        }
+<span class="nc" id="L82">        return session;</span>
+    }
+
+    private void detectSession(BackendSession session) {
+        // Reconnect if the session idle time exceed specified value
+<span class="nc" id="L87">        long interval = TimeUnit.SECONDS.toMillis(this.reconnectDetectInterval);</span>
+<span class="nc" id="L88">        long now = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        if (now - session.updated() &gt; interval) {</span>
+<span class="nc" id="L90">            session.reconnectIfNeeded();</span>
+        }
+<span class="nc" id="L92">        session.update();</span>
+<span class="nc" id="L93">    }</span>
+
+    private Pair&lt;Integer, Integer&gt; closeSession() {
+<span class="nc" id="L96">        int sessionCount = this.sessionCount.get();</span>
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        if (sessionCount &lt;= 0) {</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">            assert sessionCount == 0 : sessionCount;</span>
+<span class="nc" id="L99">            return Pair.of(-1, -1);</span>
+        }
+
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        assert sessionCount &gt; 0 : sessionCount;</span>
+<span class="nc" id="L103">        BackendSession session = this.threadLocalSession.get();</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (session == null) {</span>
+<span class="nc" id="L105">            LOG.debug(&quot;Current session has ever been closed: {}&quot;, this);</span>
+<span class="nc" id="L106">            return Pair.of(sessionCount, -1);</span>
+        }
+
+<span class="nc" id="L109">        int ref = session.detach();</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        assert ref &gt;= 0 : ref;</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (ref &gt; 0) {</span>
+<span class="nc" id="L112">            return Pair.of(sessionCount, ref);</span>
+        }
+
+        // Close session when ref=0
+        try {
+<span class="nc" id="L117">            session.close();</span>
+<span class="nc" id="L118">        } catch (Throwable e) {</span>
+<span class="nc" id="L119">            session.attach();</span>
+<span class="nc" id="L120">            throw e;</span>
+<span class="nc" id="L121">        }</span>
+<span class="nc" id="L122">        this.threadLocalSession.remove();</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        assert this.sessions.containsKey(Thread.currentThread().getId());</span>
+<span class="nc" id="L124">        this.sessions.remove(Thread.currentThread().getId());</span>
+
+<span class="nc" id="L126">        return Pair.of(this.sessionCount.decrementAndGet(), ref);</span>
+    }
+
+    public void forceResetSessions() {
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        for (BackendSession session : this.sessions.values()) {</span>
+<span class="nc" id="L131">            session.reset();</span>
+<span class="nc" id="L132">        }</span>
+<span class="nc" id="L133">    }</span>
+
+    public boolean close() {
+<span class="nc" id="L136">        Pair&lt;Integer, Integer&gt; result = Pair.of(-1, -1);</span>
+        try {
+<span class="nc" id="L138">            result = this.closeSession();</span>
+        } finally {
+<span class="nc bnc" id="L140" title="All 2 branches missed.">            if (result.getLeft() == 0) {</span>
+<span class="nc" id="L141">                this.doClose();</span>
+            }
+        }
+<span class="nc" id="L144">        LOG.debug(&quot;Now(after close({})) session count is: {}, &quot; +</span>
+                  &quot;current session reference is: {}&quot;,
+<span class="nc" id="L146">                  this, result.getLeft(), result.getRight());</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        return result.getLeft() == 0;</span>
+    }
+
+    public boolean closed() {
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        return this.sessionCount.get() == 0;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L156">        return String.format(&quot;%s-%s@%08X&quot;, this.name,</span>
+<span class="nc" id="L157">                             this.getClass().getSimpleName(), this.hashCode());</span>
+    }
+
+    public abstract void open() throws Exception;
+
+    protected abstract boolean opened();
+
+    public abstract BackendSession session();
+
+    protected abstract BackendSession newSession();
+
+    protected abstract void doClose();
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

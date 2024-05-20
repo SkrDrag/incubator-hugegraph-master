@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ParameterUtil.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util</a> &gt; <span class="el_source">ParameterUtil.java</span></div><h1>ParameterUtil.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util;
+
+import org.apache.hugegraph.util.E;
+
+import java.util.Map;
+
+<span class="nc" id="L24">public class ParameterUtil {</span>
+
+    public static Object parameter(Map&lt;String, Object&gt; parameters, String key) {
+<span class="nc" id="L27">        Object value = parameters.get(key);</span>
+<span class="nc bnc" id="L28" title="All 2 branches missed.">        E.checkArgument(value != null,</span>
+                        &quot;Expect '%s' in parameters: %s&quot;,
+                        key, parameters);
+<span class="nc" id="L31">        return value;</span>
+    }
+
+    public static String parameterString(Map&lt;String, Object&gt; parameters,
+                                         String key) {
+<span class="nc" id="L36">        Object value = parameter(parameters, key);</span>
+<span class="nc" id="L37">        E.checkArgument(value instanceof String,</span>
+                        &quot;Expect string value for parameter '%s': '%s'&quot;,
+                        key, value);
+<span class="nc" id="L40">        return (String) value;</span>
+    }
+
+    public static int parameterInt(Map&lt;String, Object&gt; parameters,
+                                   String key) {
+<span class="nc" id="L45">        Object value = parameter(parameters, key);</span>
+<span class="nc" id="L46">        E.checkArgument(value instanceof Number,</span>
+                        &quot;Expect int value for parameter '%s': '%s'&quot;,
+                        key, value);
+<span class="nc" id="L49">        return ((Number) value).intValue();</span>
+    }
+
+    public static long parameterLong(Map&lt;String, Object&gt; parameters,
+                                     String key) {
+<span class="nc" id="L54">        Object value = parameter(parameters, key);</span>
+<span class="nc" id="L55">        E.checkArgument(value instanceof Number,</span>
+                        &quot;Expect long value for parameter '%s': '%s'&quot;,
+                        key, value);
+<span class="nc" id="L58">        return ((Number) value).longValue();</span>
+    }
+
+    public static double parameterDouble(Map&lt;String, Object&gt; parameters,
+                                         String key) {
+<span class="nc" id="L63">        Object value = parameter(parameters, key);</span>
+<span class="nc" id="L64">        E.checkArgument(value instanceof Number,</span>
+                        &quot;Expect double value for parameter '%s': '%s'&quot;,
+                        key, value);
+<span class="nc" id="L67">        return ((Number) value).doubleValue();</span>
+    }
+
+    public static boolean parameterBoolean(Map&lt;String, Object&gt; parameters,
+                                           String key) {
+<span class="nc" id="L72">        Object value = parameter(parameters, key);</span>
+<span class="nc" id="L73">        E.checkArgument(value instanceof Boolean,</span>
+                        &quot;Expect boolean value for parameter '%s': '%s'&quot;,
+                        key, value);
+<span class="nc" id="L76">        return ((Boolean) value);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

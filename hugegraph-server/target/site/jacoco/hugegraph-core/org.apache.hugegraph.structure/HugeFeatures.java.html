@@ -1,0 +1,424 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeFeatures.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.structure</a> &gt; <span class="el_source">HugeFeatures.java</span></div><h1>HugeFeatures.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.structure;
+
+import java.util.UUID;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.VertexProperty;
+import org.apache.tinkerpop.gremlin.structure.util.FeatureDescriptor;
+import org.apache.tinkerpop.gremlin.structure.util.StringFactory;
+
+public class HugeFeatures implements Graph.Features {
+
+    protected final HugeGraph graph;
+    protected final boolean supportsPersistence;
+    protected final HugeGraphFeatures graphFeatures;
+    protected final HugeVertexFeatures vertexFeatures;
+    protected final HugeEdgeFeatures edgeFeatures;
+
+<span class="nc" id="L38">    public HugeFeatures(HugeGraph graph, boolean supportsPersistence) {</span>
+<span class="nc" id="L39">        this.graph = graph;</span>
+<span class="nc" id="L40">        this.supportsPersistence = supportsPersistence;</span>
+
+<span class="nc" id="L42">        this.graphFeatures = new HugeGraphFeatures();</span>
+<span class="nc" id="L43">        this.vertexFeatures = new HugeVertexFeatures();</span>
+<span class="nc" id="L44">        this.edgeFeatures = new HugeEdgeFeatures();</span>
+<span class="nc" id="L45">    }</span>
+
+    @Override
+    public HugeGraphFeatures graph() {
+<span class="nc" id="L49">        return this.graphFeatures;</span>
+    }
+
+    @Override
+    public HugeVertexFeatures vertex() {
+<span class="nc" id="L54">        return this.vertexFeatures;</span>
+    }
+
+    @Override
+    public HugeEdgeFeatures edge() {
+<span class="nc" id="L59">        return this.edgeFeatures;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L64">        return StringFactory.featureString(this);</span>
+    }
+
+<span class="nc" id="L67">    public class HugeGraphFeatures implements GraphFeatures {</span>
+
+<span class="nc" id="L69">        private final VariableFeatures variableFeatures =</span>
+                                       new HugeVariableFeatures();
+
+        @Override
+        public boolean supportsConcurrentAccess() {
+<span class="nc" id="L74">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsComputer() {
+<span class="nc" id="L79">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsPersistence() {
+<span class="nc" id="L84">            return HugeFeatures.this.supportsPersistence;</span>
+        }
+
+        @Override
+        public VariableFeatures variables() {
+<span class="nc" id="L89">            return this.variableFeatures;</span>
+        }
+
+        @Override
+        public boolean supportsTransactions() {
+<span class="nc" id="L94">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsThreadedTransactions() {
+<span class="nc" id="L99">            return false;</span>
+        }
+    }
+
+<span class="nc" id="L103">    public class HugeElementFeatures implements ElementFeatures {</span>
+
+        @Override
+        public boolean supportsAddProperty() {
+<span class="nc" id="L107">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsRemoveProperty() {
+<span class="nc" id="L112">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsStringIds() {
+<span class="nc" id="L117">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsNumericIds() {
+<span class="nc" id="L122">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsUuidIds() {
+<span class="nc" id="L127">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsAnyIds() {
+<span class="nc" id="L132">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsCustomIds() {
+<span class="nc" id="L137">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsUserSuppliedIds() {
+<span class="nc" id="L142">            return false;</span>
+        }
+
+        @Override
+        public boolean willAllowId(Object id) {
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            if (!this.supportsUserSuppliedIds()) {</span>
+<span class="nc" id="L148">                return false;</span>
+            } else {
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                return this.supportsAnyIds() ||</span>
+<span class="nc bnc" id="L151" title="All 4 branches missed.">                       this.supportsCustomIds() &amp;&amp; id instanceof Id ||</span>
+<span class="nc bnc" id="L152" title="All 4 branches missed.">                       this.supportsStringIds() &amp;&amp; id instanceof String ||</span>
+<span class="nc bnc" id="L153" title="All 4 branches missed.">                       this.supportsNumericIds() &amp;&amp; id instanceof Number ||</span>
+<span class="nc bnc" id="L154" title="All 4 branches missed.">                       this.supportsUuidIds() &amp;&amp; id instanceof UUID;</span>
+            }
+        }
+    }
+
+<span class="nc" id="L159">    public class HugeVariableFeatures extends HugeDataTypeFeatures</span>
+                                      implements VariableFeatures {
+
+    }
+
+<span class="nc" id="L164">    public class HugeVertexPropertyFeatures extends HugeDataTypeFeatures</span>
+                                            implements VertexPropertyFeatures {
+
+        @Override
+        public boolean supportsRemoveProperty() {
+<span class="nc" id="L169">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsMapValues() {
+<span class="nc" id="L174">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsMixedListValues() {
+<span class="nc" id="L179">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsSerializableValues() {
+<span class="nc" id="L184">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsUniformListValues() {
+<span class="nc" id="L189">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsUserSuppliedIds() {
+<span class="nc" id="L194">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsAnyIds() {
+<span class="nc" id="L199">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsCustomIds() {
+<span class="nc" id="L204">            return false;</span>
+        }
+    }
+
+<span class="nc" id="L208">    public class HugeEdgePropertyFeatures extends HugeDataTypeFeatures</span>
+                                          implements EdgePropertyFeatures {
+
+        @Override
+        public boolean supportsMapValues() {
+<span class="nc" id="L213">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsMixedListValues() {
+<span class="nc" id="L218">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsSerializableValues() {
+<span class="nc" id="L223">            return false;</span>
+        }
+
+        @Override
+        public boolean supportsUniformListValues() {
+<span class="nc" id="L228">            return true;</span>
+        }
+
+    }
+
+<span class="nc" id="L233">    public class HugeVertexFeatures extends HugeElementFeatures</span>
+                                    implements VertexFeatures {
+
+<span class="nc" id="L236">        private final VertexPropertyFeatures vertexPropertyFeatures =</span>
+                                             new HugeVertexPropertyFeatures();
+
+        @Override
+        public boolean supportsUserSuppliedIds() {
+<span class="nc" id="L241">            return true;</span>
+        }
+
+        @Override
+        public VertexPropertyFeatures properties() {
+<span class="nc" id="L246">            return this.vertexPropertyFeatures;</span>
+        }
+
+        @Override
+        public boolean supportsMultiProperties() {
+            // Regard as a set (actually can also be a list)
+<span class="nc" id="L252">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsDuplicateMultiProperties() {
+            // Regard as a list
+<span class="nc" id="L258">            return true;</span>
+        }
+
+        @Override
+        public boolean supportsMetaProperties() {
+            // Nested property
+<span class="nc" id="L264">            return false;</span>
+        }
+
+        @Override
+        public VertexProperty.Cardinality getCardinality(final String key) {
+<span class="nc" id="L269">            return VertexProperty.Cardinality.single;</span>
+        }
+
+        @Override
+        public boolean supportsNullPropertyValues() {
+<span class="nc" id="L274">            return false;</span>
+        }
+
+        public boolean supportsDefaultLabel() {
+<span class="nc" id="L278">            return true;</span>
+        }
+
+        public String defaultLabel() {
+<span class="nc" id="L282">            return HugeFeatures.this.graph</span>
+<span class="nc" id="L283">                               .option(CoreOptions.VERTEX_DEFAULT_LABEL);</span>
+        }
+    }
+
+<span class="nc" id="L287">    public class HugeEdgeFeatures extends HugeElementFeatures</span>
+                                  implements EdgeFeatures {
+
+<span class="nc" id="L290">        private final EdgePropertyFeatures edgePropertyFeatures =</span>
+                                           new HugeEdgePropertyFeatures();
+
+        @Override
+        public EdgePropertyFeatures properties() {
+<span class="nc" id="L295">            return this.edgePropertyFeatures;</span>
+        }
+
+        @Override
+        public boolean supportsNullPropertyValues() {
+<span class="nc" id="L300">            return false;</span>
+        }
+    }
+
+<span class="nc" id="L304">    public class HugeDataTypeFeatures implements DataTypeFeatures {</span>
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_STRING_VALUES)
+        public boolean supportsStringValues() {
+<span class="nc" id="L309">            return true;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_BOOLEAN_VALUES)
+        public boolean supportsBooleanValues() {
+<span class="nc" id="L315">            return true;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_BYTE_VALUES)
+        public boolean supportsByteValues() {
+<span class="nc" id="L321">            return true;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_FLOAT_VALUES)
+        public boolean supportsFloatValues() {
+<span class="nc" id="L327">            return true;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_DOUBLE_VALUES)
+        public boolean supportsDoubleValues() {
+<span class="nc" id="L333">            return true;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_INTEGER_VALUES)
+        public boolean supportsIntegerValues() {
+<span class="nc" id="L339">            return true;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_LONG_VALUES)
+        public boolean supportsLongValues() {
+<span class="nc" id="L345">            return true;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_UNIFORM_LIST_VALUES)
+        public boolean supportsUniformListValues() {
+            /*
+             * NOTE: must use cardinality list if use LIST property value,
+             * can't support a LIST property value with cardinality single
+             */
+<span class="nc" id="L355">            return true;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_MIXED_LIST_VALUES)
+        public boolean supportsMixedListValues() {
+<span class="nc" id="L361">            return false;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_MAP_VALUES)
+        public boolean supportsMapValues() {
+<span class="nc" id="L367">            return false;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_SERIALIZABLE_VALUES)
+        public boolean supportsSerializableValues() {
+<span class="nc" id="L373">            return false;</span>
+        }
+
+        /**
+         * All these supportsXxArrayValues() must be used with cardinality list
+         * we can't support array values with cardinality single like tinkerpop
+         */
+        @Override
+        @FeatureDescriptor(name = FEATURE_BYTE_ARRAY_VALUES)
+        public boolean supportsByteArrayValues() {
+            // Regard as blob
+<span class="nc" id="L384">            return true;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_BOOLEAN_ARRAY_VALUES)
+        public boolean supportsBooleanArrayValues() {
+<span class="nc" id="L390">            return false;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_FLOAT_ARRAY_VALUES)
+        public boolean supportsFloatArrayValues() {
+<span class="nc" id="L396">            return false;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_DOUBLE_ARRAY_VALUES)
+        public boolean supportsDoubleArrayValues() {
+<span class="nc" id="L402">            return false;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_INTEGER_ARRAY_VALUES)
+        public boolean supportsIntegerArrayValues() {
+<span class="nc" id="L408">            return false;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_LONG_ARRAY_VALUES)
+        public boolean supportsLongArrayValues() {
+<span class="nc" id="L414">            return false;</span>
+        }
+
+        @Override
+        @FeatureDescriptor(name = FEATURE_STRING_ARRAY_VALUES)
+        public boolean supportsStringArrayValues() {
+<span class="nc" id="L420">            return false;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

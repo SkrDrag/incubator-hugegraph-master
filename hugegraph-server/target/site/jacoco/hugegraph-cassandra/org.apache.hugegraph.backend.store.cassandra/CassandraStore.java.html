@@ -1,0 +1,817 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CassandraStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-cassandra</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.cassandra</a> &gt; <span class="el_source">CassandraStore.java</span></div><h1>CassandraStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.cassandra;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.serializer.MergeIterator;
+import org.apache.hugegraph.backend.store.AbstractBackendStore;
+import org.apache.hugegraph.backend.store.BackendAction;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.ConnectionException;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.KeyspaceMetadata;
+import com.datastax.driver.core.Session;
+import com.datastax.driver.core.Statement;
+import com.datastax.driver.core.exceptions.DriverException;
+import com.datastax.driver.core.exceptions.InvalidQueryException;
+import com.datastax.driver.core.schemabuilder.SchemaBuilder;
+
+public abstract class CassandraStore extends AbstractBackendStore&lt;CassandraSessionPool.Session&gt; {
+
+<span class="nc" id="L59">    private static final Logger LOG = Log.logger(CassandraStore.class);</span>
+
+<span class="nc" id="L61">    private static final BackendFeatures FEATURES = new CassandraFeatures();</span>
+
+    private final String store;
+    private final String keyspace;
+
+    private final BackendStoreProvider provider;
+    // TODO: move to parent class
+    private final Map&lt;String, CassandraTable&gt; tables;
+
+    private CassandraSessionPool sessions;
+    private HugeConfig conf;
+    private boolean isGraphStore;
+
+    public CassandraStore(final BackendStoreProvider provider,
+<span class="nc" id="L75">                          final String keyspace, final String store) {</span>
+<span class="nc" id="L76">        E.checkNotNull(keyspace, &quot;keyspace&quot;);</span>
+<span class="nc" id="L77">        E.checkNotNull(store, &quot;store&quot;);</span>
+
+<span class="nc" id="L79">        this.provider = provider;</span>
+
+<span class="nc" id="L81">        this.keyspace = keyspace;</span>
+<span class="nc" id="L82">        this.store = store;</span>
+<span class="nc" id="L83">        this.tables = new ConcurrentHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L85">        this.sessions = null;</span>
+<span class="nc" id="L86">        this.conf = null;</span>
+
+<span class="nc" id="L88">        this.registerMetaHandlers();</span>
+<span class="nc" id="L89">        LOG.debug(&quot;Store loaded: {}&quot;, store);</span>
+<span class="nc" id="L90">    }</span>
+
+    private void registerMetaHandlers() {
+<span class="nc" id="L93">        this.registerMetaHandler(&quot;metrics&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc" id="L94">            CassandraMetrics metrics = this.createMetrics(this.conf,</span>
+                                                          this.sessions,
+                                                          this.keyspace);
+<span class="nc" id="L97">            return metrics.metrics();</span>
+        });
+
+<span class="nc" id="L100">        this.registerMetaHandler(&quot;compact&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc" id="L101">            CassandraMetrics metrics = this.createMetrics(this.conf,</span>
+                                                          this.sessions,
+                                                          this.keyspace);
+<span class="nc" id="L104">            return metrics.compact();</span>
+        });
+<span class="nc" id="L106">    }</span>
+
+    protected CassandraMetrics createMetrics(HugeConfig conf,
+                                             CassandraSessionPool sessions,
+                                             String keyspace) {
+<span class="nc" id="L111">        return new CassandraMetrics(conf, sessions, keyspace);</span>
+    }
+
+    protected void registerTableManager(HugeType type, CassandraTable table) {
+<span class="nc" id="L115">        this.registerTableManager(type.string(), table);</span>
+<span class="nc" id="L116">    }</span>
+
+    protected void registerTableManager(String name, CassandraTable table) {
+<span class="nc" id="L119">        this.tables.put(name, table);</span>
+<span class="nc" id="L120">    }</span>
+
+    protected void unregisterTableManager(String name) {
+<span class="nc" id="L123">        this.tables.remove(name);</span>
+<span class="nc" id="L124">    }</span>
+
+    @Override
+    public String store() {
+<span class="nc" id="L128">        return this.store;</span>
+    }
+
+    @Override
+    public String database() {
+<span class="nc" id="L133">        return this.keyspace;</span>
+    }
+
+    @Override
+    public BackendStoreProvider provider() {
+<span class="nc" id="L138">        return this.provider;</span>
+    }
+
+    @Override
+    public synchronized void open(HugeConfig config) {
+<span class="nc" id="L143">        LOG.debug(&quot;Store open: {}&quot;, this.store);</span>
+<span class="nc" id="L144">        E.checkNotNull(config, &quot;config&quot;);</span>
+
+<span class="nc bnc" id="L146" title="All 2 branches missed.">        if (this.sessions == null) {</span>
+<span class="nc" id="L147">            this.sessions = new CassandraSessionPool(config, this.keyspace,</span>
+                                                     this.store);
+        }
+
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        assert this.sessions != null;</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (!this.sessions.closed()) {</span>
+            // TODO: maybe we should throw an exception here instead of ignore
+<span class="nc" id="L154">            LOG.debug(&quot;Store {} has been opened before&quot;, this.store);</span>
+<span class="nc" id="L155">            this.sessions.useSession();</span>
+<span class="nc" id="L156">            return;</span>
+        }
+<span class="nc" id="L158">        this.conf = config;</span>
+<span class="nc" id="L159">        String graphStore = this.conf.get(CoreOptions.STORE_GRAPH);</span>
+<span class="nc" id="L160">        this.isGraphStore = this.store.equals(graphStore);</span>
+
+        // Init cluster
+<span class="nc" id="L163">        this.sessions.open();</span>
+
+        // Init a session for current thread
+        try {
+<span class="nc" id="L167">            LOG.debug(&quot;Store connect with keyspace: {}&quot;, this.keyspace);</span>
+            try {
+<span class="nc" id="L169">                this.sessions.session().open();</span>
+<span class="nc" id="L170">            } catch (InvalidQueryException e) {</span>
+                // TODO: the error message may be changed in different versions
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                if (!e.getMessage().contains(String.format(</span>
+                    &quot;Keyspace '%s' does not exist&quot;, this.keyspace))) {
+<span class="nc" id="L174">                    throw e;</span>
+                }
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                if (this.isSchemaStore()) {</span>
+<span class="nc" id="L177">                    LOG.info(&quot;Failed to connect keyspace: {}, &quot; +</span>
+                             &quot;try to init keyspace later&quot;, this.keyspace);
+                }
+<span class="nc" id="L180">            }</span>
+<span class="nc" id="L181">        } catch (Throwable e) {</span>
+            try {
+<span class="nc" id="L183">                this.sessions.close();</span>
+<span class="nc" id="L184">            } catch (Throwable e2) {</span>
+<span class="nc" id="L185">                LOG.warn(&quot;Failed to close cluster after an error&quot;, e2);</span>
+<span class="nc" id="L186">            }</span>
+<span class="nc" id="L187">            throw new ConnectionException(&quot;Failed to connect to Cassandra&quot;, e);</span>
+<span class="nc" id="L188">        }</span>
+
+<span class="nc" id="L190">        LOG.debug(&quot;Store opened: {}&quot;, this.store);</span>
+<span class="nc" id="L191">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L195">        LOG.debug(&quot;Store close: {}&quot;, this.store);</span>
+<span class="nc" id="L196">        this.sessions.close();</span>
+<span class="nc" id="L197">    }</span>
+
+    @Override
+    public boolean opened() {
+<span class="nc" id="L201">        this.checkClusterConnected();</span>
+<span class="nc" id="L202">        return this.sessions.session().opened();</span>
+    }
+
+    @Override
+    public void mutate(BackendMutation mutation) {
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L208">            LOG.debug(&quot;Store {} mutation: {}&quot;, this.store, mutation);</span>
+        }
+
+<span class="nc" id="L211">        this.checkOpened();</span>
+<span class="nc" id="L212">        CassandraSessionPool.Session session = this.sessions.session();</span>
+
+<span class="nc bnc" id="L214" title="All 2 branches missed.">        for (Iterator&lt;BackendAction&gt; it = mutation.mutation(); it.hasNext();) {</span>
+<span class="nc" id="L215">            this.mutate(session, it.next());</span>
+        }
+<span class="nc" id="L217">    }</span>
+
+    private void mutate(CassandraSessionPool.Session session,
+                        BackendAction item) {
+<span class="nc" id="L221">        CassandraBackendEntry entry = castBackendEntry(item.entry());</span>
+
+        // Check if the entry has no change
+<span class="nc bnc" id="L224" title="All 4 branches missed.">        if (!entry.selfChanged() &amp;&amp; entry.subRows().isEmpty()) {</span>
+<span class="nc" id="L225">            LOG.warn(&quot;The entry will be ignored due to no change: {}&quot;, entry);</span>
+        }
+
+        CassandraTable table;
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (!entry.olap()) {</span>
+            // Oltp table
+<span class="nc" id="L231">            table = this.table(entry.type());</span>
+        } else {
+<span class="nc bnc" id="L233" title="All 2 branches missed.">            if (entry.type().isIndex()) {</span>
+                // Olap index
+<span class="nc" id="L235">                table = this.table(this.olapTableName(entry.type()));</span>
+            } else {
+                // Olap vertex
+<span class="nc" id="L238">                table = this.table(this.olapTableName(entry.subId()));</span>
+            }
+        }
+
+<span class="nc bnc" id="L242" title="All 7 branches missed.">        switch (item.action()) {</span>
+            case INSERT:
+                // Insert entry
+<span class="nc bnc" id="L245" title="All 2 branches missed.">                if (entry.selfChanged()) {</span>
+<span class="nc" id="L246">                    table.insert(session, entry.row());</span>
+                }
+                // Insert sub rows (edges)
+<span class="nc bnc" id="L249" title="All 2 branches missed.">                for (CassandraBackendEntry.Row row : entry.subRows()) {</span>
+<span class="nc" id="L250">                    this.table(row.type()).insert(session, row);</span>
+<span class="nc" id="L251">                }</span>
+<span class="nc" id="L252">                break;</span>
+            case DELETE:
+                // Delete entry
+<span class="nc bnc" id="L255" title="All 2 branches missed.">                if (entry.selfChanged()) {</span>
+<span class="nc" id="L256">                    table.delete(session, entry.row());</span>
+                }
+                // Delete sub rows (edges)
+<span class="nc bnc" id="L259" title="All 2 branches missed.">                for (CassandraBackendEntry.Row row : entry.subRows()) {</span>
+<span class="nc" id="L260">                    this.table(row.type()).delete(session, row);</span>
+<span class="nc" id="L261">                }</span>
+<span class="nc" id="L262">                break;</span>
+            case APPEND:
+                // Append entry
+<span class="nc bnc" id="L265" title="All 2 branches missed.">                if (entry.selfChanged()) {</span>
+<span class="nc" id="L266">                    table.append(session, entry.row());</span>
+                }
+                // Append sub rows (edges)
+<span class="nc bnc" id="L269" title="All 2 branches missed.">                for (CassandraBackendEntry.Row row : entry.subRows()) {</span>
+<span class="nc" id="L270">                    this.table(row.type()).append(session, row);</span>
+<span class="nc" id="L271">                }</span>
+<span class="nc" id="L272">                break;</span>
+            case ELIMINATE:
+                // Eliminate entry
+<span class="nc bnc" id="L275" title="All 2 branches missed.">                if (entry.selfChanged()) {</span>
+<span class="nc" id="L276">                    table.eliminate(session, entry.row());</span>
+                }
+                // Eliminate sub rows (edges)
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                for (CassandraBackendEntry.Row row : entry.subRows()) {</span>
+<span class="nc" id="L280">                    this.table(row.type()).eliminate(session, row);</span>
+<span class="nc" id="L281">                }</span>
+<span class="nc" id="L282">                break;</span>
+            case UPDATE_IF_PRESENT:
+<span class="nc bnc" id="L284" title="All 2 branches missed.">                if (entry.selfChanged()) {</span>
+                    // TODO: forward to master-writer node
+<span class="nc" id="L286">                    table.updateIfPresent(session, entry.row());</span>
+                }
+<span class="nc bnc" id="L288" title="All 2 branches missed.">                assert entry.subRows().isEmpty() : entry.subRows();</span>
+                break;
+            case UPDATE_IF_ABSENT:
+<span class="nc bnc" id="L291" title="All 2 branches missed.">                if (entry.selfChanged()) {</span>
+                    // TODO: forward to master-writer node
+<span class="nc" id="L293">                    table.updateIfAbsent(session, entry.row());</span>
+                }
+<span class="nc bnc" id="L295" title="All 2 branches missed.">                assert entry.subRows().isEmpty() : entry.subRows();</span>
+                break;
+            default:
+<span class="nc" id="L298">                throw new AssertionError(String.format(</span>
+<span class="nc" id="L299">                          &quot;Unsupported mutate action: %s&quot;, item.action()));</span>
+        }
+<span class="nc" id="L301">    }</span>
+
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(Query query) {
+<span class="nc" id="L305">        this.checkOpened();</span>
+<span class="nc" id="L306">        HugeType type = CassandraTable.tableType(query);</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">        String tableName = query.olap() ? this.olapTableName(type) :</span>
+<span class="nc" id="L308">                                          type.string();</span>
+<span class="nc" id="L309">        CassandraTable table = this.table(tableName);</span>
+<span class="nc" id="L310">        Iterator&lt;BackendEntry&gt; entries = table.query(this.session(null), query);</span>
+        // Merge olap results as needed
+<span class="nc" id="L312">        Set&lt;Id&gt; olapPks = query.olapPks();</span>
+<span class="nc bnc" id="L313" title="All 4 branches missed.">        if (this.isGraphStore &amp;&amp; !olapPks.isEmpty()) {</span>
+<span class="nc" id="L314">            List&lt;Iterator&lt;BackendEntry&gt;&gt; iterators = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L315" title="All 2 branches missed.">            for (Id pk : olapPks) {</span>
+<span class="nc" id="L316">                Query q = query.copy();</span>
+<span class="nc" id="L317">                table = this.table(this.olapTableName(pk));</span>
+<span class="nc" id="L318">                iterators.add(table.query(this.session(null), q));</span>
+<span class="nc" id="L319">            }</span>
+<span class="nc" id="L320">            entries = new MergeIterator&lt;&gt;(entries, iterators,</span>
+                                          BackendEntry::mergeable);
+        }
+<span class="nc" id="L323">        return entries;</span>
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+<span class="nc" id="L328">        this.checkOpened();</span>
+
+<span class="nc" id="L330">        CassandraTable table = this.table(CassandraTable.tableType(query));</span>
+<span class="nc" id="L331">        return table.queryNumber(this.sessions.session(), query);</span>
+    }
+
+    @Override
+    public BackendFeatures features() {
+<span class="nc" id="L336">        return FEATURES;</span>
+    }
+
+    @Override
+    public void init() {
+<span class="nc" id="L341">        this.checkClusterConnected();</span>
+
+        // Create keyspace if needed
+<span class="nc bnc" id="L344" title="All 2 branches missed.">        if (!this.existsKeyspace()) {</span>
+<span class="nc" id="L345">            this.initKeyspace();</span>
+        }
+
+<span class="nc bnc" id="L348" title="All 2 branches missed.">        if (this.sessions.session().opened()) {</span>
+            // Session has ever been opened.
+<span class="nc" id="L350">            LOG.warn(&quot;Session has ever been opened(exist keyspace '{}' before)&quot;,</span>
+                     this.keyspace);
+        } else {
+            // Open session explicitly to get the exception when it fails
+<span class="nc" id="L354">            this.sessions.session().open();</span>
+        }
+
+        // Create tables
+<span class="nc" id="L358">        this.checkOpened();</span>
+<span class="nc" id="L359">        this.initTables();</span>
+
+<span class="nc" id="L361">        LOG.debug(&quot;Store initialized: {}&quot;, this.store);</span>
+<span class="nc" id="L362">    }</span>
+
+    @Override
+    public void clear(boolean clearSpace) {
+<span class="nc" id="L366">        this.checkClusterConnected();</span>
+
+<span class="nc bnc" id="L368" title="All 2 branches missed.">        if (this.existsKeyspace()) {</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">            if (!clearSpace) {</span>
+<span class="nc" id="L370">                this.checkOpened();</span>
+<span class="nc" id="L371">                this.clearTables();</span>
+            } else {
+<span class="nc" id="L373">                this.clearKeyspace();</span>
+            }
+        }
+
+<span class="nc" id="L377">        LOG.debug(&quot;Store cleared: {}&quot;, this.store);</span>
+<span class="nc" id="L378">    }</span>
+
+    @Override
+    public boolean initialized() {
+<span class="nc" id="L382">        this.checkClusterConnected();</span>
+
+<span class="nc bnc" id="L384" title="All 2 branches missed.">        if (!this.existsKeyspace()) {</span>
+<span class="nc" id="L385">            return false;</span>
+        }
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        for (CassandraTable table : this.tables()) {</span>
+<span class="nc bnc" id="L388" title="All 2 branches missed.">            if (!this.existsTable(table.table())) {</span>
+<span class="nc" id="L389">                return false;</span>
+            }
+<span class="nc" id="L391">        }</span>
+<span class="nc" id="L392">        return true;</span>
+    }
+
+    @Override
+    public void truncate() {
+<span class="nc" id="L397">        this.checkOpened();</span>
+
+<span class="nc" id="L399">        this.truncateTables();</span>
+<span class="nc" id="L400">        LOG.debug(&quot;Store truncated: {}&quot;, this.store);</span>
+<span class="nc" id="L401">    }</span>
+
+    @Override
+    public void beginTx() {
+<span class="nc" id="L405">        this.checkOpened();</span>
+
+<span class="nc" id="L407">        CassandraSessionPool.Session session = this.sessions.session();</span>
+<span class="nc bnc" id="L408" title="All 2 branches missed.">        if (session.txState() != TxState.CLEAN) {</span>
+<span class="nc" id="L409">            LOG.warn(&quot;Store {} expect state CLEAN than {} when begin()&quot;,</span>
+<span class="nc" id="L410">                     this.store, session.txState());</span>
+        }
+<span class="nc" id="L412">        session.txState(TxState.BEGIN);</span>
+<span class="nc" id="L413">    }</span>
+
+    @Override
+    public void commitTx() {
+<span class="nc" id="L417">        this.checkOpened();</span>
+
+<span class="nc" id="L419">        CassandraSessionPool.Session session = this.sessions.session();</span>
+<span class="nc bnc" id="L420" title="All 2 branches missed.">        if (session.txState() != TxState.BEGIN) {</span>
+<span class="nc" id="L421">            LOG.warn(&quot;Store {} expect state BEGIN than {} when commit()&quot;,</span>
+<span class="nc" id="L422">                     this.store, session.txState());</span>
+        }
+
+<span class="nc bnc" id="L425" title="All 2 branches missed.">        if (!session.hasChanges()) {</span>
+<span class="nc" id="L426">            session.txState(TxState.CLEAN);</span>
+<span class="nc" id="L427">            LOG.debug(&quot;Store {} has nothing to commit&quot;, this.store);</span>
+<span class="nc" id="L428">            return;</span>
+        }
+
+<span class="nc bnc" id="L431" title="All 2 branches missed.">        if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L432">            LOG.debug(&quot;Store {} commit {} statements: {}&quot;, this.store,</span>
+<span class="nc" id="L433">                      session.statements().size(), session.statements());</span>
+        }
+
+        // TODO how to implement tx perfectly?
+
+        // Do update
+<span class="nc" id="L439">        session.txState(TxState.COMMITTING);</span>
+        try {
+<span class="nc" id="L441">            session.commit();</span>
+<span class="nc" id="L442">            session.txState(TxState.CLEAN);</span>
+<span class="nc" id="L443">        } catch (DriverException e) {</span>
+<span class="nc" id="L444">            session.txState(TxState.COMMITT_FAIL);</span>
+<span class="nc" id="L445">            LOG.error(&quot;Failed to commit statements due to:&quot;, e);</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">            assert session.statements().size() &gt; 0;</span>
+<span class="nc" id="L447">            throw new BackendException(</span>
+                      &quot;Failed to commit %s statements: '%s'...&quot;, e,
+<span class="nc" id="L449">                      session.statements().size(),</span>
+<span class="nc" id="L450">                      session.statements().iterator().next());</span>
+<span class="nc" id="L451">        }</span>
+<span class="nc" id="L452">    }</span>
+
+    @Override
+    public void rollbackTx() {
+<span class="nc" id="L456">        this.checkOpened();</span>
+
+<span class="nc" id="L458">        CassandraSessionPool.Session session = this.sessions.session();</span>
+
+        // TODO how to implement perfectly?
+
+<span class="nc bnc" id="L462" title="All 2 branches missed.">        if (session.txState() != TxState.COMMITT_FAIL &amp;&amp;</span>
+<span class="nc bnc" id="L463" title="All 2 branches missed.">            session.txState() != TxState.CLEAN) {</span>
+<span class="nc" id="L464">            LOG.warn(&quot;Store {} expect state COMMIT_FAIL/COMMITTING/CLEAN &quot; +</span>
+<span class="nc" id="L465">                     &quot;than {} when rollback()&quot;, this.store, session.txState());</span>
+        }
+
+<span class="nc" id="L468">        session.txState(TxState.ROLLBACKING);</span>
+        try {
+<span class="nc" id="L470">            session.rollback();</span>
+        } finally {
+            // Assume batch commit would auto rollback
+<span class="nc" id="L473">            session.txState(TxState.CLEAN);</span>
+        }
+<span class="nc" id="L475">    }</span>
+
+    protected Cluster cluster() {
+<span class="nc" id="L478">        return this.sessions.cluster();</span>
+    }
+
+    protected boolean existsKeyspace() {
+<span class="nc bnc" id="L482" title="All 2 branches missed.">        return this.cluster().getMetadata().getKeyspace(this.keyspace) != null;</span>
+    }
+
+    protected boolean existsTable(String table) {
+<span class="nc" id="L486">        KeyspaceMetadata keyspace = this.cluster().getMetadata().getKeyspace(this.keyspace);</span>
+<span class="nc bnc" id="L487" title="All 4 branches missed.">        return keyspace != null &amp;&amp; keyspace.getTable(table) != null;</span>
+    }
+
+    protected void initKeyspace() {
+<span class="nc" id="L491">        Statement stmt = SchemaBuilder.createKeyspace(this.keyspace)</span>
+<span class="nc" id="L492">                                      .ifNotExists().with()</span>
+<span class="nc" id="L493">                                      .replication(parseReplica(this.conf));</span>
+        // Create keyspace with non-keyspace-session
+<span class="nc" id="L495">        LOG.debug(&quot;Create keyspace: {}&quot;, stmt);</span>
+<span class="nc" id="L496">        Session session = this.cluster().connect();</span>
+        try {
+<span class="nc" id="L498">            session.execute(stmt);</span>
+        } finally {
+<span class="nc bnc" id="L500" title="All 2 branches missed.">            if (!session.isClosed()) {</span>
+<span class="nc" id="L501">                session.close();</span>
+            }
+        }
+<span class="nc" id="L504">    }</span>
+
+    private static Map&lt;String, Object&gt; parseReplica(HugeConfig conf) {
+<span class="nc" id="L507">        Map&lt;String, Object&gt; replication = new HashMap&lt;&gt;();</span>
+        // Replication strategy: SimpleStrategy or NetworkTopologyStrategy
+<span class="nc" id="L509">        String strategy = conf.get(CassandraOptions.CASSANDRA_STRATEGY);</span>
+<span class="nc" id="L510">        replication.put(&quot;class&quot;, strategy);</span>
+
+<span class="nc bnc" id="L512" title="All 3 branches missed.">        switch (strategy) {</span>
+            case &quot;SimpleStrategy&quot;:
+<span class="nc" id="L514">                List&lt;String&gt; replicas =</span>
+<span class="nc" id="L515">                             conf.get(CassandraOptions.CASSANDRA_REPLICATION);</span>
+<span class="nc bnc" id="L516" title="All 2 branches missed.">                E.checkArgument(replicas.size() == 1,</span>
+                                &quot;Individual factor value should be provided &quot; +
+                                &quot;with SimpleStrategy for Cassandra&quot;);
+<span class="nc" id="L519">                int factor = convertFactor(replicas.get(0));</span>
+<span class="nc" id="L520">                replication.put(&quot;replication_factor&quot;, factor);</span>
+<span class="nc" id="L521">                break;</span>
+            case &quot;NetworkTopologyStrategy&quot;:
+                // The replicas format is like 'dc1:2,dc2:1'
+<span class="nc" id="L524">                Map&lt;String, String&gt; replicaMap =</span>
+<span class="nc" id="L525">                            conf.getMap(CassandraOptions.CASSANDRA_REPLICATION);</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">                for (Map.Entry&lt;String, String&gt; e : replicaMap.entrySet()) {</span>
+<span class="nc bnc" id="L527" title="All 2 branches missed.">                    E.checkArgument(!e.getKey().isEmpty(),</span>
+                                    &quot;The datacenter can't be empty&quot;);
+<span class="nc" id="L529">                    replication.put(e.getKey(), convertFactor(e.getValue()));</span>
+<span class="nc" id="L530">                }</span>
+<span class="nc" id="L531">                break;</span>
+            default:
+<span class="nc" id="L533">                throw new AssertionError(String.format(</span>
+                          &quot;Illegal replication strategy '%s', valid strategy &quot; +
+                          &quot;is 'SimpleStrategy' or 'NetworkTopologyStrategy'&quot;,
+                          strategy));
+        }
+<span class="nc" id="L538">        return replication;</span>
+    }
+
+    private static int convertFactor(String factor) {
+        try {
+<span class="nc" id="L543">            return Integer.valueOf(factor);</span>
+<span class="nc" id="L544">        } catch (NumberFormatException e) {</span>
+<span class="nc" id="L545">            throw new BackendException(</span>
+                      &quot;Expect int factor value for SimpleStrategy, &quot; +
+                      &quot;but got '%s'&quot;, factor);
+        }
+    }
+
+    protected void clearKeyspace() {
+        // Drop keyspace with non-keyspace-session
+<span class="nc" id="L553">        Statement stmt = SchemaBuilder.dropKeyspace(this.keyspace).ifExists();</span>
+<span class="nc" id="L554">        LOG.debug(&quot;Drop keyspace: {}&quot;, stmt);</span>
+
+<span class="nc" id="L556">        Session session = this.cluster().connect();</span>
+        try {
+<span class="nc" id="L558">            session.execute(stmt);</span>
+        } finally {
+<span class="nc bnc" id="L560" title="All 2 branches missed.">            if (!session.isClosed()) {</span>
+<span class="nc" id="L561">                session.close();</span>
+            }
+        }
+<span class="nc" id="L564">    }</span>
+
+    protected void initTables() {
+<span class="nc" id="L567">        CassandraSessionPool.Session session = this.sessions.session();</span>
+<span class="nc bnc" id="L568" title="All 2 branches missed.">        for (CassandraTable table : this.tables()) {</span>
+<span class="nc" id="L569">            table.init(session);</span>
+<span class="nc" id="L570">        }</span>
+<span class="nc" id="L571">    }</span>
+
+    protected void clearTables() {
+<span class="nc" id="L574">        CassandraSessionPool.Session session = this.sessions.session();</span>
+<span class="nc bnc" id="L575" title="All 2 branches missed.">        for (CassandraTable table : this.tables()) {</span>
+<span class="nc" id="L576">            table.clear(session);</span>
+<span class="nc" id="L577">        }</span>
+<span class="nc" id="L578">    }</span>
+
+    protected void truncateTables() {
+<span class="nc" id="L581">        CassandraSessionPool.Session session = this.sessions.session();</span>
+<span class="nc bnc" id="L582" title="All 2 branches missed.">        for (CassandraTable table : this.tables()) {</span>
+<span class="nc bnc" id="L583" title="All 2 branches missed.">            if (table.isOlap()) {</span>
+<span class="nc" id="L584">                table.dropTable(session);</span>
+            } else {
+<span class="nc" id="L586">                table.truncate(session);</span>
+            }
+<span class="nc" id="L588">        }</span>
+<span class="nc" id="L589">    }</span>
+
+    protected Collection&lt;CassandraTable&gt; tables() {
+<span class="nc" id="L592">        return this.tables.values();</span>
+    }
+
+    @Override
+    protected final CassandraTable table(HugeType type) {
+<span class="nc" id="L597">        return this.table(type.string());</span>
+    }
+
+    protected final CassandraTable table(String name) {
+<span class="nc bnc" id="L601" title="All 2 branches missed.">        assert name != null;</span>
+<span class="nc" id="L602">        CassandraTable table = this.tables.get(name);</span>
+<span class="nc bnc" id="L603" title="All 2 branches missed.">        if (table == null) {</span>
+<span class="nc" id="L604">            throw new BackendException(&quot;Unsupported table: %s&quot;, name);</span>
+        }
+<span class="nc" id="L606">        return table;</span>
+    }
+
+    @Override
+    protected CassandraSessionPool.Session session(HugeType type) {
+<span class="nc" id="L611">        this.checkOpened();</span>
+<span class="nc" id="L612">        return this.sessions.session();</span>
+    }
+
+    protected final void checkClusterConnected() {
+<span class="nc bnc" id="L616" title="All 4 branches missed.">        E.checkState(this.sessions != null &amp;&amp; this.sessions.clusterConnected(),</span>
+                     &quot;Cassandra cluster has not been connected&quot;);
+<span class="nc" id="L618">    }</span>
+
+    protected static final CassandraBackendEntry castBackendEntry(BackendEntry entry) {
+<span class="nc bnc" id="L621" title="All 2 branches missed.">        assert entry instanceof CassandraBackendEntry : entry.getClass();</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">        if (!(entry instanceof CassandraBackendEntry)) {</span>
+<span class="nc" id="L623">            throw new BackendException(&quot;Cassandra store only supports CassandraBackendEntry&quot;);</span>
+        }
+<span class="nc" id="L625">        return (CassandraBackendEntry) entry;</span>
+    }
+
+    /***************************** Store defines *****************************/
+
+    public static class CassandraSchemaStore extends CassandraStore {
+
+        private final CassandraTables.Counters counters;
+
+        public CassandraSchemaStore(BackendStoreProvider provider,
+                                    String keyspace, String store) {
+<span class="nc" id="L636">            super(provider, keyspace, store);</span>
+
+<span class="nc" id="L638">            this.counters = new CassandraTables.Counters();</span>
+
+<span class="nc" id="L640">            registerTableManager(HugeType.VERTEX_LABEL,</span>
+                                 new CassandraTables.VertexLabel());
+<span class="nc" id="L642">            registerTableManager(HugeType.EDGE_LABEL,</span>
+                                 new CassandraTables.EdgeLabel());
+<span class="nc" id="L644">            registerTableManager(HugeType.PROPERTY_KEY,</span>
+                                 new CassandraTables.PropertyKey());
+<span class="nc" id="L646">            registerTableManager(HugeType.INDEX_LABEL,</span>
+                                 new CassandraTables.IndexLabel());
+<span class="nc" id="L648">        }</span>
+
+        @Override
+        protected Collection&lt;CassandraTable&gt; tables() {
+<span class="nc" id="L652">            List&lt;CassandraTable&gt; tables = new ArrayList&lt;&gt;(super.tables());</span>
+<span class="nc" id="L653">            tables.add(this.counters);</span>
+<span class="nc" id="L654">            return tables;</span>
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L659">            this.checkOpened();</span>
+<span class="nc" id="L660">            CassandraSessionPool.Session session = super.sessions.session();</span>
+<span class="nc" id="L661">            this.counters.increaseCounter(session, type, increment);</span>
+<span class="nc" id="L662">        }</span>
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L666">            this.checkOpened();</span>
+<span class="nc" id="L667">            CassandraSessionPool.Session session = super.sessions.session();</span>
+<span class="nc" id="L668">            return this.counters.getCounter(session, type);</span>
+        }
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L673">            return true;</span>
+        }
+    }
+
+    public static class CassandraGraphStore extends CassandraStore {
+
+        public CassandraGraphStore(BackendStoreProvider provider,
+                                   String keyspace, String store) {
+<span class="nc" id="L681">            super(provider, keyspace, store);</span>
+
+<span class="nc" id="L683">            registerTableManager(HugeType.VERTEX,</span>
+                                 new CassandraTables.Vertex(store));
+
+<span class="nc" id="L686">            registerTableManager(HugeType.EDGE_OUT,</span>
+<span class="nc" id="L687">                                 CassandraTables.Edge.out(store));</span>
+<span class="nc" id="L688">            registerTableManager(HugeType.EDGE_IN,</span>
+<span class="nc" id="L689">                                 CassandraTables.Edge.in(store));</span>
+
+<span class="nc" id="L691">            registerTableManager(HugeType.SECONDARY_INDEX,</span>
+                                 new CassandraTables.SecondaryIndex(store));
+<span class="nc" id="L693">            registerTableManager(HugeType.RANGE_INT_INDEX,</span>
+                                 new CassandraTables.RangeIntIndex(store));
+<span class="nc" id="L695">            registerTableManager(HugeType.RANGE_FLOAT_INDEX,</span>
+                                 new CassandraTables.RangeFloatIndex(store));
+<span class="nc" id="L697">            registerTableManager(HugeType.RANGE_LONG_INDEX,</span>
+                                 new CassandraTables.RangeLongIndex(store));
+<span class="nc" id="L699">            registerTableManager(HugeType.RANGE_DOUBLE_INDEX,</span>
+                                 new CassandraTables.RangeDoubleIndex(store));
+<span class="nc" id="L701">            registerTableManager(HugeType.SEARCH_INDEX,</span>
+                                 new CassandraTables.SearchIndex(store));
+<span class="nc" id="L703">            registerTableManager(HugeType.SHARD_INDEX,</span>
+                                 new CassandraTables.ShardIndex(store));
+<span class="nc" id="L705">            registerTableManager(HugeType.UNIQUE_INDEX,</span>
+                                 new CassandraTables.UniqueIndex(store));
+
+<span class="nc" id="L708">            registerTableManager(this.olapTableName(HugeType.SECONDARY_INDEX),</span>
+                                 new CassandraTables.OlapSecondaryIndex(store));
+<span class="nc" id="L710">            registerTableManager(this.olapTableName(HugeType.RANGE_INT_INDEX),</span>
+                                 new CassandraTables.OlapRangeIntIndex(store));
+<span class="nc" id="L712">            registerTableManager(this.olapTableName(HugeType.RANGE_LONG_INDEX),</span>
+                                 new CassandraTables.OlapRangeLongIndex(store));
+<span class="nc" id="L714">            registerTableManager(this.olapTableName(HugeType.RANGE_FLOAT_INDEX),</span>
+                                 new CassandraTables.OlapRangeFloatIndex(store));
+<span class="nc" id="L716">            registerTableManager(this.olapTableName(HugeType.RANGE_DOUBLE_INDEX),</span>
+                                 new CassandraTables.OlapRangeDoubleIndex(store));
+<span class="nc" id="L718">        }</span>
+
+        @Override
+        public Id nextId(HugeType type) {
+<span class="nc" id="L722">            throw new UnsupportedOperationException(</span>
+                      &quot;CassandraGraphStore.nextId()&quot;);
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long num) {
+<span class="nc" id="L728">            throw new UnsupportedOperationException(</span>
+                      &quot;CassandraGraphStore.increaseCounter()&quot;);
+        }
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L734">            throw new UnsupportedOperationException(</span>
+                      &quot;CassandraGraphStore.getCounter()&quot;);
+        }
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L740">            return false;</span>
+        }
+
+        /**
+         * TODO: can we remove this method since createOlapTable would register?
+         */
+        @Override
+        public void checkAndRegisterOlapTable(Id id) {
+<span class="nc" id="L748">            CassandraTable table = new CassandraTables.Olap(this.store(), id);</span>
+<span class="nc bnc" id="L749" title="All 2 branches missed.">            if (!this.existsTable(table.table())) {</span>
+<span class="nc" id="L750">                throw new HugeException(&quot;Not exist table '%s'&quot;, table.table());</span>
+            }
+<span class="nc" id="L752">            registerTableManager(this.olapTableName(id), table);</span>
+<span class="nc" id="L753">        }</span>
+
+        @Override
+        public void createOlapTable(Id id) {
+<span class="nc" id="L757">            CassandraTable table = new CassandraTables.Olap(this.store(), id);</span>
+<span class="nc" id="L758">            table.init(this.session(null));</span>
+<span class="nc" id="L759">            registerTableManager(this.olapTableName(id), table);</span>
+<span class="nc" id="L760">        }</span>
+
+        @Override
+        public void clearOlapTable(Id id) {
+<span class="nc" id="L764">            String name = this.olapTableName(id);</span>
+<span class="nc" id="L765">            CassandraTable table = this.table(name);</span>
+<span class="nc bnc" id="L766" title="All 2 branches missed.">            if (!this.existsTable(table.table())) {</span>
+<span class="nc" id="L767">                throw new HugeException(&quot;Not exist table '%s'&quot;, name);</span>
+            }
+<span class="nc" id="L769">            table.truncate(this.session(null));</span>
+<span class="nc" id="L770">        }</span>
+
+        @Override
+        public void removeOlapTable(Id id) {
+<span class="nc" id="L774">            String name = this.olapTableName(id);</span>
+<span class="nc" id="L775">            CassandraTable table = this.table(name);</span>
+<span class="nc bnc" id="L776" title="All 2 branches missed.">            if (!this.existsTable(table.table())) {</span>
+<span class="nc" id="L777">                throw new HugeException(&quot;Not exist table '%s'&quot;, name);</span>
+            }
+<span class="nc" id="L779">            table.dropTable(this.session(null));</span>
+<span class="nc" id="L780">            this.unregisterTableManager(name);</span>
+<span class="nc" id="L781">        }</span>
+    }
+
+    public static class CassandraSystemStore extends CassandraGraphStore {
+
+        private final CassandraTables.Meta meta;
+
+        public CassandraSystemStore(BackendStoreProvider provider, String keyspace, String store) {
+<span class="nc" id="L789">            super(provider, keyspace, store);</span>
+
+<span class="nc" id="L791">            this.meta = new CassandraTables.Meta();</span>
+<span class="nc" id="L792">        }</span>
+
+        @Override
+        public void init() {
+<span class="nc" id="L796">            super.init();</span>
+<span class="nc" id="L797">            this.checkOpened();</span>
+<span class="nc" id="L798">            String driverVersion = this.provider().driverVersion();</span>
+<span class="nc" id="L799">            this.meta.writeVersion(this.session(null), driverVersion);</span>
+<span class="nc" id="L800">            LOG.info(&quot;Write down the backend version: {}&quot;, driverVersion);</span>
+<span class="nc" id="L801">        }</span>
+
+        @Override
+        public String storedVersion() {
+<span class="nc" id="L805">            CassandraSessionPool.Session session = this.session(null);</span>
+<span class="nc" id="L806">            return this.meta.readVersion(session);</span>
+        }
+
+        @Override
+        protected Collection&lt;CassandraTable&gt; tables() {
+<span class="nc" id="L811">            List&lt;CassandraTable&gt; tables = new ArrayList&lt;&gt;(super.tables());</span>
+<span class="nc" id="L812">            tables.add(this.meta);</span>
+<span class="nc" id="L813">            return tables;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

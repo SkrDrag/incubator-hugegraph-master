@@ -1,0 +1,345 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BackendMutation.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">BackendMutation.java</span></div><h1>BackendMutation.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.iterator.ExtendableIterator;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Action;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+
+<span class="nc" id="L35">public class BackendMutation {</span>
+
+    private final MutationTable updates;
+
+<span class="nc" id="L39">    public BackendMutation() {</span>
+<span class="nc" id="L40">        this.updates = new MutationTable();</span>
+<span class="nc" id="L41">    }</span>
+
+<span class="nc" id="L43">    public BackendMutation(int initialCapacity) {</span>
+<span class="nc" id="L44">        this.updates = new MutationTable(initialCapacity);</span>
+<span class="nc" id="L45">    }</span>
+
+    /**
+     * Add data entry with an action to collection `updates`
+     * @param entry the backend entry
+     * @param action operate action on the entry
+     */
+    @Watched(prefix = &quot;mutation&quot;)
+    public void add(BackendEntry entry, Action action) {
+<span class="nc" id="L54">        Id id = entry.id();</span>
+<span class="nc bnc" id="L55" title="All 2 branches missed.">        assert id != null;</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (this.updates.containsKey(entry.type(), id)) {</span>
+<span class="nc" id="L57">            this.optimizeUpdates(entry, action);</span>
+        } else {
+            // If there is no entity with this id, add it
+<span class="nc" id="L60">            this.updates.put(entry.type(), id, BackendAction.of(action, entry));</span>
+        }
+<span class="nc" id="L62">    }</span>
+
+    /**
+     * Put directly without checking and merging
+     */
+    public void put(BackendEntry entry, Action action) {
+<span class="nc" id="L68">        Id id = entry.id();</span>
+<span class="nc" id="L69">        this.updates.put(entry.type(), id, BackendAction.of(action, entry));</span>
+<span class="nc" id="L70">    }</span>
+
+    /**
+     * The optimized scenes include but are not limited to：
+     * 1.If you want to delete an entry, the other mutations previously
+     *   can be ignored.
+     * 2.As similar to the No.1 item, If you want to insert an entry,
+     *   the other mutations previously also can be ignored.
+     * 3.If you append an entry and then eliminate it, the new action
+     *   can override the old one.
+     */
+    @Watched(prefix = &quot;mutation&quot;)
+    private void optimizeUpdates(BackendEntry entry, Action action) {
+<span class="nc" id="L83">        final Id id = entry.id();</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        assert id != null;</span>
+<span class="nc" id="L85">        final List&lt;BackendAction&gt; items = this.updates.get(entry.type(), id);</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        assert items != null;</span>
+<span class="nc" id="L87">        boolean ignoreCurrent = false;</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        for (Iterator&lt;BackendAction&gt; iter = items.iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L89">            BackendAction originItem = iter.next();</span>
+<span class="nc" id="L90">            Action originAction = originItem.action();</span>
+<span class="nc bnc" id="L91" title="All 5 branches missed.">            switch (action) {</span>
+                case INSERT:
+<span class="nc" id="L93">                    iter.remove();</span>
+<span class="nc" id="L94">                    break;</span>
+                case DELETE:
+<span class="nc bnc" id="L96" title="All 2 branches missed.">                    if (originAction == Action.INSERT) {</span>
+<span class="nc" id="L97">                        throw incompatibleActionException(action, originAction);</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">                    } else if (originAction == Action.DELETE) {</span>
+<span class="nc" id="L99">                        ignoreCurrent = true;</span>
+                    } else {
+<span class="nc" id="L101">                        iter.remove();</span>
+                    }
+<span class="nc" id="L103">                    break;</span>
+                case APPEND:
+<span class="nc bnc" id="L105" title="All 4 branches missed.">                    if (entry.type().isUniqueIndex() &amp;&amp;</span>
+                        originAction == Action.APPEND) {
+<span class="nc" id="L107">                        throw new IllegalArgumentException(String.format(</span>
+                                  &quot;Unique constraint conflict is found in&quot; +
+                                  &quot; transaction between %s and %s&quot;,
+<span class="nc" id="L110">                                  entry, originItem.entry()));</span>
+                    }
+
+<span class="nc bnc" id="L113" title="All 4 branches missed.">                    if (originAction == Action.INSERT ||</span>
+                        originAction == Action.DELETE) {
+<span class="nc" id="L115">                        throw incompatibleActionException(action, originAction);</span>
+                    } else {
+<span class="nc" id="L117">                        Id subId = entry.subId();</span>
+<span class="nc" id="L118">                        Id originSubId = originItem.entry().subId();</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">                        assert subId != null;</span>
+<span class="nc bnc" id="L120" title="All 4 branches missed.">                        if (subId == originSubId || subId.equals(originSubId)) {</span>
+<span class="nc" id="L121">                            iter.remove();</span>
+                        }
+                    }
+<span class="nc" id="L124">                    break;</span>
+                case ELIMINATE:
+<span class="nc bnc" id="L126" title="All 4 branches missed.">                    if (originAction == Action.INSERT ||</span>
+                        originAction == Action.DELETE) {
+<span class="nc" id="L128">                        throw incompatibleActionException(action, originAction);</span>
+                    } else {
+<span class="nc" id="L130">                        Id subId = entry.subId();</span>
+<span class="nc" id="L131">                        Id originSubId = originItem.entry().subId();</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">                        assert subId != null;</span>
+<span class="nc bnc" id="L133" title="All 4 branches missed.">                        if (subId == originSubId || subId.equals(originSubId)) {</span>
+<span class="nc" id="L134">                            iter.remove();</span>
+                        }
+                    }
+<span class="nc" id="L137">                    break;</span>
+                default:
+<span class="nc" id="L139">                    throw new AssertionError(String.format(</span>
+                              &quot;Unknown mutate action: %s&quot;, action));
+            }
+<span class="nc" id="L142">        }</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (!ignoreCurrent) {</span>
+<span class="nc" id="L144">            items.add(BackendAction.of(action, entry));</span>
+        }
+<span class="nc" id="L146">    }</span>
+
+    private static HugeException incompatibleActionException(
+                                 Action newAction,
+                                 Action originAction) {
+<span class="nc" id="L151">        return new HugeException(&quot;The action '%s' is incompatible with &quot; +</span>
+                                 &quot;action '%s'&quot;, newAction, originAction);
+    }
+
+    /**
+     * Merges another mutation into this mutation. Ensures that all additions
+     * and deletions are added to this mutation. Does not remove duplicates
+     * if such exist - this needs to be ensured by the caller.
+     * @param mutation another mutation to be merged
+     */
+    public void merge(BackendMutation mutation) {
+<span class="nc" id="L162">        E.checkNotNull(mutation, &quot;mutation&quot;);</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        for (Iterator&lt;BackendAction&gt; it = mutation.mutation(); it.hasNext();) {</span>
+<span class="nc" id="L164">            BackendAction item = it.next();</span>
+<span class="nc" id="L165">            this.add(item.entry(), item.action());</span>
+<span class="nc" id="L166">        }</span>
+<span class="nc" id="L167">    }</span>
+
+    public Set&lt;HugeType&gt; types() {
+<span class="nc" id="L170">        return this.updates.keys();</span>
+    }
+
+    /**
+     * Get all mutations
+     * @return mutations
+     */
+    public Iterator&lt;BackendAction&gt; mutation() {
+<span class="nc" id="L178">        return this.updates.values();</span>
+    }
+
+    /**
+     * Get mutations by type
+     * @param type entry type
+     * @return mutations
+     */
+    public Iterator&lt;BackendAction&gt; mutation(HugeType type) {
+<span class="nc" id="L187">        return this.updates.get(type);</span>
+    }
+
+    /**
+     * Get mutations by type and id
+     * @param type entry type
+     * @param id entry id
+     * @return mutations
+     */
+    public List&lt;BackendAction&gt; mutation(HugeType type, Id id) {
+<span class="nc" id="L197">        return this.updates.get(type, id);</span>
+    }
+
+    /**
+     * Whether mutation contains entry and action
+     * @param entry entry
+     * @param action action
+     * @return true if exist, otherwise false
+     */
+    public boolean contains(BackendEntry entry, Action action) {
+<span class="nc" id="L207">        List&lt;BackendAction&gt; items = this.updates.get(entry.type(), entry.id());</span>
+<span class="nc bnc" id="L208" title="All 4 branches missed.">        if (items == null || items.isEmpty()) {</span>
+<span class="nc" id="L209">            return false;</span>
+        }
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        for (BackendAction item : items) {</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            if (item.action().equals(action)) {</span>
+<span class="nc" id="L213">                return true;</span>
+            }
+<span class="nc" id="L215">        }</span>
+<span class="nc" id="L216">        return false;</span>
+    }
+
+    /**
+     * Whether mutation contains type and action
+     * @param type type
+     * @param action action
+     * @return true if exist, otherwise false
+     */
+    public boolean contains(HugeType type, Action action) {
+<span class="nc bnc" id="L226" title="All 2 branches missed.">        for (Iterator&lt;BackendAction&gt; i = this.updates.get(type); i.hasNext();) {</span>
+<span class="nc" id="L227">            BackendAction entry = i.next();</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">            if (entry.action() == action) {</span>
+<span class="nc" id="L229">                return true;</span>
+            }
+<span class="nc" id="L231">        }</span>
+<span class="nc" id="L232">        return false;</span>
+    }
+
+    /**
+     * Whether this mutation is empty
+     * @return true if empty, otherwise false
+     */
+    public boolean isEmpty() {
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        return this.updates.size() == 0;</span>
+    }
+
+    /**
+     * Get size of mutations
+     * @return size
+     */
+    public int size() {
+<span class="nc" id="L248">        return this.updates.size();</span>
+    }
+
+    public void clear() {
+<span class="nc" id="L252">        this.updates.clear();</span>
+<span class="nc" id="L253">    }</span>
+
+    @Override
+    public String toString() {
+<span class="nc" id="L257">        return String.format(&quot;BackendMutation{mutations=%s}&quot;, this.updates);</span>
+    }
+
+    private static class MutationTable {
+
+        // Mapping type =&gt; id =&gt; mutations
+        private final Map&lt;HugeType, Map&lt;Id, List&lt;BackendAction&gt;&gt;&gt; mutations;
+
+<span class="nc" id="L265">        public MutationTable() {</span>
+            // NOTE: ensure insert order
+<span class="nc" id="L267">            this.mutations = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L268">        }</span>
+
+<span class="nc" id="L270">        public MutationTable(int initialCapacity) {</span>
+            // NOTE: ensure insert order
+<span class="nc" id="L272">            this.mutations = InsertionOrderUtil.newMap(initialCapacity);</span>
+<span class="nc" id="L273">        }</span>
+
+        public void put(HugeType type, Id id, BackendAction mutation) {
+<span class="nc" id="L276">            Map&lt;Id, List&lt;BackendAction&gt;&gt; table = this.mutations.get(type);</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (table == null) {</span>
+<span class="nc" id="L278">                table = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L279">                this.mutations.put(type, table);</span>
+            }
+
+<span class="nc" id="L282">            List&lt;BackendAction&gt; items = table.get(id);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            if (items == null) {</span>
+<span class="nc" id="L284">                items = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L285">                table.put(id, items);</span>
+            }
+
+<span class="nc" id="L288">            items.add(mutation);</span>
+<span class="nc" id="L289">        }</span>
+
+        public boolean containsKey(HugeType type, Id id) {
+<span class="nc" id="L292">            Map&lt;Id, List&lt;BackendAction&gt;&gt; table = this.mutations.get(type);</span>
+<span class="nc bnc" id="L293" title="All 4 branches missed.">            return table != null &amp;&amp; table.containsKey(id);</span>
+        }
+
+        public List&lt;BackendAction&gt; get(HugeType type, Id id) {
+<span class="nc" id="L297">            Map&lt;Id, List&lt;BackendAction&gt;&gt; table = this.mutations.get(type);</span>
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            if (table == null) {</span>
+<span class="nc" id="L299">                return null;</span>
+            }
+<span class="nc" id="L301">            return table.get(id);</span>
+        }
+
+        public Iterator&lt;BackendAction&gt; get(HugeType type) {
+<span class="nc" id="L305">            ExtendableIterator&lt;BackendAction&gt; rs = new ExtendableIterator&lt;&gt;();</span>
+<span class="nc" id="L306">            Map&lt;Id, List&lt;BackendAction&gt;&gt; table = this.mutations.get(type);</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">            if (table != null) {</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">                for (List&lt;BackendAction&gt; items : table.values()) {</span>
+<span class="nc" id="L309">                    rs.extend(items.iterator());</span>
+<span class="nc" id="L310">                }</span>
+            }
+<span class="nc" id="L312">            return rs;</span>
+        }
+
+        public Set&lt;HugeType&gt; keys() {
+<span class="nc" id="L316">            return this.mutations.keySet();</span>
+        }
+
+        public Iterator&lt;BackendAction&gt; values() {
+<span class="nc" id="L320">            ExtendableIterator&lt;BackendAction&gt; rs = new ExtendableIterator&lt;&gt;();</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">            for (Map&lt;Id, List&lt;BackendAction&gt;&gt; table : this.mutations.values()) {</span>
+<span class="nc bnc" id="L322" title="All 2 branches missed.">                for (List&lt;BackendAction&gt; items : table.values()) {</span>
+<span class="nc" id="L323">                    rs.extend(items.iterator());</span>
+<span class="nc" id="L324">                }</span>
+<span class="nc" id="L325">            }</span>
+<span class="nc" id="L326">            return rs;</span>
+        }
+
+        public int size() {
+<span class="nc" id="L330">            int size = 0;</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">            for (Map&lt;Id, List&lt;BackendAction&gt;&gt; m : this.mutations.values()) {</span>
+                // NOTE: Index entry has same id with different subIds
+<span class="nc bnc" id="L333" title="All 2 branches missed.">                for (List&lt;BackendAction&gt; actions : m.values()) {</span>
+<span class="nc" id="L334">                    size += actions.size();</span>
+<span class="nc" id="L335">                }</span>
+<span class="nc" id="L336">            }</span>
+<span class="nc" id="L337">            return size;</span>
+        }
+
+        public void clear() {
+<span class="nc" id="L341">            this.mutations.clear();</span>
+<span class="nc" id="L342">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

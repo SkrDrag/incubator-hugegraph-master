@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>KneighborRecords.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.algorithm.records</a> &gt; <span class="el_source">KneighborRecords.java</span></div><h1>KneighborRecords.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.algorithm.records;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.NO_LIMIT;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
+import java.util.Stack;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser.PathSet;
+import org.apache.hugegraph.traversal.algorithm.records.record.Record;
+import org.apache.hugegraph.traversal.algorithm.records.record.RecordType;
+import org.apache.hugegraph.type.define.CollectionType;
+import org.apache.hugegraph.util.collection.CollectionFactory;
+import org.apache.hugegraph.util.collection.IntIterator;
+
+public class KneighborRecords extends SingleWayMultiPathsRecords {
+
+    public KneighborRecords(boolean concurrent,
+                            Id source, boolean nearest) {
+<span class="nc" id="L39">        super(RecordType.INT, concurrent, source, nearest);</span>
+<span class="nc" id="L40">    }</span>
+
+    @Override
+    public int size() {
+<span class="nc" id="L44">        return (int) this.accessed();</span>
+    }
+
+    @Override
+    public List&lt;Id&gt; ids(long limit) {
+<span class="nc" id="L49">        List&lt;Id&gt; ids = CollectionFactory.newList(CollectionType.EC);</span>
+<span class="nc" id="L50">        this.getRecords(limit, ids);</span>
+<span class="nc" id="L51">        return ids;</span>
+    }
+
+    public Set&lt;Id&gt; idsBySet(long limit) {
+<span class="nc" id="L55">        Set&lt;Id&gt; ids = CollectionFactory.newSet(CollectionType.EC);</span>
+<span class="nc" id="L56">        this.getRecords(limit, ids);</span>
+<span class="nc" id="L57">        return ids;</span>
+    }
+
+    private void getRecords(long limit, Collection&lt;Id&gt; ids) {
+<span class="nc" id="L61">        Stack&lt;Record&gt; records = this.records();</span>
+        // Not include record(i=0) to ignore source vertex
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        for (int i = 1; i &lt; records.size(); i++) {</span>
+<span class="nc" id="L64">            IntIterator iterator = records.get(i).keys();</span>
+<span class="nc bnc" id="L65" title="All 6 branches missed.">            while ((limit == NO_LIMIT || limit &gt; 0L) &amp;&amp; iterator.hasNext()) {</span>
+<span class="nc" id="L66">                ids.add(this.id(iterator.next()));</span>
+<span class="nc" id="L67">                limit--;</span>
+            }
+        }
+<span class="nc" id="L70">    }</span>
+
+    @Override
+    public PathSet paths(long limit) {
+<span class="nc" id="L74">        PathSet paths = new PathSet();</span>
+<span class="nc" id="L75">        Stack&lt;Record&gt; records = this.records();</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        for (int i = 1; i &lt; records.size(); i++) {</span>
+<span class="nc" id="L77">            IntIterator iterator = records.get(i).keys();</span>
+<span class="nc bnc" id="L78" title="All 6 branches missed.">            while ((limit == NO_LIMIT || limit &gt; 0L) &amp;&amp; iterator.hasNext()) {</span>
+<span class="nc" id="L79">                paths.add(this.linkPath(i, iterator.next()));</span>
+<span class="nc" id="L80">                limit--;</span>
+            }
+        }
+<span class="nc" id="L83">        return paths;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

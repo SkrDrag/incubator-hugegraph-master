@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GraphsAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.profile</a> &gt; <span class="el_source">GraphsAPI.java</span></div><h1>GraphsAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.profile;
+
+import java.io.File;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.ForbiddenException;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotSupportedException;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.SecurityContext;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hugegraph.core.GraphManager;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.auth.HugeAuthenticator.RequiredPerm;
+import org.apache.hugegraph.auth.HugePermission;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.type.define.GraphReadMode;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.google.common.collect.ImmutableMap;
+
+@Path(&quot;graphs&quot;)
+@Singleton
+@Tag(name = &quot;GraphsAPI&quot;)
+<span class="nc" id="L62">public class GraphsAPI extends API {</span>
+
+<span class="nc" id="L64">    private static final Logger LOG = Log.logger(GraphsAPI.class);</span>
+
+    private static final String CONFIRM_CLEAR = &quot;I'm sure to delete all data&quot;;
+    private static final String CONFIRM_DROP = &quot;I'm sure to drop the graph&quot;;
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$dynamic&quot;})
+    public Object list(@Context GraphManager manager,
+                       @Context SecurityContext sc) {
+<span class="nc" id="L75">        Set&lt;String&gt; graphs = manager.graphs();</span>
+        // Filter by user role
+<span class="nc" id="L77">        Set&lt;String&gt; filterGraphs = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        for (String graph : graphs) {</span>
+<span class="nc" id="L79">            String role = RequiredPerm.roleFor(graph, HugePermission.READ);</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">            if (sc.isUserInRole(role)) {</span>
+                try {
+<span class="nc" id="L82">                    HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L83">                    filterGraphs.add(g.name());</span>
+<span class="nc" id="L84">                } catch (ForbiddenException ignored) {</span>
+                    // ignore
+<span class="nc" id="L86">                }</span>
+            }
+<span class="nc" id="L88">        }</span>
+<span class="nc" id="L89">        return ImmutableMap.of(&quot;graphs&quot;, filterGraphs);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$name&quot;})
+    public Object get(@Context GraphManager manager,
+                      @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L99">        LOG.debug(&quot;Get graph by name '{}'&quot;, name);</span>
+
+<span class="nc" id="L101">        HugeGraph g = graph(manager, name);</span>
+<span class="nc" id="L102">        return ImmutableMap.of(&quot;name&quot;, g.name(), &quot;backend&quot;, g.backend());</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;})
+    public void drop(@Context GraphManager manager,
+                     @PathParam(&quot;name&quot;) String name,
+                     @QueryParam(&quot;confirm_message&quot;) String message) {
+<span class="nc" id="L113">        LOG.debug(&quot;Drop graph by name '{}'&quot;, name);</span>
+
+<span class="nc" id="L115">        E.checkArgument(CONFIRM_DROP.equals(message),</span>
+                        &quot;Please take the message: %s&quot;, CONFIRM_DROP);
+<span class="nc" id="L117">        manager.dropGraph(name);</span>
+<span class="nc" id="L118">    }</span>
+
+    @POST
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Consumes(TEXT_PLAIN)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;})
+    public Object create(@Context GraphManager manager,
+                         @PathParam(&quot;name&quot;) String name,
+                         @QueryParam(&quot;clone_graph_name&quot;) String clone,
+                         String configText) {
+<span class="nc" id="L130">        LOG.debug(&quot;Create graph '{}' with clone graph '{}', config text '{}'&quot;,</span>
+                  name, clone, configText);
+        HugeGraph graph;
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(clone)) {</span>
+<span class="nc" id="L134">            graph = manager.cloneGraph(clone, name, configText);</span>
+        } else {
+<span class="nc" id="L136">            graph = manager.createGraph(name, configText);</span>
+        }
+<span class="nc" id="L138">        return ImmutableMap.of(&quot;name&quot;, graph.name(),</span>
+<span class="nc" id="L139">                               &quot;backend&quot;, graph.backend());</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{name}/conf&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed(&quot;admin&quot;)
+    public File getConf(@Context GraphManager manager,
+                        @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L149">        LOG.debug(&quot;Get graph configuration by name '{}'&quot;, name);</span>
+
+<span class="nc" id="L151">        HugeGraph g = graph4admin(manager, name);</span>
+
+<span class="nc" id="L153">        HugeConfig config = (HugeConfig) g.configuration();</span>
+<span class="nc" id="L154">        File file = config.file();</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        if (file == null) {</span>
+<span class="nc" id="L156">            throw new NotSupportedException(&quot;Can't access the api in &quot; +</span>
+                      &quot;a node which started with non local file config.&quot;);
+        }
+<span class="nc" id="L159">        return file;</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{name}/clear&quot;)
+    @Consumes(APPLICATION_JSON)
+    @RolesAllowed(&quot;admin&quot;)
+    public void clear(@Context GraphManager manager,
+                      @PathParam(&quot;name&quot;) String name,
+                      @QueryParam(&quot;confirm_message&quot;) String message) {
+<span class="nc" id="L170">        LOG.debug(&quot;Clear graph by name '{}'&quot;, name);</span>
+
+<span class="nc" id="L172">        E.checkArgument(CONFIRM_CLEAR.equals(message),</span>
+                        &quot;Please take the message: %s&quot;, CONFIRM_CLEAR);
+<span class="nc" id="L174">        HugeGraph g = graph(manager, name);</span>
+<span class="nc" id="L175">        g.truncateBackend();</span>
+<span class="nc" id="L176">    }</span>
+
+    @PUT
+    @Timed
+    @Path(&quot;{name}/snapshot_create&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$name&quot;})
+    public Object createSnapshot(@Context GraphManager manager,
+                                 @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L185">        LOG.debug(&quot;Create snapshot for graph '{}'&quot;, name);</span>
+
+<span class="nc" id="L187">        HugeGraph g = graph(manager, name);</span>
+<span class="nc" id="L188">        g.createSnapshot();</span>
+<span class="nc" id="L189">        return ImmutableMap.of(name, &quot;snapshot_created&quot;);</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{name}/snapshot_resume&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$name&quot;})
+    public Object resumeSnapshot(@Context GraphManager manager,
+                                 @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L199">        LOG.debug(&quot;Resume snapshot for graph '{}'&quot;, name);</span>
+
+<span class="nc" id="L201">        HugeGraph g = graph(manager, name);</span>
+<span class="nc" id="L202">        g.resumeSnapshot();</span>
+<span class="nc" id="L203">        return ImmutableMap.of(name, &quot;snapshot_resumed&quot;);</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{name}/compact&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;})
+    public String compact(@Context GraphManager manager,
+                          @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L214">        LOG.debug(&quot;Manually compact graph '{}'&quot;, name);</span>
+
+<span class="nc" id="L216">        HugeGraph g = graph(manager, name);</span>
+<span class="nc" id="L217">        return JsonUtil.toJson(g.metadata(null, &quot;compact&quot;));</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{name}/mode&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$name&quot;})
+    public Map&lt;String, GraphMode&gt; mode(@Context GraphManager manager,
+                                       @PathParam(&quot;name&quot;) String name,
+                                       GraphMode mode) {
+<span class="nc" id="L229">        LOG.debug(&quot;Set mode to: '{}' of graph '{}'&quot;, mode, name);</span>
+
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        E.checkArgument(mode != null, &quot;Graph mode can't be null&quot;);</span>
+<span class="nc" id="L232">        HugeGraph g = graph(manager, name);</span>
+<span class="nc" id="L233">        g.mode(mode);</span>
+<span class="nc" id="L234">        return ImmutableMap.of(&quot;mode&quot;, mode);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{name}/mode&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$name&quot;})
+    public Map&lt;String, GraphMode&gt; mode(@Context GraphManager manager,
+                                       @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L245">        LOG.debug(&quot;Get mode of graph '{}'&quot;, name);</span>
+
+<span class="nc" id="L247">        HugeGraph g = graph(manager, name);</span>
+<span class="nc" id="L248">        return ImmutableMap.of(&quot;mode&quot;, g.mode());</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{name}/graph_read_mode&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed(&quot;admin&quot;)
+    public Map&lt;String, GraphReadMode&gt; graphReadMode(
+                                      @Context GraphManager manager,
+                                      @PathParam(&quot;name&quot;) String name,
+                                      GraphReadMode readMode) {
+<span class="nc" id="L261">        LOG.debug(&quot;Set graph-read-mode to: '{}' of graph '{}'&quot;,</span>
+                  readMode, name);
+
+<span class="nc bnc" id="L264" title="All 2 branches missed.">        E.checkArgument(readMode != null,</span>
+                        &quot;Graph-read-mode can't be null&quot;);
+<span class="nc" id="L266">        HugeGraph g = graph(manager, name);</span>
+<span class="nc" id="L267">        g.readMode(readMode);</span>
+<span class="nc" id="L268">        return ImmutableMap.of(&quot;graph_read_mode&quot;, readMode);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{name}/graph_read_mode&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$name&quot;})
+    public Map&lt;String, GraphReadMode&gt; graphReadMode(
+                                      @Context GraphManager manager,
+                                      @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L280">        LOG.debug(&quot;Get graph-read-mode of graph '{}'&quot;, name);</span>
+
+<span class="nc" id="L282">        HugeGraph g = graph(manager, name);</span>
+<span class="nc" id="L283">        return ImmutableMap.of(&quot;graph_read_mode&quot;, g.readMode());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

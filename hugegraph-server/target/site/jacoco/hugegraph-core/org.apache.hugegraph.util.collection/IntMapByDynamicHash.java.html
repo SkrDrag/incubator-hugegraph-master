@@ -1,0 +1,1023 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IntMapByDynamicHash.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util.collection</a> &gt; <span class="el_source">IntMapByDynamicHash.java</span></div><h1>IntMapByDynamicHash.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util.collection;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+
+import sun.misc.Unsafe;
+
+/**
+ * This class implements a concurrent hash map specifically designed for integer keys and values.
+ * It uses low-level programming techniques such as direct memory access via `sun.misc.Unsafe` to
+ * achieve high performance.
+ * The class is part of the Apache HugeGraph project.
+ */
+public class IntMapByDynamicHash implements IntMap {
+
+    private static final int DEFAULT_INITIAL_CAPACITY = 16;
+
+    /**
+     * The maximum capacity, used if a higher value is implicitly specified
+     * by either of the constructors with arguments.
+     * MUST be a power of two &lt;= 1&lt;&lt;30.
+     */
+    private static final int MAXIMUM_CAPACITY = 1 &lt;&lt; 30;
+
+    private static final float LOAD_FACTOR = 0.75f;
+
+    private static final int PARTITIONED_SIZE_THRESHOLD = 4096;
+
+    private static final int NULL_VALUE = Integer.MIN_VALUE;
+
+    private static final AtomicReferenceFieldUpdater&lt;IntMapByDynamicHash, Entry[]&gt;
+<span class="nc" id="L52">        TABLE_UPDATER =</span>
+<span class="nc" id="L53">        AtomicReferenceFieldUpdater.newUpdater(IntMapByDynamicHash.class, Entry[].class, &quot;table&quot;);</span>
+
+    private volatile Entry[] table;
+
+    /**
+     * Partition counting to improve the concurrency performance of addToSize()
+     */
+    private int[] partitionedSize;
+
+    /**
+     * updated via atomic field updater
+     */
+    @SuppressWarnings(&quot;UnusedDeclaration&quot;)
+    private volatile int size;
+
+<span class="nc" id="L68">    private static final Entry RESIZING = new Entry(NULL_VALUE, NULL_VALUE, (byte) 1);</span>
+<span class="nc" id="L69">    private static final Entry RESIZED = new Entry(NULL_VALUE, NULL_VALUE, (byte) 2);</span>
+
+<span class="nc" id="L71">    private static final Entry RESIZE_SENTINEL = new Entry(NULL_VALUE, NULL_VALUE, (byte) 3);</span>
+
+    /**
+     * must be (2^n) - 1
+     */
+    private static final int SIZE_BUCKETS = 7;
+
+    /**
+     * Constructor for the IntMapByDynamicHash class.
+     *
+     * @param initialCapacity the initial capacity of the map.
+     */
+<span class="nc" id="L83">    public IntMapByDynamicHash(int initialCapacity) {</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (initialCapacity &lt; 0) {</span>
+<span class="nc" id="L85">            throw new IllegalArgumentException(&quot;Illegal Initial Capacity: &quot; + initialCapacity);</span>
+        }
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (initialCapacity &gt; MAXIMUM_CAPACITY) {</span>
+<span class="nc" id="L88">            initialCapacity = MAXIMUM_CAPACITY;</span>
+        }
+<span class="nc" id="L90">        long size = (long) (1.0 + (long) initialCapacity / LOAD_FACTOR);</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        int cap = (size &gt;= (long) MAXIMUM_CAPACITY) ?</span>
+<span class="nc" id="L92">                  MAXIMUM_CAPACITY : tableSizeFor((int) size);</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (cap &gt;= PARTITIONED_SIZE_THRESHOLD) {</span>
+            // we want 7 extra slots, and 64 bytes for each slot int are 4 bytes,
+            // so 64 bytes are 16 ints.
+<span class="nc" id="L96">            this.partitionedSize =</span>
+                new int[SIZE_BUCKETS * 16];
+        }
+        // The end index is for resizeContainer
+<span class="nc" id="L100">        this.table = new Entry[cap + 1];</span>
+<span class="nc" id="L101">    }</span>
+
+    /**
+     * Default constructor for the IntMapByDynamicHash class.
+     * Initializes the map with the default initial capacity.
+     */
+    public IntMapByDynamicHash() {
+<span class="nc" id="L108">        this(DEFAULT_INITIAL_CAPACITY);</span>
+<span class="nc" id="L109">    }</span>
+
+    private static void setTableAt(Object[] array, int index, Object newValue) {
+<span class="nc" id="L112">        UNSAFE.putObjectVolatile(array, ((long) index &lt;&lt; ENTRY_ARRAY_SHIFT) + ENTRY_ARRAY_BASE,</span>
+                                 newValue);
+<span class="nc" id="L114">    }</span>
+
+    private static int tableSizeFor(int c) {
+<span class="nc" id="L117">        int n = c - 1;</span>
+<span class="nc" id="L118">        n |= n &gt;&gt;&gt; 1;</span>
+<span class="nc" id="L119">        n |= n &gt;&gt;&gt; 2;</span>
+<span class="nc" id="L120">        n |= n &gt;&gt;&gt; 4;</span>
+<span class="nc" id="L121">        n |= n &gt;&gt;&gt; 8;</span>
+<span class="nc" id="L122">        n |= n &gt;&gt;&gt; 16;</span>
+<span class="nc bnc" id="L123" title="All 4 branches missed.">        return (n &lt; 0) ? 1 : (n &gt;= MAXIMUM_CAPACITY) ? MAXIMUM_CAPACITY : n + 1;</span>
+    }
+
+    /* ---------------- Table element access -------------- */
+
+    private static long entryOffset(int index) {
+<span class="nc" id="L129">        return ((long) index &lt;&lt; ENTRY_ARRAY_SHIFT) + ENTRY_ARRAY_BASE;</span>
+    }
+
+    private static Object tableAt(Object[] array, int index) {
+<span class="nc" id="L133">        return UNSAFE.getObjectVolatile(array, entryOffset(index));</span>
+    }
+
+    private static boolean casTableAt(Object[] array, int index, Object expected, Object newValue) {
+<span class="nc" id="L137">        return UNSAFE.compareAndSwapObject(array, entryOffset(index), expected, newValue);</span>
+    }
+
+    /**
+     * Puts a key-value pair into the map. If the key already exists in the map, its value is
+     * updated.
+     *
+     * @param key   the key to be put into the map.
+     * @param value the value to be associated with the key.
+     * @return true if the operation is successful.
+     */
+    @Override
+    public boolean put(int key, int value) {
+<span class="nc" id="L150">        int hash = this.hash(key);</span>
+<span class="nc" id="L151">        Entry[] currentArray = this.table;</span>
+<span class="nc" id="L152">        Entry o = (Entry) IntMapByDynamicHash.tableAt(currentArray, hash);</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">        if (o == null) {</span>
+<span class="nc" id="L154">            Entry newEntry = new Entry(key, value);</span>
+<span class="nc" id="L155">            this.addToSize(1);</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">            if (IntMapByDynamicHash.casTableAt(currentArray, hash, null, newEntry)) {</span>
+<span class="nc" id="L157">                return true;</span>
+            }
+<span class="nc" id="L159">            this.addToSize(-1);</span>
+        }
+
+<span class="nc" id="L162">        this.slowPut(key, value, currentArray);</span>
+<span class="nc" id="L163">        return true;</span>
+    }
+
+    /**
+     * This method is used when the normal put operation fails due to a hash collision.
+     * It searches for the key in the chain and if found, replaces the entry.
+     * If the key is not found, it adds a new entry.
+     *
+     * @param key          the key to be put into the map.
+     * @param value        the value to be associated with the key.
+     * @param currentTable the current table where the key-value pair is to be put.
+     * @return the old value if the key is already present in the map, otherwise NULL_VALUE.
+     */
+    private int slowPut(int key, int value, Entry[] currentTable) {
+        int length;
+        int index;
+        Entry o;
+
+        while (true) {
+<span class="nc" id="L182">            length = currentTable.length;</span>
+<span class="nc" id="L183">            index = this.hash(key, length);</span>
+<span class="nc" id="L184">            o = (Entry) IntMapByDynamicHash.tableAt(currentTable, index);</span>
+
+<span class="nc bnc" id="L186" title="All 4 branches missed.">            if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc" id="L187">                currentTable = this.helpWithResizeWhileCurrentIndex(currentTable, index);</span>
+            } else {
+<span class="nc" id="L189">                Entry e = o;</span>
+<span class="nc" id="L190">                boolean found = false;</span>
+
+                // Search for the key in the chain
+<span class="nc bnc" id="L193" title="All 2 branches missed.">                while (e != null) {</span>
+<span class="nc" id="L194">                    int candidate = e.getKey();</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">                    if (candidate == key) {</span>
+<span class="nc" id="L196">                        found = true;</span>
+<span class="nc" id="L197">                        break;</span>
+                    }
+<span class="nc" id="L199">                    e = e.getNext();</span>
+<span class="nc" id="L200">                }</span>
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">                if (found) {</span>
+<span class="nc" id="L203">                    int oldVal = e.getValue();</span>
+                    // Key found, replace the entry
+<span class="nc" id="L205">                    Entry newEntry =</span>
+<span class="nc" id="L206">                        new Entry(key, value, this.createReplacementChainForRemoval(o, e));</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                    if (IntMapByDynamicHash.casTableAt(currentTable, index, o, newEntry)) {</span>
+<span class="nc" id="L208">                        return oldVal;</span>
+                    }
+<span class="nc" id="L210">                } else {</span>
+                    // Key not found, add a new entry
+<span class="nc" id="L212">                    Entry newEntry = new Entry(key, value, o);</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">                    if (IntMapByDynamicHash.casTableAt(currentTable, index, o, newEntry)) {</span>
+<span class="nc" id="L214">                        this.incrementSizeAndPossiblyResize(currentTable, length, o);</span>
+<span class="nc" id="L215">                        return NULL_VALUE;</span>
+                    }
+                }
+<span class="nc" id="L218">            }</span>
+        }
+    }
+
+    /**
+     * Retrieves the value associated with the given key from the map.
+     *
+     * @param key the key whose associated value is to be returned.
+     * @return the value associated with the given key, or NULL_VALUE if the key does not exist
+     * in the map.
+     */
+    @Override
+    public int get(int key) {
+<span class="nc" id="L231">        int hash = this.hash(key);</span>
+<span class="nc" id="L232">        Entry[] currentArray = this.table;</span>
+<span class="nc" id="L233">        Entry o = (Entry) IntMapByDynamicHash.tableAt(currentArray, hash);</span>
+<span class="nc bnc" id="L234" title="All 4 branches missed.">        if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc" id="L235">            return this.slowGet(key, currentArray);</span>
+        }
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        for (Entry e = o; e != null; e = e.getNext()) {</span>
+            int k;
+            // TODO: check why key == k is always false
+<span class="nc bnc" id="L240" title="All 4 branches missed.">            if ((k = e.getKey()) == key || key == k) {</span>
+<span class="nc" id="L241">                return e.value;</span>
+            }
+        }
+<span class="nc" id="L244">        return NULL_VALUE;</span>
+    }
+
+    /**
+     * This method is used when the normal get operation fails due to a hash collision.
+     * It searches for the key in the chain and returns the associated value if found.
+     *
+     * @param key          the key whose associated value is to be returned.
+     * @param currentArray the current table where the key-value pair is located.
+     * @return the value associated with the given key, or NULL_VALUE if the key does not exist
+     * in the map.
+     */
+    private int slowGet(int key, Entry[] currentArray) {
+        while (true) {
+<span class="nc" id="L258">            int length = currentArray.length;</span>
+<span class="nc" id="L259">            int hash = this.hash(key, length);</span>
+<span class="nc" id="L260">            Entry o = (Entry) IntMapByDynamicHash.tableAt(currentArray, hash);</span>
+<span class="nc bnc" id="L261" title="All 4 branches missed.">            if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc" id="L262">                currentArray = this.helpWithResizeWhileCurrentIndex(currentArray, hash);</span>
+            } else {
+<span class="nc" id="L264">                Entry e = o;</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">                while (e != null) {</span>
+<span class="nc" id="L266">                    int candidate = e.getKey();</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">                    if (candidate == key) {</span>
+<span class="nc" id="L268">                        return e.getValue();</span>
+                    }
+<span class="nc" id="L270">                    e = e.getNext();</span>
+<span class="nc" id="L271">                }</span>
+<span class="nc" id="L272">                return NULL_VALUE;</span>
+            }
+<span class="nc" id="L274">        }</span>
+    }
+
+    /**
+     * Removes the key-value pair with the given key from the map.
+     *
+     * @param key the key whose associated key-value pair is to be removed.
+     * @return true if the key-value pair was found and removed, false otherwise.
+     */
+    @Override
+    public boolean remove(int key) {
+<span class="nc" id="L285">        int hash = this.hash(key);</span>
+<span class="nc" id="L286">        Entry[] currentTable = this.table;</span>
+<span class="nc" id="L287">        Entry o = (Entry) IntMapByDynamicHash.tableAt(currentTable, hash);</span>
+<span class="nc bnc" id="L288" title="All 4 branches missed.">        if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">            return this.slowRemove(key, currentTable) != null;</span>
+        }
+
+<span class="nc" id="L292">        Entry e = o;</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">        while (e != null) {</span>
+<span class="nc" id="L294">            int candidate = e.getKey();</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">            if (candidate == key) {</span>
+<span class="nc" id="L296">                Entry replacement = this.createReplacementChainForRemoval(o, e);</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">                if (IntMapByDynamicHash.casTableAt(currentTable, hash, o, replacement)) {</span>
+<span class="nc" id="L298">                    this.addToSize(-1);</span>
+<span class="nc" id="L299">                    return true;</span>
+                }
+<span class="nc bnc" id="L301" title="All 2 branches missed.">                return this.slowRemove(key, currentTable) != null;</span>
+            }
+<span class="nc" id="L303">            e = e.getNext();</span>
+<span class="nc" id="L304">        }</span>
+<span class="nc" id="L305">        return false;</span>
+    }
+
+    /**
+     * This method is used when the normal remove operation fails due to a hash collision.
+     * It searches for the key in the chain and if found, removes the entry.
+     *
+     * @param key          the key whose associated key-value pair is to be removed.
+     * @param currentTable the current table where the key-value pair is located.
+     * @return the removed entry if the key is found, otherwise null.
+     */
+    private Entry slowRemove(int key, Entry[] currentTable) {
+        int length;
+        int index;
+        Entry o;
+
+        while (true) {
+<span class="nc" id="L322">            length = currentTable.length;</span>
+<span class="nc" id="L323">            index = this.hash(key, length);</span>
+<span class="nc" id="L324">            o = (Entry) IntMapByDynamicHash.tableAt(currentTable, index);</span>
+<span class="nc bnc" id="L325" title="All 4 branches missed.">            if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc" id="L326">                currentTable = this.helpWithResizeWhileCurrentIndex(currentTable, index);</span>
+            } else {
+<span class="nc" id="L328">                Entry e = o;</span>
+<span class="nc" id="L329">                Entry prev = null;</span>
+
+<span class="nc bnc" id="L331" title="All 2 branches missed.">                while (e != null) {</span>
+<span class="nc" id="L332">                    int candidate = e.getKey();</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">                    if (candidate == key) {</span>
+<span class="nc" id="L334">                        Entry replacement = this.createReplacementChainForRemoval(o, e);</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">                        if (IntMapByDynamicHash.casTableAt(currentTable, index, o, replacement)) {</span>
+<span class="nc" id="L336">                            this.addToSize(-1);</span>
+<span class="nc" id="L337">                            return e;</span>
+                        }
+                        // Key found, but CAS failed, restart the loop
+                        break;
+                    }
+<span class="nc" id="L342">                    prev = e;</span>
+<span class="nc" id="L343">                    e = e.getNext();</span>
+<span class="nc" id="L344">                }</span>
+
+<span class="nc bnc" id="L346" title="All 2 branches missed.">                if (prev != null) {</span>
+                    // Key doesn't found
+<span class="nc" id="L348">                    return null;</span>
+                }
+<span class="nc" id="L350">            }</span>
+        }
+    }
+
+    /**
+     * Checks if the map contains a key-value pair with the given key.
+     *
+     * @param key the key to be checked.
+     * @return true if the map contains a key-value pair with the given key, false otherwise.
+     */
+    @Override
+    public boolean containsKey(int key) {
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        return this.getEntry(key) != null;</span>
+    }
+
+    @Override
+    public IntIterator keys() {
+<span class="nc" id="L367">        return new KeyIterator();</span>
+    }
+
+    @Override
+    public IntIterator values() {
+<span class="nc" id="L372">        return new ValueIterator();</span>
+    }
+
+    /**
+     * Removes all the mappings from this map. The map will be empty after this call returns.
+     */
+    @Override
+    public void clear() {
+<span class="nc" id="L380">        Entry[] currentArray = this.table;</span>
+        ResizeContainer resizeContainer;
+        do {
+<span class="nc" id="L383">            resizeContainer = null;</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">            for (int i = 0; i &lt; currentArray.length - 1; i++) {</span>
+<span class="nc" id="L385">                Entry o = (Entry) IntMapByDynamicHash.tableAt(currentArray, i);</span>
+<span class="nc bnc" id="L386" title="All 4 branches missed.">                if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc" id="L387">                    resizeContainer =</span>
+<span class="nc" id="L388">                        (ResizeContainer) IntMapByDynamicHash.tableAt(currentArray,</span>
+                                                                      currentArray.length - 1);
+<span class="nc bnc" id="L390" title="All 2 branches missed.">                } else if (o != null) {</span>
+<span class="nc" id="L391">                    Entry e = o;</span>
+<span class="nc bnc" id="L392" title="All 2 branches missed.">                    if (IntMapByDynamicHash.casTableAt(currentArray, i, o, null)) {</span>
+<span class="nc" id="L393">                        int removedEntries = 0;</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">                        while (e != null) {</span>
+<span class="nc" id="L395">                            removedEntries++;</span>
+<span class="nc" id="L396">                            e = e.getNext();</span>
+                        }
+<span class="nc" id="L398">                        this.addToSize(-removedEntries);</span>
+                    }
+                }
+            }
+<span class="nc bnc" id="L402" title="All 2 branches missed.">            if (resizeContainer != null) {</span>
+<span class="nc bnc" id="L403" title="All 2 branches missed.">                if (resizeContainer.isNotDone()) {</span>
+<span class="nc" id="L404">                    this.helpWithResize(currentArray);</span>
+<span class="nc" id="L405">                    resizeContainer.waitForAllResizers();</span>
+                }
+<span class="nc" id="L407">                currentArray = resizeContainer.nextArray;</span>
+            }
+<span class="nc bnc" id="L409" title="All 2 branches missed.">        } while (resizeContainer != null);</span>
+<span class="nc" id="L410">    }</span>
+
+    @Override
+    public int size() {
+<span class="nc" id="L414">        int localSize = this.size;</span>
+<span class="nc bnc" id="L415" title="All 2 branches missed.">        if (this.partitionedSize != null) {</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">            for (int i = 0; i &lt; SIZE_BUCKETS; i++) {</span>
+<span class="nc" id="L417">                localSize += this.partitionedSize[i &lt;&lt; 4];</span>
+            }
+        }
+<span class="nc" id="L420">        return localSize;</span>
+    }
+
+    @Override
+    public boolean concurrent() {
+<span class="nc" id="L425">        return true;</span>
+    }
+
+    private int hash(int key) {
+<span class="nc" id="L429">        return key &amp; (table.length - 2);</span>
+    }
+
+    private int hash(int key, int length) {
+<span class="nc" id="L433">        return key &amp; (length - 2);</span>
+    }
+
+    private Entry getEntry(int key) {
+<span class="nc" id="L437">        Entry[] currentArray = this.table;</span>
+        while (true) {
+<span class="nc" id="L439">            int length = currentArray.length;</span>
+<span class="nc" id="L440">            int index = this.hash(key, length);</span>
+<span class="nc" id="L441">            Entry o = (Entry) IntMapByDynamicHash.tableAt(currentArray, index);</span>
+<span class="nc bnc" id="L442" title="All 4 branches missed.">            if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc" id="L443">                currentArray = this.helpWithResizeWhileCurrentIndex(currentArray, index);</span>
+            } else {
+<span class="nc" id="L445">                Entry e = o;</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">                while (e != null) {</span>
+<span class="nc" id="L447">                    int candidate = e.getKey();</span>
+<span class="nc bnc" id="L448" title="All 2 branches missed.">                    if (candidate == key) {</span>
+<span class="nc" id="L449">                        return e;</span>
+                    }
+<span class="nc" id="L451">                    e = e.getNext();</span>
+<span class="nc" id="L452">                }</span>
+<span class="nc" id="L453">                return null;</span>
+            }
+<span class="nc" id="L455">        }</span>
+    }
+
+    private void addToSize(int value) {
+<span class="nc bnc" id="L459" title="All 2 branches missed.">        if (this.partitionedSize != null) {</span>
+<span class="nc bnc" id="L460" title="All 2 branches missed.">            if (this.incrementPartitionedSize(value)) {</span>
+<span class="nc" id="L461">                return;</span>
+            }
+        }
+<span class="nc" id="L464">        this.incrementLocalSize(value);</span>
+<span class="nc" id="L465">    }</span>
+
+    private boolean incrementPartitionedSize(int value) {
+<span class="nc" id="L468">        int h = (int) Thread.currentThread().getId();</span>
+<span class="nc" id="L469">        h ^= (h &gt;&gt;&gt; 18) ^ (h &gt;&gt;&gt; 12);</span>
+<span class="nc" id="L470">        h = (h ^ (h &gt;&gt;&gt; 10)) &amp; SIZE_BUCKETS;</span>
+<span class="nc bnc" id="L471" title="All 2 branches missed.">        if (h != 0) {</span>
+<span class="nc" id="L472">            h = (h - 1) &lt;&lt; 4;</span>
+<span class="nc" id="L473">            long address = ((long) h &lt;&lt; INT_ARRAY_SHIFT) + INT_ARRAY_BASE;</span>
+            while (true) {
+<span class="nc" id="L475">                int localSize = UNSAFE.getIntVolatile(this.partitionedSize, address);</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">                if (UNSAFE.compareAndSwapInt(this.partitionedSize, address, localSize,</span>
+                                             localSize + value)) {
+<span class="nc" id="L478">                    return true;</span>
+                }
+<span class="nc" id="L480">            }</span>
+        }
+<span class="nc" id="L482">        return false;</span>
+    }
+
+    private void incrementLocalSize(int value) {
+        while (true) {
+<span class="nc" id="L487">            int localSize = this.size;</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">            if (UNSAFE.compareAndSwapInt(this, SIZE_OFFSET, localSize, localSize + value)) {</span>
+<span class="nc" id="L489">                break;</span>
+            }
+<span class="nc" id="L491">        }</span>
+<span class="nc" id="L492">    }</span>
+
+    private Entry createReplacementChainForRemoval(Entry original, Entry toRemove) {
+<span class="nc bnc" id="L495" title="All 2 branches missed.">        if (original == toRemove) {</span>
+<span class="nc" id="L496">            return original.getNext();</span>
+        }
+<span class="nc" id="L498">        Entry replacement = null;</span>
+<span class="nc" id="L499">        Entry e = original;</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">        while (e != null) {</span>
+<span class="nc bnc" id="L501" title="All 2 branches missed.">            if (e != toRemove) {</span>
+<span class="nc" id="L502">                replacement = new Entry(e.getKey(), e.getValue(), replacement);</span>
+            }
+<span class="nc" id="L504">            e = e.getNext();</span>
+        }
+<span class="nc" id="L506">        return replacement;</span>
+    }
+
+    private void incrementSizeAndPossiblyResize(Entry[] currentArray, int length, Entry prev) {
+<span class="nc" id="L510">        this.addToSize(1);</span>
+<span class="nc bnc" id="L511" title="All 2 branches missed.">        if (prev != null) {</span>
+<span class="nc" id="L512">            int localSize = this.size();</span>
+<span class="nc" id="L513">            int threshold = (int) (length * LOAD_FACTOR); // threshold = length * 0.75</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">            if (localSize + 1 &gt; threshold) {</span>
+<span class="nc" id="L515">                this.resize(currentArray);</span>
+            }
+        }
+<span class="nc" id="L518">    }</span>
+
+    private Entry[] helpWithResizeWhileCurrentIndex(Entry[] currentArray, int index) {
+<span class="nc" id="L521">        Entry[] newArray = this.helpWithResize(currentArray);</span>
+<span class="nc" id="L522">        int helpCount = 0;</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">        while (IntMapByDynamicHash.tableAt(currentArray, index) != RESIZED) {</span>
+<span class="nc" id="L524">            helpCount++;</span>
+<span class="nc" id="L525">            newArray = this.helpWithResize(currentArray);</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">            if ((helpCount &amp; 7) == 0) {</span>
+<span class="nc" id="L527">                Thread.yield();</span>
+            }
+        }
+<span class="nc" id="L530">        return newArray;</span>
+    }
+
+    private void resize(Entry[] oldTable) {
+<span class="nc" id="L534">        this.resize(oldTable, (oldTable.length - 1 &lt;&lt; 1) + 1);</span>
+<span class="nc" id="L535">    }</span>
+
+    /**
+     * Resizes the map to a new capacity. This method is called when the map's size exceeds its
+     * threshold. It creates a new array with the new capacity and transfers all entries from the
+     * old array to the new one.
+     * Note: newSize must be a power of 2 + 1
+     *
+     * @param oldTable The old table to resize.
+     * @param newSize  The new size for the table.
+     */
+    @SuppressWarnings(&quot;JLM_JSR166_UTILCONCURRENT_MONITORENTER&quot;)
+    private void resize(Entry[] oldTable, int newSize) {
+<span class="nc" id="L548">        int oldCapacity = oldTable.length;</span>
+<span class="nc" id="L549">        int end = oldCapacity - 1;</span>
+<span class="nc" id="L550">        Entry last = (Entry) IntMapByDynamicHash.tableAt(oldTable, end);</span>
+<span class="nc bnc" id="L551" title="All 4 branches missed.">        if (this.size() &lt; end &amp;&amp; last == RESIZE_SENTINEL) {</span>
+<span class="nc" id="L552">            return;</span>
+        }
+<span class="nc bnc" id="L554" title="All 2 branches missed.">        if (oldCapacity &gt;= MAXIMUM_CAPACITY) {</span>
+<span class="nc" id="L555">            throw new RuntimeException(&quot;max capacity of map exceeded&quot;);</span>
+        }
+<span class="nc" id="L557">        ResizeContainer resizeContainer = null;</span>
+        // This ownResize records whether current thread need to perform the expansion operation of
+        // the map by itself
+<span class="nc" id="L560">        boolean ownResize = false;</span>
+<span class="nc bnc" id="L561" title="All 4 branches missed.">        if (last == null || last == RESIZE_SENTINEL) {</span>
+            // allocating a new array is too expensive to make this an atomic operation
+<span class="nc" id="L563">            synchronized (oldTable) {</span>
+<span class="nc bnc" id="L564" title="All 2 branches missed.">                if (IntMapByDynamicHash.tableAt(oldTable, end) == null) {</span>
+<span class="nc" id="L565">                    IntMapByDynamicHash.setTableAt(oldTable, end, RESIZE_SENTINEL);</span>
+<span class="nc bnc" id="L566" title="All 4 branches missed.">                    if (this.partitionedSize == null &amp;&amp; newSize &gt;= PARTITIONED_SIZE_THRESHOLD) {</span>
+<span class="nc" id="L567">                        this.partitionedSize = new int[SIZE_BUCKETS * 16];</span>
+                    }
+<span class="nc" id="L569">                    resizeContainer = new ResizeContainer(new Entry[newSize], oldTable.length - 1);</span>
+<span class="nc" id="L570">                    IntMapByDynamicHash.setTableAt(oldTable, end, resizeContainer);</span>
+<span class="nc" id="L571">                    ownResize = true;</span>
+                }
+<span class="nc" id="L573">            }</span>
+        }
+<span class="nc bnc" id="L575" title="All 2 branches missed.">        if (ownResize) {</span>
+<span class="nc" id="L576">            this.transfer(oldTable, resizeContainer);</span>
+
+<span class="nc" id="L578">            Entry[] src = this.table;</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">            while (!TABLE_UPDATER.compareAndSet(this, oldTable, resizeContainer.nextArray)) {</span>
+                /*
+                we're in a double resize situation; we'll have to go help until it's our turn
+                to set the table
+                 */
+<span class="nc bnc" id="L584" title="All 2 branches missed.">                if (src != oldTable) {</span>
+<span class="nc" id="L585">                    this.helpWithResize(src);</span>
+                }
+            }
+<span class="nc" id="L588">        } else {</span>
+<span class="nc" id="L589">            this.helpWithResize(oldTable);</span>
+        }
+<span class="nc" id="L591">    }</span>
+
+    /**
+     * Transfers all entries from the source table to the destination table. This method is
+     * called during the resize operation. It iterates over the source table and for each non-null
+     * entry, it copies the entry to the destination table. If the entry in the source table is
+     * marked as RESIZED or RESIZING, it helps with the resize operation.
+     * After all entries are transferred, it notifies the ResizeContainer that the resize operation
+     * is done.
+     *
+     * @param src             The source table from which entries are to be transferred.
+     * @param resizeContainer The container that holds the state of the resize operation.
+     */
+    private void transfer(Entry[] src, ResizeContainer resizeContainer) {
+<span class="nc" id="L605">        Entry[] dest = resizeContainer.nextArray;</span>
+
+<span class="nc bnc" id="L607" title="All 2 branches missed.">        for (int j = 0; j &lt; src.length - 1; ) {</span>
+<span class="nc" id="L608">            Entry o = (Entry) IntMapByDynamicHash.tableAt(src, j);</span>
+<span class="nc bnc" id="L609" title="All 2 branches missed.">            if (o == null) {</span>
+<span class="nc bnc" id="L610" title="All 2 branches missed.">                if (IntMapByDynamicHash.casTableAt(src, j, null, RESIZED)) {</span>
+<span class="nc" id="L611">                    j++;</span>
+                }
+<span class="nc bnc" id="L613" title="All 4 branches missed.">            } else if (o == RESIZED || o == RESIZING) {</span>
+                /*
+                 During the expansion process, other threads have already migrated the elements at
+                 this location to the new array. This means that the elements in the current
+                 position have already been processed and do not need to be migrated again.
+                 */
+<span class="nc" id="L619">                j = (j &amp; ~(ResizeContainer.QUEUE_INCREMENT - 1)) + ResizeContainer.QUEUE_INCREMENT;</span>
+                /*
+                 When there is only one thread for expansion, there is no concurrency issue
+                 and there is no need to wait.
+                 */
+<span class="nc bnc" id="L624" title="All 2 branches missed.">                if (resizeContainer.resizers.get() == 1) {</span>
+<span class="nc" id="L625">                    break;</span>
+                }
+            } else {
+<span class="nc" id="L628">                Entry e = o;</span>
+<span class="nc bnc" id="L629" title="All 2 branches missed.">                if (IntMapByDynamicHash.casTableAt(src, j, o, RESIZING)) {</span>
+<span class="nc bnc" id="L630" title="All 2 branches missed.">                    while (e != null) {</span>
+<span class="nc" id="L631">                        this.unconditionalCopy(dest, e);</span>
+<span class="nc" id="L632">                        e = e.getNext();</span>
+                    }
+<span class="nc" id="L634">                    IntMapByDynamicHash.setTableAt(src, j, RESIZED);</span>
+<span class="nc" id="L635">                    j++;</span>
+                }
+            }
+<span class="nc" id="L638">        }</span>
+<span class="nc" id="L639">        resizeContainer.decrementResizerAndNotify();</span>
+<span class="nc" id="L640">        resizeContainer.waitForAllResizers();</span>
+<span class="nc" id="L641">    }</span>
+
+    /**
+     * Enable the current thread to participate in the expansion
+     */
+    private Entry[] helpWithResize(Entry[] currentArray) {
+<span class="nc" id="L647">        ResizeContainer resizeContainer =</span>
+<span class="nc" id="L648">            (ResizeContainer) IntMapByDynamicHash.tableAt(currentArray, currentArray.length - 1);</span>
+<span class="nc" id="L649">        Entry[] newTable = resizeContainer.nextArray;</span>
+<span class="nc bnc" id="L650" title="All 2 branches missed.">        if (resizeContainer.getQueuePosition() &gt; ResizeContainer.QUEUE_INCREMENT) {</span>
+<span class="nc" id="L651">            resizeContainer.incrementResizer();</span>
+<span class="nc" id="L652">            this.reverseTransfer(currentArray, resizeContainer);</span>
+<span class="nc" id="L653">            resizeContainer.decrementResizerAndNotify();</span>
+        }
+<span class="nc" id="L655">        return newTable;</span>
+    }
+
+    /**
+     * Transfers entries from the old table to the new table in reverse order. This method is used
+     * to help the resize operation by spreading the work among multiple threads. Each thread
+     * transfers a portion of the entries from the end of the old table to the beginning of the new
+     * table.
+     *
+     * @param src             The old table to transfer entries from.
+     * @param resizeContainer The container that holds the state of the resize operation.
+     */
+    private void reverseTransfer(Entry[] src, ResizeContainer resizeContainer) {
+<span class="nc" id="L668">        Entry[] dest = resizeContainer.nextArray;</span>
+<span class="nc bnc" id="L669" title="All 2 branches missed.">        while (resizeContainer.getQueuePosition() &gt; 0) {</span>
+<span class="nc" id="L670">            int start = resizeContainer.subtractAndGetQueuePosition();</span>
+<span class="nc" id="L671">            int end = start + ResizeContainer.QUEUE_INCREMENT;</span>
+<span class="nc bnc" id="L672" title="All 2 branches missed.">            if (end &gt; 0) {</span>
+<span class="nc bnc" id="L673" title="All 2 branches missed.">                if (start &lt; 0) {</span>
+<span class="nc" id="L674">                    start = 0;</span>
+                }
+<span class="nc bnc" id="L676" title="All 2 branches missed.">                for (int j = end - 1; j &gt;= start; ) {</span>
+<span class="nc" id="L677">                    Entry o = (Entry) IntMapByDynamicHash.tableAt(src, j);</span>
+<span class="nc bnc" id="L678" title="All 2 branches missed.">                    if (o == null) {</span>
+<span class="nc bnc" id="L679" title="All 2 branches missed.">                        if (IntMapByDynamicHash.casTableAt(src, j, null, RESIZED)) {</span>
+<span class="nc" id="L680">                            j--;</span>
+                        }
+<span class="nc bnc" id="L682" title="All 4 branches missed.">                    } else if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc" id="L683">                        resizeContainer.zeroOutQueuePosition();</span>
+<span class="nc" id="L684">                        return;</span>
+                    } else {
+<span class="nc" id="L686">                        Entry e = o;</span>
+<span class="nc bnc" id="L687" title="All 2 branches missed.">                        if (IntMapByDynamicHash.casTableAt(src, j, o, RESIZING)) {</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">                            while (e != null) {</span>
+<span class="nc" id="L689">                                this.unconditionalCopy(dest, e);</span>
+<span class="nc" id="L690">                                e = e.getNext();</span>
+                            }
+<span class="nc" id="L692">                            IntMapByDynamicHash.setTableAt(src, j, RESIZED);</span>
+<span class="nc" id="L693">                            j--;</span>
+                        }
+                    }
+<span class="nc" id="L696">                }</span>
+            }
+<span class="nc" id="L698">        }</span>
+<span class="nc" id="L699">    }</span>
+
+    /**
+     * Copies an entry from the old table to the new table. This method is called during the resize
+     * operation. It does not check if the entry already exists in the new table, so it should only
+     * be called with entries that are not in the new table yet.
+     *
+     * @param dest        The new table to copy the entry to.
+     * @param toCopyEntry The entry to copy.
+     */
+    private void unconditionalCopy(Entry[] dest, Entry toCopyEntry) {
+<span class="nc" id="L710">        Entry[] currentArray = dest;</span>
+        while (true) {
+<span class="nc" id="L712">            int length = currentArray.length;</span>
+<span class="nc" id="L713">            int index = this.hash(toCopyEntry.getKey(), length);</span>
+<span class="nc" id="L714">            Entry o = (Entry) IntMapByDynamicHash.tableAt(currentArray, index);</span>
+<span class="nc bnc" id="L715" title="All 4 branches missed.">            if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc" id="L716">                currentArray =</span>
+<span class="nc" id="L717">                    ((ResizeContainer) IntMapByDynamicHash.tableAt(currentArray,</span>
+<span class="nc" id="L718">                                                                   length - 1)).nextArray;</span>
+            } else {
+                Entry newEntry;
+<span class="nc bnc" id="L721" title="All 2 branches missed.">                if (o == null) {</span>
+<span class="nc bnc" id="L722" title="All 2 branches missed.">                    if (toCopyEntry.getNext() == null) {</span>
+<span class="nc" id="L723">                        newEntry = toCopyEntry; // no need to duplicate</span>
+                    } else {
+<span class="nc" id="L725">                        newEntry = new Entry(toCopyEntry.getKey(), toCopyEntry.getValue());</span>
+                    }
+                } else {
+<span class="nc" id="L728">                    newEntry = new Entry(toCopyEntry.getKey(), toCopyEntry.getValue(), o);</span>
+                }
+<span class="nc bnc" id="L730" title="All 2 branches missed.">                if (IntMapByDynamicHash.casTableAt(currentArray, index, o, newEntry)) {</span>
+<span class="nc" id="L731">                    return;</span>
+                }
+            }
+<span class="nc" id="L734">        }</span>
+    }
+
+    /**
+     * The ResizeContainer class is used to hold the state of the resize operation.
+     * It contains the new array to which entries are transferred, the number of threads
+     * participating in the resize operation, and the position in the old array from which
+     * entries are transferred.
+     */
+    private static final class ResizeContainer extends Entry {
+
+<span class="nc" id="L745">        private static final int QUEUE_INCREMENT =</span>
+<span class="nc" id="L746">            Math.min(1 &lt;&lt; 10,</span>
+<span class="nc" id="L747">                     Integer.highestOneBit(IntSet.CPUS) &lt;&lt; 4);</span>
+<span class="nc" id="L748">        private final AtomicInteger resizers = new AtomicInteger(1);</span>
+        private final Entry[] nextArray;
+        private final AtomicInteger queuePosition;
+
+        private ResizeContainer(Entry[] nextArray, int oldSize) {
+<span class="nc" id="L753">            super(NULL_VALUE, NULL_VALUE, (byte) 4);</span>
+<span class="nc" id="L754">            this.nextArray = nextArray;</span>
+<span class="nc" id="L755">            this.queuePosition = new AtomicInteger(oldSize);</span>
+<span class="nc" id="L756">        }</span>
+
+        public void incrementResizer() {
+<span class="nc" id="L759">            this.resizers.incrementAndGet();</span>
+<span class="nc" id="L760">        }</span>
+
+        public void decrementResizerAndNotify() {
+<span class="nc" id="L763">            int remaining = this.resizers.decrementAndGet();</span>
+<span class="nc bnc" id="L764" title="All 2 branches missed.">            if (remaining == 0) {</span>
+<span class="nc" id="L765">                synchronized (this) {</span>
+<span class="nc" id="L766">                    this.notifyAll();</span>
+<span class="nc" id="L767">                }</span>
+            }
+<span class="nc" id="L769">        }</span>
+
+        public int getQueuePosition() {
+<span class="nc" id="L772">            return this.queuePosition.get();</span>
+        }
+
+        public int subtractAndGetQueuePosition() {
+<span class="nc" id="L776">            return this.queuePosition.addAndGet(-QUEUE_INCREMENT);</span>
+        }
+
+        public void waitForAllResizers() {
+<span class="nc bnc" id="L780" title="All 2 branches missed.">            if (this.resizers.get() &gt; 0) {</span>
+<span class="nc bnc" id="L781" title="All 2 branches missed.">                for (int i = 0; i &lt; 16; i++) {</span>
+<span class="nc bnc" id="L782" title="All 2 branches missed.">                    if (this.resizers.get() == 0) {</span>
+<span class="nc" id="L783">                        break;</span>
+                    }
+                }
+<span class="nc bnc" id="L786" title="All 2 branches missed.">                for (int i = 0; i &lt; 16; i++) {</span>
+<span class="nc bnc" id="L787" title="All 2 branches missed.">                    if (this.resizers.get() == 0) {</span>
+<span class="nc" id="L788">                        break;</span>
+                    }
+<span class="nc" id="L790">                    Thread.yield();</span>
+                }
+            }
+<span class="nc bnc" id="L793" title="All 2 branches missed.">            if (this.resizers.get() &gt; 0) {</span>
+<span class="nc" id="L794">                synchronized (this) {</span>
+<span class="nc bnc" id="L795" title="All 2 branches missed.">                    while (this.resizers.get() &gt; 0) {</span>
+                        try {
+<span class="nc" id="L797">                            this.wait();</span>
+<span class="nc" id="L798">                        } catch (InterruptedException e) {</span>
+                            // ignore
+<span class="nc" id="L800">                        }</span>
+                    }
+<span class="nc" id="L802">                }</span>
+            }
+<span class="nc" id="L804">        }</span>
+
+        public boolean isNotDone() {
+<span class="nc bnc" id="L807" title="All 2 branches missed.">            return this.resizers.get() &gt; 0;</span>
+        }
+
+        public void zeroOutQueuePosition() {
+<span class="nc" id="L811">            this.queuePosition.set(0);</span>
+<span class="nc" id="L812">        }</span>
+    }
+
+    private static class Entry {
+
+        final int key;
+        volatile int value;
+        volatile Entry next;
+
+        /**
+         * 0 NORMAL
+         * 1 RESIZING
+         * 2 RESIZED
+         * 3 RESIZE_SENTINEL
+         * 4 RESIZE_CONTAINER
+         */
+        final byte state;
+
+<span class="nc" id="L830">        public Entry(int key, int value, byte state) {</span>
+<span class="nc" id="L831">            this.key = key;</span>
+<span class="nc" id="L832">            this.value = value;</span>
+<span class="nc" id="L833">            this.state = state;</span>
+<span class="nc" id="L834">        }</span>
+
+<span class="nc" id="L836">        public Entry(int key, int value) {</span>
+<span class="nc" id="L837">            this.key = key;</span>
+<span class="nc" id="L838">            this.value = value;</span>
+<span class="nc" id="L839">            this.next = null;</span>
+<span class="nc" id="L840">            this.state = 0;</span>
+<span class="nc" id="L841">        }</span>
+
+<span class="nc" id="L843">        public Entry(int key, int value, Entry next) {</span>
+<span class="nc" id="L844">            this.key = key;</span>
+<span class="nc" id="L845">            this.value = value;</span>
+<span class="nc" id="L846">            this.next = next;</span>
+<span class="nc" id="L847">            this.state = 0;</span>
+<span class="nc" id="L848">        }</span>
+
+        public int getKey() {
+<span class="nc" id="L851">            return key;</span>
+        }
+
+        public int getValue() {
+<span class="nc" id="L855">            return value;</span>
+        }
+
+        public Entry getNext() {
+<span class="nc" id="L859">            return next;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L864">            return this.key + &quot;=&quot; + this.value;</span>
+        }
+    }
+
+    /* ---------------- Iterator -------------- */
+
+    private static final class IteratorState {
+        private Entry[] currentTable;
+        private int start;
+        private int end;
+
+<span class="nc" id="L875">        private IteratorState(Entry[] currentTable) {</span>
+<span class="nc" id="L876">            this.currentTable = currentTable;</span>
+<span class="nc" id="L877">            this.end = this.currentTable.length - 1;</span>
+<span class="nc" id="L878">        }</span>
+
+<span class="nc" id="L880">        private IteratorState(Entry[] currentTable, int start, int end) {</span>
+<span class="nc" id="L881">            this.currentTable = currentTable;</span>
+<span class="nc" id="L882">            this.start = start;</span>
+<span class="nc" id="L883">            this.end = end;</span>
+<span class="nc" id="L884">        }</span>
+    }
+
+    /**
+     * The HashIterator class is an abstract base class for iterators over the map.
+     * It maintains the current state of the iteration, which includes the current table
+     * being iterated over and the index of the next entry to be returned.
+     * The findNext() method is used to advance the iterator to the next entry.
+     */
+    private abstract class HashIterator implements IntIterator {
+
+        private List&lt;IteratorState&gt; todo;
+        private IteratorState currentState;
+        private Entry next;
+        private int index;
+
+<span class="nc" id="L900">        protected HashIterator() {</span>
+<span class="nc" id="L901">            this.currentState = new IteratorState(IntMapByDynamicHash.this.table);</span>
+<span class="nc" id="L902">            this.findNext();</span>
+<span class="nc" id="L903">        }</span>
+
+        /**
+         * This method is used to advance the iterator to the next entry.
+         * It iterates over the entries in the current table from the current index
+         * until it finds a non-null entry. If it encounters a RESIZED or RESIZING entry,
+         * it helps with the resize operation and continues the iteration in the new table.
+         * If it reaches the end of the current table and there are still tables left to be
+         * iterated over, it switches to the next table.
+         */
+        private void findNext() {
+<span class="nc bnc" id="L914" title="All 2 branches missed.">            while (this.index &lt; this.currentState.end) {</span>
+<span class="nc" id="L915">                Entry o =</span>
+<span class="nc" id="L916">                    (Entry) IntMapByDynamicHash.tableAt(this.currentState.currentTable, this.index);</span>
+<span class="nc bnc" id="L917" title="All 4 branches missed.">                if (o == RESIZED || o == RESIZING) {</span>
+<span class="nc" id="L918">                    Entry[] nextArray =</span>
+<span class="nc" id="L919">                        IntMapByDynamicHash.this.helpWithResizeWhileCurrentIndex(</span>
+<span class="nc" id="L920">                            this.currentState.currentTable, this.index);</span>
+<span class="nc" id="L921">                    int endResized = this.index + 1;</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">                    while (endResized &lt; this.currentState.end) {</span>
+<span class="nc" id="L923">                        if (IntMapByDynamicHash.tableAt(this.currentState.currentTable,</span>
+<span class="nc bnc" id="L924" title="All 2 branches missed.">                                                        endResized) != RESIZED) {</span>
+<span class="nc" id="L925">                            break;</span>
+                        }
+<span class="nc" id="L927">                        endResized++;</span>
+                    }
+<span class="nc bnc" id="L929" title="All 2 branches missed.">                    if (this.todo == null) {</span>
+<span class="nc" id="L930">                        this.todo = new ArrayList&lt;&gt;(4);</span>
+                    }
+<span class="nc bnc" id="L932" title="All 2 branches missed.">                    if (endResized &lt; this.currentState.end) {</span>
+<span class="nc" id="L933">                        this.todo.add(new IteratorState(</span>
+<span class="nc" id="L934">                            this.currentState.currentTable, endResized, this.currentState.end));</span>
+                    }
+<span class="nc" id="L936">                    int powerTwoLength = this.currentState.currentTable.length - 1;</span>
+<span class="nc" id="L937">                    this.todo.add(new IteratorState(nextArray, this.index + powerTwoLength,</span>
+                                                    endResized + powerTwoLength));
+<span class="nc" id="L939">                    this.currentState.currentTable = nextArray;</span>
+<span class="nc" id="L940">                    this.currentState.end = endResized;</span>
+<span class="nc" id="L941">                    this.currentState.start = this.index;</span>
+<span class="nc bnc" id="L942" title="All 2 branches missed.">                } else if (o != null) {</span>
+<span class="nc" id="L943">                    this.next = o;</span>
+<span class="nc" id="L944">                    this.index++;</span>
+<span class="nc" id="L945">                    break;</span>
+                } else {
+<span class="nc" id="L947">                    this.index++;</span>
+                }
+<span class="nc" id="L949">            }</span>
+<span class="nc bnc" id="L950" title="All 6 branches missed.">            if (this.next == null &amp;&amp; this.index == this.currentState.end &amp;&amp; this.todo != null &amp;&amp;</span>
+<span class="nc bnc" id="L951" title="All 2 branches missed.">                !this.todo.isEmpty()) {</span>
+<span class="nc" id="L952">                this.currentState = this.todo.remove(this.todo.size() - 1);</span>
+<span class="nc" id="L953">                this.index = this.currentState.start;</span>
+<span class="nc" id="L954">                this.findNext();</span>
+            }
+<span class="nc" id="L956">        }</span>
+
+        @Override
+        public final boolean hasNext() {
+<span class="nc bnc" id="L960" title="All 2 branches missed.">            return this.next != null;</span>
+        }
+
+        final Entry nextEntry() {
+<span class="nc" id="L964">            Entry e = this.next;</span>
+<span class="nc bnc" id="L965" title="All 2 branches missed.">            if (e == null) {</span>
+<span class="nc" id="L966">                throw new NoSuchElementException();</span>
+            }
+
+<span class="nc bnc" id="L969" title="All 2 branches missed.">            if ((this.next = e.getNext()) == null) {</span>
+<span class="nc" id="L970">                this.findNext();</span>
+            }
+<span class="nc" id="L972">            return e;</span>
+        }
+    }
+
+<span class="nc" id="L976">    private final class ValueIterator extends HashIterator {</span>
+        @Override
+        public int next() {
+<span class="nc" id="L979">            return this.nextEntry().getValue();</span>
+        }
+    }
+
+<span class="nc" id="L983">    private final class KeyIterator extends HashIterator {</span>
+        @Override
+        public int next() {
+<span class="nc" id="L986">            return this.nextEntry().getKey();</span>
+        }
+    }
+
+    /* ---------------- Unsafe mechanics -------------- */
+<span class="nc" id="L991">    private static final Unsafe UNSAFE = IntSet.UNSAFE;</span>
+    private static final long ENTRY_ARRAY_BASE;
+    private static final int ENTRY_ARRAY_SHIFT;
+    private static final long INT_ARRAY_BASE;
+    private static final int INT_ARRAY_SHIFT;
+    private static final long SIZE_OFFSET;
+
+    static {
+        try {
+<span class="nc" id="L1000">            Class&lt;?&gt; tableClass = Entry[].class;</span>
+<span class="nc" id="L1001">            ENTRY_ARRAY_BASE = UNSAFE.arrayBaseOffset(tableClass);</span>
+<span class="nc" id="L1002">            int objectArrayScale = UNSAFE.arrayIndexScale(tableClass);</span>
+<span class="nc bnc" id="L1003" title="All 2 branches missed.">            if ((objectArrayScale &amp; (objectArrayScale - 1)) != 0) {</span>
+<span class="nc" id="L1004">                throw new AssertionError(&quot;data type scale not a power of two&quot;);</span>
+            }
+<span class="nc" id="L1006">            ENTRY_ARRAY_SHIFT = 31 - Integer.numberOfLeadingZeros(objectArrayScale);</span>
+
+<span class="nc" id="L1008">            Class&lt;?&gt; intArrayClass = int[].class;</span>
+<span class="nc" id="L1009">            INT_ARRAY_BASE = UNSAFE.arrayBaseOffset(intArrayClass);</span>
+<span class="nc" id="L1010">            int intArrayScale = UNSAFE.arrayIndexScale(intArrayClass);</span>
+<span class="nc bnc" id="L1011" title="All 2 branches missed.">            if ((intArrayScale &amp; (intArrayScale - 1)) != 0) {</span>
+<span class="nc" id="L1012">                throw new AssertionError(&quot;data type scale not a power of two&quot;);</span>
+            }
+<span class="nc" id="L1014">            INT_ARRAY_SHIFT = 31 - Integer.numberOfLeadingZeros(intArrayScale);</span>
+
+<span class="nc" id="L1016">            Class&lt;?&gt; mapClass = IntMapByDynamicHash.class;</span>
+<span class="nc" id="L1017">            SIZE_OFFSET = UNSAFE.objectFieldOffset(mapClass.getDeclaredField(&quot;size&quot;));</span>
+<span class="nc" id="L1018">        } catch (NoSuchFieldException | SecurityException e) {</span>
+<span class="nc" id="L1019">            throw new AssertionError(e);</span>
+<span class="nc" id="L1020">        }</span>
+<span class="nc" id="L1021">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

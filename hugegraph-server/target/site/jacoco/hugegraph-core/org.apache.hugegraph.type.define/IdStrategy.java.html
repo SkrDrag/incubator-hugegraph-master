@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IdStrategy.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.type.define</a> &gt; <span class="el_source">IdStrategy.java</span></div><h1>IdStrategy.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.type.define;
+
+<span class="nc" id="L20">public enum IdStrategy implements SerialEnum {</span>
+
+<span class="nc" id="L22">    DEFAULT(0, &quot;default&quot;),</span>
+
+<span class="nc" id="L24">    AUTOMATIC(1, &quot;automatic&quot;),</span>
+
+<span class="nc" id="L26">    PRIMARY_KEY(2, &quot;primary_key&quot;),</span>
+
+<span class="nc" id="L28">    CUSTOMIZE_STRING(3, &quot;customize_string&quot;),</span>
+
+<span class="nc" id="L30">    CUSTOMIZE_NUMBER(4, &quot;customize_number&quot;),</span>
+
+<span class="nc" id="L32">    CUSTOMIZE_UUID(5, &quot;customize_uuid&quot;);</span>
+
+<span class="nc" id="L34">    private byte code = 0;</span>
+<span class="nc" id="L35">    private String name = null;</span>
+
+    static {
+<span class="nc" id="L38">        SerialEnum.register(IdStrategy.class);</span>
+<span class="nc" id="L39">    }</span>
+
+<span class="nc" id="L41">    IdStrategy(int code, String name) {</span>
+<span class="nc bnc" id="L42" title="All 2 branches missed.">        assert code &lt; 256;</span>
+<span class="nc" id="L43">        this.code = (byte) code;</span>
+<span class="nc" id="L44">        this.name = name;</span>
+<span class="nc" id="L45">    }</span>
+
+    @Override
+    public byte code() {
+<span class="nc" id="L49">        return this.code;</span>
+    }
+
+    public String string() {
+<span class="nc" id="L53">        return this.name;</span>
+    }
+
+    public boolean isAutomatic() {
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        return this == AUTOMATIC;</span>
+    }
+
+    public boolean isPrimaryKey() {
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        return this == PRIMARY_KEY;</span>
+    }
+
+    public boolean isCustomized() {
+<span class="nc bnc" id="L65" title="All 6 branches missed.">        return this == CUSTOMIZE_STRING ||</span>
+               this == CUSTOMIZE_NUMBER ||
+               this == CUSTOMIZE_UUID;
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="8.45">
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-mysql\src\main\java\org\apache\hugegraph\backend\store\mysql\MysqlSessions.java">
+<error line="286" severity="info" message="本行字符数 150个，最多：100个。" source="com.puppycrawl.tools.checkstyle.checks.sizes.LineLengthCheck"/>
+</file>
+</checkstyle>

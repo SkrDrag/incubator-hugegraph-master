@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="8.45">
+<file name="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-hbase\src\main\java\org\apache\hugegraph\backend\store\hbase\HbaseSessions.java">
+<error line="424" column="13" severity="info" message="WhitespaceAround: &apos;if&apos; is not followed by whitespace. Empty blocks may only be represented as {} when not part of a multi-block statement (4.1.3)" source="com.puppycrawl.tools.checkstyle.checks.whitespace.WhitespaceAroundCheck"/>
+</file>
+</checkstyle>

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PageState.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.page</a> &gt; <span class="el_source">PageState.java</span></div><h1>PageState.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.page;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.StringEncoding;
+
+public class PageState {
+
+<span class="nc" id="L28">    public static final byte[] EMPTY_BYTES = new byte[0];</span>
+<span class="nc" id="L29">    public static final PageState EMPTY = new PageState(EMPTY_BYTES, 0, 0);</span>
+    public static final char SPACE = ' ';
+    public static final char PLUS = '+';
+
+    private final byte[] position;
+    private final int offset;
+    private final int total;
+
+<span class="nc" id="L37">    public PageState(byte[] position, int offset, int total) {</span>
+<span class="nc" id="L38">        E.checkNotNull(position, &quot;position&quot;);</span>
+<span class="nc" id="L39">        this.position = position;</span>
+<span class="nc" id="L40">        this.offset = offset;</span>
+<span class="nc" id="L41">        this.total = total;</span>
+<span class="nc" id="L42">    }</span>
+
+    public byte[] position() {
+<span class="nc" id="L45">        return this.position;</span>
+    }
+
+    public int offset() {
+<span class="nc" id="L49">        return this.offset;</span>
+    }
+
+    public long total() {
+<span class="nc" id="L53">        return this.total;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        if (Bytes.equals(this.position(), EMPTY_BYTES)) {</span>
+<span class="nc" id="L59">            return null;</span>
+        }
+<span class="nc" id="L61">        return toString(this.toBytes());</span>
+    }
+
+    private byte[] toBytes() {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        assert this.position.length &gt; 0;</span>
+<span class="nc" id="L66">        int length = 2 + this.position.length + 2 * BytesBuffer.INT_LEN;</span>
+<span class="nc" id="L67">        BytesBuffer buffer = BytesBuffer.allocate(length);</span>
+<span class="nc" id="L68">        buffer.writeBytes(this.position);</span>
+<span class="nc" id="L69">        buffer.writeInt(this.offset);</span>
+<span class="nc" id="L70">        buffer.writeInt(this.total);</span>
+<span class="nc" id="L71">        return buffer.bytes();</span>
+    }
+
+    public static PageState fromString(String page) {
+<span class="nc" id="L75">        E.checkNotNull(page, &quot;page&quot;);</span>
+        /*
+         * URLDecoder will auto decode '+' to space in url due to the request
+         * of HTML4, so we choose to replace the space to '+' after getting it
+         * More details refer to #1437
+         */
+<span class="nc" id="L81">        page = page.replace(SPACE, PLUS);</span>
+<span class="nc" id="L82">        return fromBytes(toBytes(page));</span>
+    }
+
+    public static PageState fromBytes(byte[] bytes) {
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        if (bytes.length == 0) {</span>
+            // The first page
+<span class="nc" id="L88">            return EMPTY;</span>
+        }
+        try {
+<span class="nc" id="L91">            BytesBuffer buffer = BytesBuffer.wrap(bytes);</span>
+<span class="nc" id="L92">            return new PageState(buffer.readBytes(), buffer.readInt(),</span>
+<span class="nc" id="L93">                                 buffer.readInt());</span>
+<span class="nc" id="L94">        } catch (Exception e) {</span>
+<span class="nc" id="L95">            throw new BackendException(&quot;Invalid page: '0x%s'&quot;,</span>
+<span class="nc" id="L96">                                       e, Bytes.toHex(bytes));</span>
+        }
+    }
+
+    public static String toString(byte[] bytes) {
+<span class="nc" id="L101">        return StringEncoding.encodeBase64(bytes);</span>
+    }
+
+    public static byte[] toBytes(String page) {
+        try {
+<span class="nc" id="L106">            return StringEncoding.decodeBase64(page);</span>
+<span class="nc" id="L107">        } catch (Exception e) {</span>
+<span class="nc" id="L108">            throw new BackendException(&quot;Invalid page: '%s'&quot;, e, page);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

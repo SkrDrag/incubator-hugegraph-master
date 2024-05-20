@@ -1,0 +1,13 @@
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBStoreProvider$ScyllaDBGraphStore.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBStoreProvider$ScyllaDBSystemStore.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBStoreProvider$ScyllaDBSchemaStore.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBTablesWithMV$PropertyKey.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBTablesWithMV$Vertex.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBMetrics.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBTablesWithMV$VertexLabel.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBTablesWithMV$Edge.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBTablesWithMV$IndexLabel.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBFeatures.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBTablesWithMV$EdgeLabel.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBTablesWithMV.class
+org\apache\hugegraph\backend\store\scylladb\ScyllaDBStoreProvider.class

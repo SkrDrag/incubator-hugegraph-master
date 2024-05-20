@@ -1,0 +1,544 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeEdge.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.structure</a> &gt; <span class="el_source">HugeEdge.java</span></div><h1>HugeEdge.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.structure;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.logging.log4j.util.Strings;
+import org.apache.tinkerpop.gremlin.structure.Direction;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Property;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.StringFactory;
+
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.util.E;
+import org.apache.tinkerpop.gremlin.structure.util.empty.EmptyProperty;
+
+import com.google.common.collect.ImmutableList;
+
+<span class="nc" id="L52">public class HugeEdge extends HugeElement implements Edge, Cloneable {</span>
+
+    private Id id;
+    private final EdgeLabel label;
+    private String name;
+
+    private HugeVertex sourceVertex;
+    private HugeVertex targetVertex;
+    private boolean isOutEdge;
+
+    public HugeEdge(HugeVertex owner, Id id, EdgeLabel label,
+                    HugeVertex other) {
+<span class="nc" id="L64">        this(owner.graph(), id, label);</span>
+<span class="nc" id="L65">        this.fresh(true);</span>
+<span class="nc" id="L66">        this.vertices(owner, other);</span>
+<span class="nc" id="L67">    }</span>
+
+    public HugeEdge(final HugeGraph graph, Id id, EdgeLabel label) {
+<span class="nc" id="L70">        super(graph);</span>
+
+<span class="nc" id="L72">        E.checkArgumentNotNull(label, &quot;Edge label can't be null&quot;);</span>
+<span class="nc" id="L73">        this.label = label;</span>
+
+<span class="nc" id="L75">        this.id = id;</span>
+<span class="nc" id="L76">        this.name = null;</span>
+<span class="nc" id="L77">        this.sourceVertex = null;</span>
+<span class="nc" id="L78">        this.targetVertex = null;</span>
+<span class="nc" id="L79">        this.isOutEdge = true;</span>
+<span class="nc" id="L80">    }</span>
+
+    @Override
+    public HugeType type() {
+        // NOTE: we optimize the edge type that let it include direction
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        return this.isOutEdge ? HugeType.EDGE_OUT : HugeType.EDGE_IN;</span>
+    }
+
+    @Override
+    public EdgeId id() {
+<span class="nc" id="L90">        return (EdgeId) this.id;</span>
+    }
+
+    @Override
+    public EdgeLabel schemaLabel() {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        assert this.graph().sameAs(this.label.graph());</span>
+<span class="nc" id="L96">        return this.label;</span>
+    }
+
+    @Override
+    public String name() {
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (this.name == null) {</span>
+<span class="nc" id="L102">            List&lt;Object&gt; sortValues = this.sortValues();</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">            if (sortValues.isEmpty()) {</span>
+<span class="nc" id="L104">                this.name = Strings.EMPTY;</span>
+            } else {
+<span class="nc" id="L106">                this.name = ConditionQuery.concatValues(sortValues);</span>
+            }
+        }
+<span class="nc" id="L109">        return this.name;</span>
+    }
+
+    public void name(String name) {
+<span class="nc" id="L113">        this.name = name;</span>
+<span class="nc" id="L114">    }</span>
+
+    @Override
+    public String label() {
+<span class="nc" id="L118">        return this.label.name();</span>
+    }
+
+    public boolean selfLoop() {
+<span class="nc bnc" id="L122" title="All 4 branches missed.">        return this.sourceVertex != null &amp;&amp;</span>
+               this.sourceVertex == this.targetVertex;
+    }
+
+    public Directions direction() {
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        return this.isOutEdge ? Directions.OUT : Directions.IN;</span>
+    }
+
+    public boolean matchDirection(Directions direction) {
+<span class="nc bnc" id="L131" title="All 4 branches missed.">        if (direction == Directions.BOTH || this.selfLoop()) {</span>
+<span class="nc" id="L132">            return true;</span>
+        }
+<span class="nc" id="L134">        return this.isDirection(direction);</span>
+    }
+
+    public boolean isDirection(Directions direction) {
+<span class="nc bnc" id="L138" title="All 8 branches missed.">        return this.isOutEdge &amp;&amp; direction == Directions.OUT ||</span>
+               !this.isOutEdge &amp;&amp; direction == Directions.IN;
+    }
+
+    @Watched(prefix = &quot;edge&quot;)
+    public void assignId() {
+        // Generate an id and assign
+<span class="nc" id="L145">        this.id = new EdgeId(this.ownerVertex(), this.direction(),</span>
+<span class="nc" id="L146">                             this.schemaLabel().id(), this.name(),</span>
+<span class="nc" id="L147">                             this.otherVertex());</span>
+
+<span class="nc bnc" id="L149" title="All 2 branches missed.">        if (this.fresh()) {</span>
+<span class="nc" id="L150">            int len = this.id.length();</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">            E.checkArgument(len &lt;= BytesBuffer.BIG_ID_LEN_MAX,</span>
+                            &quot;The max length of edge id is %s, but got %s {%s}&quot;,
+<span class="nc" id="L153">                            BytesBuffer.BIG_ID_LEN_MAX, len, this.id);</span>
+        }
+<span class="nc" id="L155">    }</span>
+
+    @Watched(prefix = &quot;edge&quot;)
+    public EdgeId idWithDirection() {
+<span class="nc" id="L159">        return ((EdgeId) this.id).directed(true);</span>
+    }
+
+    @Watched(prefix = &quot;edge&quot;)
+    protected List&lt;Object&gt; sortValues() {
+<span class="nc" id="L164">        List&lt;Id&gt; sortKeys = this.schemaLabel().sortKeys();</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        if (sortKeys.isEmpty()) {</span>
+<span class="nc" id="L166">            return ImmutableList.of();</span>
+        }
+<span class="nc" id="L168">        List&lt;Object&gt; propValues = new ArrayList&lt;&gt;(sortKeys.size());</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        for (Id sk : sortKeys) {</span>
+<span class="nc" id="L170">            HugeProperty&lt;?&gt; property = this.getProperty(sk);</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">            E.checkState(property != null,</span>
+                         &quot;The value of sort key '%s' can't be null&quot;, sk);
+<span class="nc" id="L173">            Object propValue = property.serialValue(true);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">            if (Strings.EMPTY.equals(propValue)) {</span>
+<span class="nc" id="L175">                propValue = ConditionQuery.INDEX_VALUE_EMPTY;</span>
+            }
+<span class="nc" id="L177">            propValues.add(propValue);</span>
+<span class="nc" id="L178">        }</span>
+<span class="nc" id="L179">        return propValues;</span>
+    }
+
+    @Watched(prefix = &quot;edge&quot;)
+    @Override
+    public void remove() {
+<span class="nc" id="L185">        this.removed(true);</span>
+<span class="nc" id="L186">        this.sourceVertex.removeEdge(this);</span>
+<span class="nc" id="L187">        this.targetVertex.removeEdge(this);</span>
+
+<span class="nc" id="L189">        GraphTransaction tx = this.tx();</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        if (tx != null) {</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">            assert this.fresh();</span>
+<span class="nc" id="L192">            tx.removeEdge(this);</span>
+        } else {
+<span class="nc" id="L194">            this.graph().removeEdge(this);</span>
+        }
+<span class="nc" id="L196">    }</span>
+
+    @Override
+    public &lt;V&gt; Property&lt;V&gt; property(String key, V value) {
+<span class="nc" id="L200">        PropertyKey propertyKey = this.graph().propertyKey(key);</span>
+        // Check key in edge label
+<span class="nc" id="L202">        E.checkArgument(this.label.properties().contains(propertyKey.id()),</span>
+                        &quot;Invalid property '%s' for edge label '%s'&quot;,
+<span class="nc" id="L204">                        key, this.label());</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L206">            this.removeProperty(propertyKey.id());</span>
+<span class="nc" id="L207">            return EmptyProperty.instance();</span>
+        }
+
+        // Sort-Keys can only be set once
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (this.schemaLabel().sortKeys().contains(propertyKey.id())) {</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            E.checkArgument(!this.hasProperty(propertyKey.id()),</span>
+                            &quot;Can't update sort key: '%s'&quot;, key);
+        }
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        return this.addProperty(propertyKey, value, !this.fresh());</span>
+    }
+
+    @Override
+    protected GraphTransaction tx() {
+<span class="nc bnc" id="L220" title="All 4 branches missed.">        if (this.ownerVertex() == null || !this.fresh()) {</span>
+<span class="nc" id="L221">            return null;</span>
+        }
+<span class="nc" id="L223">        return this.ownerVertex().tx();</span>
+    }
+
+    @Watched(prefix = &quot;edge&quot;)
+    @Override
+    protected &lt;V&gt; HugeEdgeProperty&lt;V&gt; newProperty(PropertyKey pkey, V val) {
+<span class="nc" id="L229">        return new HugeEdgeProperty&lt;&gt;(this, pkey, val);</span>
+    }
+
+    @Watched(prefix = &quot;edge&quot;)
+    @Override
+    protected &lt;V&gt; void onUpdateProperty(Cardinality cardinality,
+                                        HugeProperty&lt;V&gt; prop) {
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if (prop != null) {</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">            assert prop instanceof HugeEdgeProperty;</span>
+<span class="nc" id="L238">            HugeEdgeProperty&lt;V&gt; edgeProp = (HugeEdgeProperty&lt;V&gt;) prop;</span>
+<span class="nc" id="L239">            GraphTransaction tx = this.tx();</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">            if (tx != null) {</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">                assert this.fresh();</span>
+<span class="nc" id="L242">                tx.addEdgeProperty(edgeProp);</span>
+            } else {
+<span class="nc" id="L244">                this.graph().addEdgeProperty(edgeProp);</span>
+            }
+        }
+<span class="nc" id="L247">    }</span>
+
+    @Watched(prefix = &quot;edge&quot;)
+    @Override
+    protected boolean ensureFilledProperties(boolean throwIfNotExist) {
+<span class="nc bnc" id="L252" title="All 2 branches missed.">        if (this.isPropLoaded()) {</span>
+<span class="nc" id="L253">            this.updateToDefaultValueIfNone();</span>
+<span class="nc" id="L254">            return true;</span>
+        }
+
+        // Skip query if there is no any property key in schema
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        if (this.schemaLabel().properties().isEmpty()) {</span>
+<span class="nc" id="L259">            this.propLoaded();</span>
+<span class="nc" id="L260">            return true;</span>
+        }
+
+        // Seems there is no scene to be here
+<span class="nc" id="L264">        Iterator&lt;Edge&gt; edges = this.graph().edges(this.id());</span>
+<span class="nc" id="L265">        Edge edge = QueryResults.one(edges);</span>
+<span class="nc bnc" id="L266" title="All 4 branches missed.">        if (edge == null &amp;&amp; !throwIfNotExist) {</span>
+<span class="nc" id="L267">            return false;</span>
+        }
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        E.checkState(edge != null, &quot;Edge '%s' does not exist&quot;, this.id);</span>
+<span class="nc" id="L270">        this.copyProperties((HugeEdge) edge);</span>
+<span class="nc" id="L271">        this.updateToDefaultValueIfNone();</span>
+<span class="nc" id="L272">        return true;</span>
+    }
+
+    @Watched(prefix = &quot;edge&quot;)
+    @SuppressWarnings(&quot;unchecked&quot;) // (Property&lt;V&gt;) prop
+    @Override
+    public &lt;V&gt; Iterator&lt;Property&lt;V&gt;&gt; properties(String... keys) {
+<span class="nc" id="L279">        this.ensureFilledProperties(true);</span>
+
+        // Capacity should be about the following size
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        int propsCapacity = keys.length == 0 ?</span>
+<span class="nc" id="L283">                            this.sizeOfProperties() :</span>
+<span class="nc" id="L284">                            keys.length;</span>
+<span class="nc" id="L285">        List&lt;Property&lt;V&gt;&gt; props = new ArrayList&lt;&gt;(propsCapacity);</span>
+
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        if (keys.length == 0) {</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">            for (HugeProperty&lt;?&gt; prop : this.getProperties()) {</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">                assert prop != null;</span>
+<span class="nc" id="L290">                props.add((Property&lt;V&gt;) prop);</span>
+<span class="nc" id="L291">            }</span>
+        } else {
+<span class="nc bnc" id="L293" title="All 2 branches missed.">            for (String key : keys) {</span>
+                Id pkeyId;
+                try {
+<span class="nc" id="L296">                    pkeyId = this.graph().propertyKey(key).id();</span>
+<span class="nc" id="L297">                } catch (IllegalArgumentException ignored) {</span>
+<span class="nc" id="L298">                    continue;</span>
+<span class="nc" id="L299">                }</span>
+<span class="nc" id="L300">                HugeProperty&lt;?&gt; prop = this.getProperty(pkeyId);</span>
+<span class="nc bnc" id="L301" title="All 2 branches missed.">                if (prop == null) {</span>
+                    // Not found
+<span class="nc" id="L303">                    continue;</span>
+                }
+<span class="nc" id="L305">                props.add((Property&lt;V&gt;) prop);</span>
+            }
+        }
+<span class="nc" id="L308">        return props.iterator();</span>
+    }
+
+    @Override
+    public Object sysprop(HugeKeys key) {
+<span class="nc bnc" id="L313" title="All 8 branches missed.">        switch (key) {</span>
+            case ID:
+<span class="nc" id="L315">                return this.id();</span>
+            case OWNER_VERTEX:
+<span class="nc" id="L317">                return this.ownerVertex().id();</span>
+            case LABEL:
+<span class="nc" id="L319">                return this.schemaLabel().id();</span>
+            case DIRECTION:
+<span class="nc" id="L321">                return this.direction();</span>
+            case OTHER_VERTEX:
+<span class="nc" id="L323">                return this.otherVertex().id();</span>
+            case SORT_VALUES:
+<span class="nc" id="L325">                return this.name();</span>
+            case PROPERTIES:
+<span class="nc" id="L327">                return this.getPropertiesMap();</span>
+            default:
+<span class="nc" id="L329">                E.checkArgument(false, &quot;Invalid system property '%s' of Edge&quot;, key);</span>
+<span class="nc" id="L330">                return null;</span>
+        }
+    }
+
+    @Override
+    public Iterator&lt;Vertex&gt; vertices(Direction direction) {
+<span class="nc" id="L336">        List&lt;Vertex&gt; vertices = new ArrayList&lt;&gt;(2);</span>
+<span class="nc bnc" id="L337" title="All 4 branches missed.">        switch (direction) {</span>
+            case OUT:
+<span class="nc" id="L339">                vertices.add(this.sourceVertex());</span>
+<span class="nc" id="L340">                break;</span>
+            case IN:
+<span class="nc" id="L342">                vertices.add(this.targetVertex());</span>
+<span class="nc" id="L343">                break;</span>
+            case BOTH:
+<span class="nc" id="L345">                vertices.add(this.sourceVertex());</span>
+<span class="nc" id="L346">                vertices.add(this.targetVertex());</span>
+<span class="nc" id="L347">                break;</span>
+            default:
+<span class="nc" id="L349">                throw new AssertionError(&quot;Unsupported direction: &quot; + direction);</span>
+        }
+
+<span class="nc" id="L352">        return vertices.iterator();</span>
+    }
+
+    @Override
+    public Vertex outVertex() {
+<span class="nc" id="L357">        return this.sourceVertex();</span>
+    }
+
+    @Override
+    public Vertex inVertex() {
+<span class="nc" id="L362">        return this.targetVertex();</span>
+    }
+
+    public void vertices(HugeVertex owner, HugeVertex other) {
+<span class="nc" id="L366">        Id ownerLabel = owner.schemaLabel().id();</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">        if (ownerLabel.equals(this.label.sourceLabel())) {</span>
+<span class="nc" id="L368">            this.vertices(true, owner, other);</span>
+        } else {
+<span class="nc bnc" id="L370" title="All 2 branches missed.">            assert ownerLabel.equals(this.label.targetLabel());</span>
+<span class="nc" id="L371">            this.vertices(false, owner, other);</span>
+        }
+<span class="nc" id="L373">    }</span>
+
+    public void vertices(boolean outEdge, HugeVertex owner, HugeVertex other) {
+<span class="nc" id="L376">        this.isOutEdge = outEdge;</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">        if (this.isOutEdge) {</span>
+<span class="nc" id="L378">            this.sourceVertex = owner;</span>
+<span class="nc" id="L379">            this.targetVertex = other;</span>
+        } else {
+<span class="nc" id="L381">            this.sourceVertex = other;</span>
+<span class="nc" id="L382">            this.targetVertex = owner;</span>
+        }
+<span class="nc" id="L384">    }</span>
+
+    @Watched
+    public HugeEdge switchOwner() {
+<span class="nc" id="L388">        HugeEdge edge = this.clone();</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">        edge.isOutEdge = !edge.isOutEdge;</span>
+<span class="nc" id="L390">        edge.id = ((EdgeId) edge.id).switchDirection();</span>
+<span class="nc" id="L391">        return edge;</span>
+    }
+
+    public HugeEdge switchToOutDirection() {
+<span class="nc bnc" id="L395" title="All 2 branches missed.">        if (this.direction() == Directions.IN) {</span>
+<span class="nc" id="L396">            return this.switchOwner();</span>
+        }
+<span class="nc" id="L398">        return this;</span>
+    }
+
+    public HugeVertex ownerVertex() {
+<span class="nc bnc" id="L402" title="All 2 branches missed.">        return this.isOutEdge ? this.sourceVertex() : this.targetVertex();</span>
+    }
+
+    public HugeVertex sourceVertex() {
+<span class="nc" id="L406">        this.checkAdjacentVertexExist(this.sourceVertex);</span>
+<span class="nc" id="L407">        return this.sourceVertex;</span>
+    }
+
+    public void sourceVertex(HugeVertex sourceVertex) {
+<span class="nc" id="L411">        this.sourceVertex = sourceVertex;</span>
+<span class="nc" id="L412">    }</span>
+
+    public HugeVertex targetVertex() {
+<span class="nc" id="L415">        this.checkAdjacentVertexExist(this.targetVertex);</span>
+<span class="nc" id="L416">        return this.targetVertex;</span>
+    }
+
+    public void targetVertex(HugeVertex targetVertex) {
+<span class="nc" id="L420">        this.targetVertex = targetVertex;</span>
+<span class="nc" id="L421">    }</span>
+
+    private void checkAdjacentVertexExist(HugeVertex vertex) {
+<span class="nc bnc" id="L424" title="All 2 branches missed.">        if (vertex.schemaLabel().undefined() &amp;&amp;</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">            this.graph().checkAdjacentVertexExist()) {</span>
+<span class="nc" id="L426">            throw new HugeException(&quot;Vertex '%s' does not exist&quot;, vertex.id());</span>
+        }
+<span class="nc" id="L428">    }</span>
+
+    public boolean belongToLabels(String... edgeLabels) {
+<span class="nc bnc" id="L431" title="All 2 branches missed.">        if (edgeLabels.length == 0) {</span>
+<span class="nc" id="L432">            return true;</span>
+        }
+
+        // Does edgeLabels contain me
+<span class="nc bnc" id="L436" title="All 2 branches missed.">        for (String label : edgeLabels) {</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">            if (label.equals(this.label())) {</span>
+<span class="nc" id="L438">                return true;</span>
+            }
+        }
+<span class="nc" id="L441">        return false;</span>
+    }
+
+    public boolean belongToVertex(HugeVertex vertex) {
+<span class="nc bnc" id="L445" title="All 4 branches missed.">        return vertex != null &amp;&amp; (vertex.equals(this.sourceVertex) ||</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">                                  vertex.equals(this.targetVertex));</span>
+    }
+
+    public HugeVertex otherVertex(HugeVertex vertex) {
+<span class="nc bnc" id="L450" title="All 2 branches missed.">        if (vertex == this.sourceVertex()) {</span>
+<span class="nc" id="L451">            return this.targetVertex();</span>
+        } else {
+<span class="nc bnc" id="L453" title="All 2 branches missed.">            E.checkArgument(vertex == this.targetVertex(),</span>
+                            &quot;Invalid argument vertex '%s', must be in [%s, %s]&quot;,
+<span class="nc" id="L455">                            vertex, this.sourceVertex(), this.targetVertex());</span>
+<span class="nc" id="L456">            return this.sourceVertex();</span>
+        }
+    }
+
+    public HugeVertex otherVertex() {
+<span class="nc bnc" id="L461" title="All 2 branches missed.">        return this.isOutEdge ? this.targetVertex() : this.sourceVertex();</span>
+    }
+
+    /**
+     * Clear properties of the edge, and set `removed` true
+     * @return a new edge
+     */
+    public HugeEdge prepareRemoved() {
+<span class="nc" id="L469">        HugeEdge edge = this.clone();</span>
+<span class="nc" id="L470">        edge.removed(true);</span>
+<span class="nc" id="L471">        edge.resetProperties();</span>
+<span class="nc" id="L472">        return edge;</span>
+    }
+
+    @Override
+    public HugeEdge copy() {
+<span class="nc" id="L477">        HugeEdge edge = this.clone();</span>
+<span class="nc" id="L478">        edge.copyProperties(this);</span>
+<span class="nc" id="L479">        return edge;</span>
+    }
+
+    @Override
+    protected HugeEdge clone() {
+        try {
+<span class="nc" id="L485">            return (HugeEdge) super.clone();</span>
+<span class="nc" id="L486">        } catch (CloneNotSupportedException e) {</span>
+<span class="nc" id="L487">            throw new HugeException(&quot;Failed to clone HugeEdge&quot;, e);</span>
+        }
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L493">        return StringFactory.edgeString(this);</span>
+    }
+
+    public static final EdgeId getIdValue(Object idValue,
+                                          boolean returnNullIfError) {
+<span class="nc" id="L498">        Id id = getIdValue(idValue);</span>
+<span class="nc bnc" id="L499" title="All 4 branches missed.">        if (id == null || id instanceof EdgeId) {</span>
+<span class="nc" id="L500">            return (EdgeId) id;</span>
+        }
+<span class="nc" id="L502">        return EdgeId.parse(id.asString(), returnNullIfError);</span>
+    }
+
+    @Watched
+    public static HugeEdge constructEdge(HugeVertex ownerVertex,
+                                         boolean isOutEdge,
+                                         EdgeLabel edgeLabel,
+                                         String sortValues,
+                                         Id otherVertexId) {
+<span class="nc" id="L511">        HugeGraph graph = ownerVertex.graph();</span>
+<span class="nc" id="L512">        VertexLabel srcLabel = graph.vertexLabelOrNone(edgeLabel.sourceLabel());</span>
+<span class="nc" id="L513">        VertexLabel tgtLabel = graph.vertexLabelOrNone(edgeLabel.targetLabel());</span>
+
+        VertexLabel otherVertexLabel;
+<span class="nc bnc" id="L516" title="All 2 branches missed.">        if (isOutEdge) {</span>
+<span class="nc" id="L517">            ownerVertex.correctVertexLabel(srcLabel);</span>
+<span class="nc" id="L518">            otherVertexLabel = tgtLabel;</span>
+        } else {
+<span class="nc" id="L520">            ownerVertex.correctVertexLabel(tgtLabel);</span>
+<span class="nc" id="L521">            otherVertexLabel = srcLabel;</span>
+        }
+<span class="nc" id="L523">        HugeVertex otherVertex = new HugeVertex(graph, otherVertexId, otherVertexLabel);</span>
+
+<span class="nc" id="L525">        ownerVertex.propNotLoaded();</span>
+<span class="nc" id="L526">        otherVertex.propNotLoaded();</span>
+
+<span class="nc" id="L528">        HugeEdge edge = new HugeEdge(graph, null, edgeLabel);</span>
+<span class="nc" id="L529">        edge.name(sortValues);</span>
+<span class="nc" id="L530">        edge.vertices(isOutEdge, ownerVertex, otherVertex);</span>
+<span class="nc" id="L531">        edge.assignId();</span>
+
+<span class="nc bnc" id="L533" title="All 2 branches missed.">        if (isOutEdge) {</span>
+<span class="nc" id="L534">            ownerVertex.addOutEdge(edge);</span>
+<span class="nc" id="L535">            otherVertex.addInEdge(edge.switchOwner());</span>
+        } else {
+<span class="nc" id="L537">            ownerVertex.addInEdge(edge);</span>
+<span class="nc" id="L538">            otherVertex.addOutEdge(edge.switchOwner());</span>
+        }
+
+<span class="nc" id="L541">        return edge;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

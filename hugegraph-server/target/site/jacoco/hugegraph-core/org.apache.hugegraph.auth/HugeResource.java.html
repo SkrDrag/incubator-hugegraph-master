@@ -1,0 +1,355 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeResource.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">HugeResource.java</span></div><h1>HugeResource.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.io.IOException;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import org.apache.hugegraph.type.Nameable;
+import org.apache.hugegraph.type.Typeable;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.tinkerpop.gremlin.structure.Graph.Hidden;
+import org.apache.tinkerpop.gremlin.structure.Property;
+import org.apache.tinkerpop.shaded.jackson.annotation.JsonProperty;
+import org.apache.tinkerpop.shaded.jackson.core.JsonGenerator;
+import org.apache.tinkerpop.shaded.jackson.core.JsonParser;
+import org.apache.tinkerpop.shaded.jackson.core.JsonToken;
+import org.apache.tinkerpop.shaded.jackson.core.type.TypeReference;
+import org.apache.tinkerpop.shaded.jackson.databind.DeserializationContext;
+import org.apache.tinkerpop.shaded.jackson.databind.SerializerProvider;
+import org.apache.tinkerpop.shaded.jackson.databind.deser.std.StdDeserializer;
+import org.apache.tinkerpop.shaded.jackson.databind.module.SimpleModule;
+import org.apache.tinkerpop.shaded.jackson.databind.ser.std.StdSerializer;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.auth.SchemaDefine.AuthElement;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.traversal.optimize.TraversalUtil;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+
+public class HugeResource {
+
+    public static final String ANY = &quot;*&quot;;
+
+<span class="nc" id="L53">    public static final HugeResource ALL = new HugeResource(ResourceType.ALL,</span>
+                                                            ANY, null);
+<span class="nc" id="L55">    public static final List&lt;HugeResource&gt; ALL_RES = ImmutableList.of(ALL);</span>
+
+<span class="nc" id="L57">    private static final Set&lt;ResourceType&gt; CHECK_NAME_RESS = ImmutableSet.of(</span>
+                                                             ResourceType.META);
+
+    static {
+<span class="nc" id="L61">        SimpleModule module = new SimpleModule();</span>
+
+<span class="nc" id="L63">        module.addSerializer(HugeResource.class, new HugeResourceSer());</span>
+<span class="nc" id="L64">        module.addDeserializer(HugeResource.class, new HugeResourceDeser());</span>
+
+<span class="nc" id="L66">        JsonUtil.registerModule(module);</span>
+<span class="nc" id="L67">    }</span>
+
+<span class="nc" id="L69">    @JsonProperty(&quot;type&quot;)</span>
+    private ResourceType type = ResourceType.NONE;
+
+<span class="nc" id="L72">    @JsonProperty(&quot;label&quot;)</span>
+    private String label = ANY;
+
+    @JsonProperty(&quot;properties&quot;)
+    private Map&lt;String, Object&gt; properties; // value can be predicate
+
+<span class="nc" id="L78">    public HugeResource() {</span>
+        // pass
+<span class="nc" id="L80">    }</span>
+
+    public HugeResource(ResourceType type, String label,
+<span class="nc" id="L83">                        Map&lt;String, Object&gt; properties) {</span>
+<span class="nc" id="L84">        this.type = type;</span>
+<span class="nc" id="L85">        this.label = label;</span>
+<span class="nc" id="L86">        this.properties = properties;</span>
+<span class="nc" id="L87">        this.checkFormat();</span>
+<span class="nc" id="L88">    }</span>
+
+    public void checkFormat() {
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (this.properties == null) {</span>
+<span class="nc" id="L92">            return;</span>
+        }
+<span class="nc bnc" id="L94" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; entry : this.properties.entrySet()) {</span>
+<span class="nc" id="L95">            String propName = entry.getKey();</span>
+<span class="nc" id="L96">            Object propValue = entry.getValue();</span>
+<span class="nc bnc" id="L97" title="All 4 branches missed.">            if (propName.equals(ANY) &amp;&amp; propValue.equals(ANY)) {</span>
+<span class="nc" id="L98">                continue;</span>
+            }
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            if (propValue instanceof String &amp;&amp;</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">                ((String) propValue).startsWith(TraversalUtil.P_CALL)) {</span>
+<span class="nc" id="L102">                TraversalUtil.parsePredicate((String) propValue);</span>
+            }
+<span class="nc" id="L104">        }</span>
+<span class="nc" id="L105">    }</span>
+
+    public boolean filter(ResourceObject&lt;?&gt; resourceObject) {
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        if (this.type == null) {</span>
+<span class="nc" id="L109">            return false;</span>
+        }
+
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (!this.type.match(resourceObject.type())) {</span>
+<span class="nc" id="L113">            return false;</span>
+        }
+
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (resourceObject.operated() != NameObject.ANY) {</span>
+<span class="nc" id="L117">            ResourceType resType = resourceObject.type();</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">            if (resType.isGraph()) {</span>
+<span class="nc" id="L119">                return this.filter((HugeElement) resourceObject.operated());</span>
+            }
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if (resType.isAuth()) {</span>
+<span class="nc" id="L122">                return this.filter((AuthElement) resourceObject.operated());</span>
+            }
+<span class="nc bnc" id="L124" title="All 4 branches missed.">            if (resType.isSchema() || CHECK_NAME_RESS.contains(resType)) {</span>
+<span class="nc" id="L125">                return this.filter((Nameable) resourceObject.operated());</span>
+            }
+        }
+
+        /*
+         * Allow any others resource if the type is matched:
+         * VAR, GREMLIN, GREMLIN_JOB, TASK
+         */
+<span class="nc" id="L133">        return true;</span>
+    }
+
+    private boolean filter(AuthElement element) {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        assert this.type.match(element.type());</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        if (element instanceof Nameable) {</span>
+<span class="nc" id="L139">            return this.filter((Nameable) element);</span>
+        }
+<span class="nc" id="L141">        return true;</span>
+    }
+
+    private boolean filter(Nameable element) {
+<span class="nc bnc" id="L145" title="All 4 branches missed.">        assert !(element instanceof Typeable) || this.type.match(</span>
+<span class="nc" id="L146">               ResourceType.from(((Typeable) element).type()));</span>
+
+<span class="nc" id="L148">        return this.matchLabel(element.name());</span>
+    }
+
+    private boolean filter(HugeElement element) {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        assert this.type.match(ResourceType.from(element.type()));</span>
+
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (!this.matchLabel(element.label())) {</span>
+<span class="nc" id="L155">            return false;</span>
+        }
+
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (this.properties == null) {</span>
+<span class="nc" id="L159">            return true;</span>
+        }
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; entry : this.properties.entrySet()) {</span>
+<span class="nc" id="L162">            String propName = entry.getKey();</span>
+<span class="nc" id="L163">            Object expected = entry.getValue();</span>
+<span class="nc bnc" id="L164" title="All 4 branches missed.">            if (propName.equals(ANY) &amp;&amp; expected.equals(ANY)) {</span>
+<span class="nc" id="L165">                return true;</span>
+            }
+<span class="nc" id="L167">            Property&lt;Object&gt; prop = element.property(propName);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">            if (!prop.isPresent()) {</span>
+<span class="nc" id="L169">                return false;</span>
+            }
+            try {
+<span class="nc bnc" id="L172" title="All 2 branches missed.">                if (!TraversalUtil.testProperty(prop, expected)) {</span>
+<span class="nc" id="L173">                    return false;</span>
+                }
+<span class="nc" id="L175">            } catch (IllegalArgumentException e) {</span>
+<span class="nc" id="L176">                throw new HugeException(&quot;Invalid resource '%s' for '%s': %s&quot;,</span>
+<span class="nc" id="L177">                                        expected, propName, e.getMessage());</span>
+<span class="nc" id="L178">            }</span>
+<span class="nc" id="L179">        }</span>
+<span class="nc" id="L180">        return true;</span>
+    }
+
+    private boolean matchLabel(String other) {
+        // Label value may be vertex/edge label or schema name
+<span class="nc bnc" id="L185" title="All 4 branches missed.">        if (this.label == null || other == null) {</span>
+<span class="nc" id="L186">            return false;</span>
+        }
+        // It's ok if wildcard match or regular match
+<span class="nc bnc" id="L189" title="All 4 branches missed.">        return this.label.equals(ANY) || other.matches(this.label);</span>
+    }
+
+    private boolean matchProperties(Map&lt;String, Object&gt; other) {
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        if (this.properties == null) {</span>
+            // Any property is OK
+<span class="nc" id="L195">            return true;</span>
+        }
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        if (other == null) {</span>
+<span class="nc" id="L198">            return false;</span>
+        }
+<span class="nc bnc" id="L200" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; p : other.entrySet()) {</span>
+<span class="nc" id="L201">            Object value = this.properties.get(p.getKey());</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (!Objects.equals(value, p.getValue())) {</span>
+<span class="nc" id="L203">                return false;</span>
+            }
+<span class="nc" id="L205">        }</span>
+<span class="nc" id="L206">        return true;</span>
+    }
+
+    protected boolean contains(HugeResource other) {
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        if (this.equals(other)) {</span>
+<span class="nc" id="L211">            return true;</span>
+        }
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (this.type == null) {</span>
+<span class="nc" id="L214">            return false;</span>
+        }
+<span class="nc bnc" id="L216" title="All 2 branches missed.">        if (!this.type.match(other.type)) {</span>
+<span class="nc" id="L217">            return false;</span>
+        }
+<span class="nc bnc" id="L219" title="All 2 branches missed.">        if (!this.matchLabel(other.label)) {</span>
+<span class="nc" id="L220">            return false;</span>
+        }
+<span class="nc" id="L222">        return this.matchProperties(other.properties);</span>
+    }
+
+    @Override
+    public boolean equals(Object object) {
+<span class="nc bnc" id="L227" title="All 2 branches missed.">        if (!(object instanceof HugeResource)) {</span>
+<span class="nc" id="L228">            return false;</span>
+        }
+<span class="nc" id="L230">        HugeResource other = (HugeResource) object;</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        return this.type == other.type &amp;&amp;</span>
+<span class="nc bnc" id="L232" title="All 2 branches missed.">               Objects.equals(this.label, other.label) &amp;&amp;</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">               Objects.equals(this.properties, other.properties);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc" id="L238">        return Objects.hash(this.type, this.label, this.properties);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L243">        return JsonUtil.toJson(this);</span>
+    }
+
+    public static boolean allowed(ResourceObject&lt;?&gt; resourceObject) {
+        // Allowed to access system(hidden) schema by anyone
+<span class="nc bnc" id="L248" title="All 2 branches missed.">        if (resourceObject.type().isSchema()) {</span>
+<span class="nc" id="L249">            Nameable schema = (Nameable) resourceObject.operated();</span>
+<span class="nc" id="L250">            return Hidden.isHidden(schema.name());</span>
+        }
+
+<span class="nc" id="L253">        return false;</span>
+    }
+
+    public static HugeResource parseResource(String resource) {
+<span class="nc" id="L257">        return JsonUtil.fromJson(resource, HugeResource.class);</span>
+    }
+
+    public static List&lt;HugeResource&gt; parseResources(String resources) {
+<span class="nc" id="L261">        TypeReference&lt;?&gt; type = new TypeReference&lt;List&lt;HugeResource&gt;&gt;() {};</span>
+<span class="nc" id="L262">        return JsonUtil.fromJson(resources, type);</span>
+    }
+
+    public static class NameObject implements Nameable {
+
+<span class="nc" id="L267">        public static final NameObject ANY = new NameObject(&quot;*&quot;);</span>
+
+        private final String name;
+
+        public static NameObject of(String name) {
+<span class="nc" id="L272">            return new NameObject(name);</span>
+        }
+
+<span class="nc" id="L275">        private NameObject(String name) {</span>
+<span class="nc" id="L276">            this.name = name;</span>
+<span class="nc" id="L277">        }</span>
+
+        @Override
+        public String name() {
+<span class="nc" id="L281">            return this.name;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L286">            return this.name;</span>
+        }
+    }
+
+    private static class HugeResourceSer extends StdSerializer&lt;HugeResource&gt; {
+
+        private static final long serialVersionUID = -138482122210181714L;
+
+        public HugeResourceSer() {
+<span class="nc" id="L295">            super(HugeResource.class);</span>
+<span class="nc" id="L296">        }</span>
+
+        @Override
+        public void serialize(HugeResource res, JsonGenerator generator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc" id="L302">            generator.writeStartObject();</span>
+
+<span class="nc" id="L304">            generator.writeObjectField(&quot;type&quot;, res.type);</span>
+<span class="nc" id="L305">            generator.writeObjectField(&quot;label&quot;, res.label);</span>
+<span class="nc" id="L306">            generator.writeObjectField(&quot;properties&quot;, res.properties);</span>
+
+<span class="nc" id="L308">            generator.writeEndObject();</span>
+<span class="nc" id="L309">        }</span>
+    }
+
+    private static class HugeResourceDeser extends StdDeserializer&lt;HugeResource&gt; {
+
+        private static final long serialVersionUID = -2499038590503066483L;
+
+        public HugeResourceDeser() {
+<span class="nc" id="L317">            super(HugeResource.class);</span>
+<span class="nc" id="L318">        }</span>
+
+        @Override
+        public HugeResource deserialize(JsonParser parser,
+                                        DeserializationContext ctxt)
+                                        throws IOException {
+<span class="nc" id="L324">            HugeResource res = new HugeResource();</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">            while (parser.nextToken() != JsonToken.END_OBJECT) {</span>
+<span class="nc" id="L326">                String key = parser.getCurrentName();</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">                if (&quot;type&quot;.equals(key)) {</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">                    if (parser.nextToken() != JsonToken.VALUE_NULL) {</span>
+<span class="nc" id="L329">                        res.type = ctxt.readValue(parser, ResourceType.class);</span>
+                    } else {
+<span class="nc" id="L331">                        res.type = null;</span>
+                    }
+<span class="nc bnc" id="L333" title="All 2 branches missed.">                } else if (&quot;label&quot;.equals(key)) {</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">                    if (parser.nextToken() != JsonToken.VALUE_NULL) {</span>
+<span class="nc" id="L335">                        res.label = parser.getValueAsString();</span>
+                    } else {
+<span class="nc" id="L337">                        res.label = null;</span>
+                    }
+<span class="nc bnc" id="L339" title="All 2 branches missed.">                } else if (&quot;properties&quot;.equals(key)) {</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">                    if (parser.nextToken() != JsonToken.VALUE_NULL) {</span>
+                        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L342">                        Map&lt;String, Object&gt; prop = ctxt.readValue(parser,</span>
+                                                                  Map.class);
+<span class="nc" id="L344">                        res.properties = prop;</span>
+<span class="nc" id="L345">                    } else {</span>
+<span class="nc" id="L346">                        res.properties = null;</span>
+                    }
+                }
+<span class="nc" id="L349">            }</span>
+<span class="nc" id="L350">            res.checkFormat();</span>
+<span class="nc" id="L351">            return res;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

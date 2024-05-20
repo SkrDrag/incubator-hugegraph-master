@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HbaseOptions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-hbase</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.hbase</a> &gt; <span class="el_source">HbaseOptions.java</span></div><h1>HbaseOptions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.hbase;
+
+import static org.apache.hugegraph.config.OptionChecker.disallowEmpty;
+import static org.apache.hugegraph.config.OptionChecker.positiveInt;
+import static org.apache.hugegraph.config.OptionChecker.rangeInt;
+import static org.apache.hugegraph.config.OptionChecker.nonNegativeInt;
+
+import org.apache.hugegraph.config.ConfigOption;
+import org.apache.hugegraph.config.OptionHolder;
+
+public class HbaseOptions extends OptionHolder {
+
+    private HbaseOptions() {
+        super();
+    }
+
+    private static volatile HbaseOptions instance;
+
+    public static synchronized HbaseOptions instance() {
+<span class="nc bnc" id="L37" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L38">            instance = new HbaseOptions();</span>
+<span class="nc" id="L39">            instance.registerOptions();</span>
+        }
+<span class="nc" id="L41">        return instance;</span>
+    }
+
+<span class="nc" id="L44">    public static final ConfigOption&lt;String&gt; HBASE_HOSTS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.hosts&quot;,
+                    &quot;The hostnames or ip addresses of HBase zookeeper, separated with commas.&quot;,
+<span class="nc" id="L48">                    disallowEmpty(),</span>
+                    &quot;localhost&quot;
+            );
+
+<span class="nc" id="L52">    public static final ConfigOption&lt;Integer&gt; HBASE_PORT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.port&quot;,
+                    &quot;The port address of HBase zookeeper.&quot;,
+<span class="nc" id="L56">                    rangeInt(1, 65535),</span>
+<span class="nc" id="L57">                    2181</span>
+            );
+
+<span class="nc" id="L60">    public static final ConfigOption&lt;String&gt; HBASE_ZNODE_PARENT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.znode_parent&quot;,
+                    &quot;The znode parent path of HBase zookeeper.&quot;,
+<span class="nc" id="L64">                    disallowEmpty(),</span>
+                    &quot;/hbase&quot;
+            );
+
+<span class="nc" id="L68">    public static final ConfigOption&lt;Integer&gt; HBASE_ZK_RETRY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.zk_retry&quot;,
+                    &quot;The recovery retry times of HBase zookeeper.&quot;,
+<span class="nc" id="L72">                    rangeInt(0, 1000),</span>
+<span class="nc" id="L73">                    3</span>
+            );
+
+<span class="nc" id="L76">    public static final ConfigOption&lt;Integer&gt; HBASE_THREADS_MAX =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.threads_max&quot;,
+                    &quot;The max threads num of hbase connections.&quot;,
+<span class="nc" id="L80">                    rangeInt(1, 1000),</span>
+<span class="nc" id="L81">                    64</span>
+            );
+
+<span class="nc" id="L84">    public static final ConfigOption&lt;Long&gt; TRUNCATE_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.truncate_timeout&quot;,
+                    &quot;The timeout in seconds of waiting for store truncate.&quot;,
+<span class="nc" id="L88">                    positiveInt(),</span>
+<span class="nc" id="L89">                    30L</span>
+            );
+
+<span class="nc" id="L92">    public static final ConfigOption&lt;Long&gt; AGGR_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.aggregation_timeout&quot;,
+                    &quot;The timeout in seconds of waiting for aggregation.&quot;,
+<span class="nc" id="L96">                    positiveInt(),</span>
+<span class="nc" id="L97">                    12 * 60 * 60L</span>
+            );
+
+<span class="nc" id="L100">    public static final ConfigOption&lt;Boolean&gt; HBASE_KERBEROS_ENABLE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.kerberos_enable&quot;,
+                    &quot;Is Kerberos authentication enabled for HBase.&quot;,
+<span class="nc" id="L104">                    disallowEmpty(),</span>
+<span class="nc" id="L105">                    false</span>
+            );
+
+<span class="nc" id="L108">    public static final ConfigOption&lt;String&gt; HBASE_KRB5_CONF =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.krb5_conf&quot;,
+                    &quot;Kerberos configuration file, including KDC IP, default realm, etc.&quot;,
+                    null,
+                    &quot;/etc/krb5.conf&quot;
+            );
+
+<span class="nc" id="L116">    public static final ConfigOption&lt;String&gt; HBASE_HBASE_SITE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.hbase_site&quot;,
+                    &quot;The HBase's configuration file&quot;,
+                    null,
+                    &quot;/etc/hbase/conf/hbase-site.xml&quot;
+            );
+
+<span class="nc" id="L124">    public static final ConfigOption&lt;String&gt; HBASE_KERBEROS_PRINCIPAL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.kerberos_principal&quot;,
+                    &quot;The HBase's principal for kerberos authentication.&quot;,
+                    null,
+                    &quot;&quot;
+            );
+
+<span class="nc" id="L132">    public static final ConfigOption&lt;String&gt; HBASE_KERBEROS_KEYTAB =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.kerberos_keytab&quot;,
+                    &quot;The HBase's key tab file for kerberos authentication.&quot;,
+                    null,
+                    &quot;&quot;
+            );
+
+<span class="nc" id="L140">    public static final ConfigOption&lt;Boolean&gt; HBASE_ENABLE_PARTITION =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.enable_partition&quot;,
+                    &quot;Is pre-split partitions enabled for HBase.&quot;,
+<span class="nc" id="L144">                    disallowEmpty(),</span>
+<span class="nc" id="L145">                    true</span>
+            );
+
+<span class="nc" id="L148">    public static final ConfigOption&lt;Integer&gt; HBASE_VERTEX_PARTITION =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.vertex_partitions&quot;,
+                    &quot;The number of partitions of the HBase vertex table&quot;,
+<span class="nc" id="L152">                    nonNegativeInt(),</span>
+<span class="nc" id="L153">                    10</span>
+            );
+
+<span class="nc" id="L156">    public static final ConfigOption&lt;Integer&gt; HBASE_EDGE_PARTITION =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;hbase.edge_partitions&quot;,
+                    &quot;The number of partitions of the HBase edge table&quot;,
+<span class="nc" id="L160">                    nonNegativeInt(),</span>
+<span class="nc" id="L161">                    30</span>
+            );
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

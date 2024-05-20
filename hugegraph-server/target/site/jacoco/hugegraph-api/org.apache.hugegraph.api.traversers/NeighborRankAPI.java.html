@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>NeighborRankAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">NeighborRankAPI.java</span></div><h1>NeighborRankAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_CAPACITY;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEPTH;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_PATHS_LIMIT;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
+
+import org.apache.hugegraph.core.GraphManager;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.traversal.algorithm.NeighborRankTraverser;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Path(&quot;graphs/{graph}/traversers/neighborrank&quot;)
+@Singleton
+@Tag(name = &quot;NeighborRankAPI&quot;)
+<span class="nc" id="L55">public class NeighborRankAPI extends API {</span>
+
+<span class="nc" id="L57">    private static final Logger LOG = Log.logger(NeighborRankAPI.class);</span>
+
+    @POST
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String neighborRank(@Context GraphManager manager,
+                               @PathParam(&quot;graph&quot;) String graph,
+                               RankRequest request) {
+<span class="nc" id="L65">        E.checkArgumentNotNull(request, &quot;The rank request body can't be null&quot;);</span>
+<span class="nc" id="L66">        E.checkArgumentNotNull(request.source,</span>
+                               &quot;The source of rank request can't be null&quot;);
+<span class="nc bnc" id="L68" title="All 4 branches missed.">        E.checkArgument(request.steps != null &amp;&amp; !request.steps.isEmpty(),</span>
+                        &quot;The steps of rank request can't be empty&quot;);
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        E.checkArgument(request.steps.size() &lt;= DEFAULT_MAX_DEPTH,</span>
+                        &quot;The steps length of rank request can't exceed %s&quot;,
+<span class="nc" id="L72">                        DEFAULT_MAX_DEPTH);</span>
+<span class="nc bnc" id="L73" title="All 4 branches missed.">        E.checkArgument(request.alpha &gt; 0 &amp;&amp; request.alpha &lt;= 1.0,</span>
+                        &quot;The alpha of rank request must be in range (0, 1], &quot; +
+<span class="nc" id="L75">                        &quot;but got '%s'&quot;, request.alpha);</span>
+
+<span class="nc" id="L77">        LOG.debug(&quot;Graph [{}] get neighbor rank from '{}' with steps '{}', &quot; +</span>
+<span class="nc" id="L78">                  &quot;alpha '{}' and capacity '{}'&quot;, graph, request.source,</span>
+<span class="nc" id="L79">                  request.steps, request.alpha, request.capacity);</span>
+
+<span class="nc" id="L81">        Id sourceId = HugeVertex.getIdValue(request.source);</span>
+<span class="nc" id="L82">        HugeGraph g = graph(manager, graph);</span>
+
+<span class="nc" id="L84">        List&lt;NeighborRankTraverser.Step&gt; steps = steps(g, request);</span>
+        NeighborRankTraverser traverser;
+<span class="nc" id="L86">        traverser = new NeighborRankTraverser(g, request.alpha,</span>
+                                              request.capacity);
+<span class="nc" id="L88">        List&lt;Map&lt;Id, Double&gt;&gt; ranks = traverser.neighborRank(sourceId, steps);</span>
+<span class="nc" id="L89">        return manager.serializer(g).writeList(&quot;ranks&quot;, ranks);</span>
+    }
+
+    private static List&lt;NeighborRankTraverser.Step&gt; steps(HugeGraph graph,
+                                                          RankRequest req) {
+<span class="nc" id="L94">        List&lt;NeighborRankTraverser.Step&gt; steps = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        for (Step step : req.steps) {</span>
+<span class="nc" id="L96">            steps.add(step.jsonToStep(graph));</span>
+<span class="nc" id="L97">        }</span>
+<span class="nc" id="L98">        return steps;</span>
+    }
+
+<span class="nc" id="L101">    private static class RankRequest {</span>
+
+        @JsonProperty(&quot;source&quot;)
+        private Object source;
+        @JsonProperty(&quot;steps&quot;)
+        private List&lt;Step&gt; steps;
+        @JsonProperty(&quot;alpha&quot;)
+        private double alpha;
+<span class="nc" id="L109">        @JsonProperty(&quot;capacity&quot;)</span>
+<span class="nc" id="L110">        public long capacity = Long.parseLong(DEFAULT_CAPACITY);</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L114">            return String.format(&quot;RankRequest{source=%s,steps=%s,alpha=%s,&quot; +</span>
+                                 &quot;capacity=%s}&quot;, this.source, this.steps,
+<span class="nc" id="L116">                                 this.alpha, this.capacity);</span>
+        }
+    }
+
+<span class="nc" id="L120">    private static class Step {</span>
+
+        @JsonProperty(&quot;direction&quot;)
+        public Directions direction;
+        @JsonProperty(&quot;labels&quot;)
+        public List&lt;String&gt; labels;
+<span class="nc" id="L126">        @JsonAlias(&quot;degree&quot;)</span>
+        @JsonProperty(&quot;max_degree&quot;)
+<span class="nc" id="L128">        public long maxDegree = Long.parseLong(DEFAULT_MAX_DEGREE);</span>
+<span class="nc" id="L129">        @JsonProperty(&quot;skip_degree&quot;)</span>
+        public long skipDegree = 0L;
+<span class="nc" id="L131">        @JsonProperty(&quot;top&quot;)</span>
+<span class="nc" id="L132">        public int top = Integer.parseInt(DEFAULT_PATHS_LIMIT);</span>
+
+        public static final int DEFAULT_CAPACITY_PER_LAYER = 100000;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L138">            return String.format(&quot;Step{direction=%s,labels=%s,maxDegree=%s,&quot; +</span>
+                                 &quot;top=%s}&quot;, this.direction, this.labels,
+<span class="nc" id="L140">                                 this.maxDegree, this.top);</span>
+        }
+
+        private NeighborRankTraverser.Step jsonToStep(HugeGraph g) {
+<span class="nc" id="L144">            return new NeighborRankTraverser.Step(g, this.direction,</span>
+                                                  this.labels,
+                                                  this.maxDegree,
+                                                  this.skipDegree,
+                                                  this.top,
+                                                  DEFAULT_CAPACITY_PER_LAYER);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,369 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StandardRoleElectionStateMachine.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.masterelection</a> &gt; <span class="el_source">StandardRoleElectionStateMachine.java</span></div><h1>StandardRoleElectionStateMachine.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.masterelection;
+
+import java.security.SecureRandom;
+import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.locks.LockSupport;
+
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+public class StandardRoleElectionStateMachine implements RoleElectionStateMachine {
+
+<span class="nc" id="L32">    private static final Logger LOG = Log.logger(StandardRoleElectionStateMachine.class);</span>
+
+    private final Config config;
+    private final ClusterRoleStore roleStore;
+    private final ExecutorService applyThread;
+
+    private volatile boolean shutdown;
+    private volatile RoleState state;
+
+<span class="nc" id="L41">    public StandardRoleElectionStateMachine(Config config, ClusterRoleStore roleStore) {</span>
+<span class="nc" id="L42">        this.config = config;</span>
+<span class="nc" id="L43">        this.roleStore = roleStore;</span>
+<span class="nc" id="L44">        this.applyThread = Executors.newSingleThreadExecutor();</span>
+<span class="nc" id="L45">        this.state = new UnknownState(null);</span>
+<span class="nc" id="L46">        this.shutdown = false;</span>
+<span class="nc" id="L47">    }</span>
+
+    @Override
+    public void shutdown() {
+<span class="nc bnc" id="L51" title="All 2 branches missed.">        if (this.shutdown) {</span>
+<span class="nc" id="L52">            return;</span>
+        }
+<span class="nc" id="L54">        this.shutdown = true;</span>
+<span class="nc" id="L55">        this.applyThread.shutdown();</span>
+<span class="nc" id="L56">    }</span>
+
+    @Override
+    public void start(RoleListener stateMachineCallback) {
+<span class="nc" id="L60">        this.applyThread.execute(() -&gt; this.apply(stateMachineCallback));</span>
+<span class="nc" id="L61">    }</span>
+
+    private void apply(RoleListener stateMachineCallback) {
+<span class="nc" id="L64">        int failCount = 0;</span>
+<span class="nc" id="L65">        StateMachineContextImpl context = new StateMachineContextImpl(this);</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        while (!this.shutdown) {</span>
+<span class="nc" id="L67">            E.checkArgumentNotNull(this.state, &quot;State don't be null&quot;);</span>
+            try {
+<span class="nc" id="L69">                RoleState pre = this.state;</span>
+<span class="nc" id="L70">                this.state = state.transform(context);</span>
+<span class="nc" id="L71">                LOG.trace(&quot;server {} epoch {} role state change {} to {}&quot;,</span>
+<span class="nc" id="L72">                          context.node(), context.epoch(), pre.getClass().getSimpleName(),</span>
+<span class="nc" id="L73">                          this.state.getClass().getSimpleName());</span>
+<span class="nc" id="L74">                Callback runnable = this.state.callback(stateMachineCallback);</span>
+<span class="nc" id="L75">                runnable.call(context);</span>
+<span class="nc" id="L76">                failCount = 0;</span>
+<span class="nc" id="L77">            } catch (Throwable e) {</span>
+<span class="nc" id="L78">                stateMachineCallback.error(context, e);</span>
+<span class="nc" id="L79">                failCount++;</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">                if (failCount &gt;= this.config.exceedsFailCount()) {</span>
+<span class="nc" id="L81">                    this.state = new AbdicationState(context.epoch());</span>
+<span class="nc" id="L82">                    Callback runnable = this.state.callback(stateMachineCallback);</span>
+<span class="nc" id="L83">                    runnable.call(context);</span>
+                }
+<span class="nc" id="L85">            }</span>
+        }
+<span class="nc" id="L87">    }</span>
+
+    protected ClusterRoleStore roleStore() {
+<span class="nc" id="L90">        return this.roleStore;</span>
+    }
+
+    private interface RoleState {
+
+<span class="nc" id="L95">        SecureRandom SECURE_RANDOM = new SecureRandom();</span>
+
+        RoleState transform(StateMachineContext context);
+
+        Callback callback(RoleListener callback);
+
+        static void heartBeatPark(StateMachineContext context) {
+<span class="nc" id="L102">            long heartBeatIntervalSecond = context.config().heartBeatIntervalSecond();</span>
+<span class="nc" id="L103">            LockSupport.parkNanos(heartBeatIntervalSecond * 1_000_000_000);</span>
+<span class="nc" id="L104">        }</span>
+
+        static void randomPark(StateMachineContext context) {
+<span class="nc" id="L107">            long randomTimeout = context.config().randomTimeoutMillisecond();</span>
+<span class="nc" id="L108">            long baseTime = context.config().baseTimeoutMillisecond();</span>
+<span class="nc" id="L109">            long timeout = (long) (baseTime + (randomTimeout / 10.0 * SECURE_RANDOM.nextInt(11)));</span>
+<span class="nc" id="L110">            LockSupport.parkNanos(timeout * 1_000_000);</span>
+<span class="nc" id="L111">        }</span>
+    }
+
+    @FunctionalInterface
+    private interface Callback {
+
+        void call(StateMachineContext context);
+    }
+
+    private static class UnknownState implements RoleState {
+
+        final Integer epoch;
+
+<span class="nc" id="L124">        public UnknownState(Integer epoch) {</span>
+<span class="nc" id="L125">            this.epoch = epoch;</span>
+<span class="nc" id="L126">        }</span>
+
+        @Override
+        public RoleState transform(StateMachineContext context) {
+<span class="nc" id="L130">            ClusterRoleStore adapter = context.roleStore();</span>
+<span class="nc" id="L131">            Optional&lt;ClusterRole&gt; clusterRoleOpt = adapter.query();</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">            if (!clusterRoleOpt.isPresent()) {</span>
+<span class="nc" id="L133">                context.reset();</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">                Integer nextEpoch = this.epoch == null ? 1 : this.epoch + 1;</span>
+<span class="nc" id="L135">                context.epoch(nextEpoch);</span>
+<span class="nc" id="L136">                return new CandidateState(nextEpoch);</span>
+            }
+
+<span class="nc" id="L139">            ClusterRole clusterRole = clusterRoleOpt.get();</span>
+<span class="nc bnc" id="L140" title="All 4 branches missed.">            if (this.epoch != null &amp;&amp; clusterRole.epoch() &lt; this.epoch) {</span>
+<span class="nc" id="L141">                context.reset();</span>
+<span class="nc" id="L142">                Integer nextEpoch = this.epoch + 1;</span>
+<span class="nc" id="L143">                context.epoch(nextEpoch);</span>
+<span class="nc" id="L144">                return new CandidateState(nextEpoch);</span>
+            }
+
+<span class="nc" id="L147">            context.epoch(clusterRole.epoch());</span>
+<span class="nc" id="L148">            context.master(new MasterServerInfoImpl(clusterRole.node(), clusterRole.url()));</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            if (clusterRole.isMaster(context.node())) {</span>
+<span class="nc" id="L150">                return new MasterState(clusterRole);</span>
+            } else {
+<span class="nc" id="L152">                return new WorkerState(clusterRole);</span>
+            }
+        }
+
+        @Override
+        public Callback callback(RoleListener callback) {
+<span class="nc" id="L158">            return callback::unknown;</span>
+        }
+    }
+
+    private static class AbdicationState implements RoleState {
+
+        private final Integer epoch;
+
+<span class="nc" id="L166">        public AbdicationState(Integer epoch) {</span>
+<span class="nc" id="L167">            this.epoch = epoch;</span>
+<span class="nc" id="L168">        }</span>
+
+        @Override
+        public RoleState transform(StateMachineContext context) {
+<span class="nc" id="L172">            context.master(null);</span>
+<span class="nc" id="L173">            RoleState.heartBeatPark(context);</span>
+<span class="nc" id="L174">            return new UnknownState(this.epoch).transform(context);</span>
+        }
+
+        @Override
+        public Callback callback(RoleListener callback) {
+<span class="nc" id="L179">            return callback::onAsRoleAbdication;</span>
+        }
+    }
+
+    private static class MasterState implements RoleState {
+
+        private final ClusterRole clusterRole;
+
+<span class="nc" id="L187">        public MasterState(ClusterRole clusterRole) {</span>
+<span class="nc" id="L188">            this.clusterRole = clusterRole;</span>
+<span class="nc" id="L189">        }</span>
+
+        @Override
+        public RoleState transform(StateMachineContext context) {
+<span class="nc" id="L193">            this.clusterRole.increaseClock();</span>
+<span class="nc" id="L194">            RoleState.heartBeatPark(context);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if (context.roleStore().updateIfNodePresent(this.clusterRole)) {</span>
+<span class="nc" id="L196">                return this;</span>
+            }
+<span class="nc" id="L198">            context.reset();</span>
+<span class="nc" id="L199">            context.epoch(this.clusterRole.epoch());</span>
+<span class="nc" id="L200">            return new UnknownState(this.clusterRole.epoch()).transform(context);</span>
+        }
+
+        @Override
+        public Callback callback(RoleListener callback) {
+<span class="nc" id="L205">            return callback::onAsRoleMaster;</span>
+        }
+    }
+
+    private static class WorkerState implements RoleState {
+
+        private ClusterRole clusterRole;
+        private int clock;
+
+<span class="nc" id="L214">        public WorkerState(ClusterRole clusterRole) {</span>
+<span class="nc" id="L215">            this.clusterRole = clusterRole;</span>
+<span class="nc" id="L216">            this.clock = 0;</span>
+<span class="nc" id="L217">        }</span>
+
+        @Override
+        public RoleState transform(StateMachineContext context) {
+<span class="nc" id="L221">            RoleState.heartBeatPark(context);</span>
+<span class="nc" id="L222">            RoleState nextState = new UnknownState(this.clusterRole.epoch()).transform(context);</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">            if (nextState instanceof WorkerState) {</span>
+<span class="nc" id="L224">                this.merge((WorkerState) nextState);</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">                if (this.clock &gt; context.config().masterDeadTimes()) {</span>
+<span class="nc" id="L226">                    return new CandidateState(this.clusterRole.epoch() + 1);</span>
+                } else {
+<span class="nc" id="L228">                    return this;</span>
+                }
+            } else {
+<span class="nc" id="L231">                return nextState;</span>
+            }
+        }
+
+        @Override
+        public Callback callback(RoleListener callback) {
+<span class="nc" id="L237">            return callback::onAsRoleWorker;</span>
+        }
+
+        public void merge(WorkerState state) {
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            if (state.clusterRole.epoch() &gt; this.clusterRole.epoch()) {</span>
+<span class="nc" id="L242">                this.clock = 0;</span>
+<span class="nc" id="L243">                this.clusterRole = state.clusterRole;</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            } else if (state.clusterRole.epoch() &lt; this.clusterRole.epoch()) {</span>
+<span class="nc" id="L245">                throw new IllegalStateException(&quot;Epoch must increase&quot;);</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">            } else if (state.clusterRole.epoch() == this.clusterRole.epoch() &amp;&amp;</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">                       state.clusterRole.clock() &lt; this.clusterRole.clock()) {</span>
+<span class="nc" id="L248">                throw new IllegalStateException(&quot;Clock must increase&quot;);</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            } else if (state.clusterRole.epoch() == this.clusterRole.epoch() &amp;&amp;</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">                       state.clusterRole.clock() &gt; this.clusterRole.clock()) {</span>
+<span class="nc" id="L251">                this.clock = 0;</span>
+<span class="nc" id="L252">                this.clusterRole = state.clusterRole;</span>
+            } else {
+<span class="nc" id="L254">                this.clock++;</span>
+            }
+<span class="nc" id="L256">        }</span>
+    }
+
+    private static class CandidateState implements RoleState {
+
+        private final Integer epoch;
+
+<span class="nc" id="L263">        public CandidateState(Integer epoch) {</span>
+<span class="nc" id="L264">            this.epoch = epoch;</span>
+<span class="nc" id="L265">        }</span>
+
+        @Override
+        public RoleState transform(StateMachineContext context) {
+<span class="nc" id="L269">            RoleState.randomPark(context);</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">            int epoch = this.epoch == null ? 1 : this.epoch;</span>
+<span class="nc" id="L271">            ClusterRole clusterRole = new ClusterRole(context.config().node(),</span>
+<span class="nc" id="L272">                                                      context.config().url(), epoch);</span>
+            // The master failover completed
+<span class="nc" id="L274">            context.epoch(clusterRole.epoch());</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">            if (context.roleStore().updateIfNodePresent(clusterRole)) {</span>
+<span class="nc" id="L276">                context.master(new MasterServerInfoImpl(clusterRole.node(), clusterRole.url()));</span>
+<span class="nc" id="L277">                return new MasterState(clusterRole);</span>
+            } else {
+<span class="nc" id="L279">                return new UnknownState(epoch).transform(context);</span>
+            }
+        }
+
+        @Override
+        public Callback callback(RoleListener callback) {
+<span class="nc" id="L285">            return callback::onAsRoleCandidate;</span>
+        }
+    }
+
+    private static class StateMachineContextImpl implements StateMachineContext {
+
+        private Integer epoch;
+        private final String node;
+        private final StandardRoleElectionStateMachine machine;
+
+        private MasterServerInfo masterServerInfo;
+
+<span class="nc" id="L297">        public StateMachineContextImpl(StandardRoleElectionStateMachine machine) {</span>
+<span class="nc" id="L298">            this.node = machine.config.node();</span>
+<span class="nc" id="L299">            this.machine = machine;</span>
+<span class="nc" id="L300">        }</span>
+
+        @Override
+        public void master(MasterServerInfo info) {
+<span class="nc" id="L304">            this.masterServerInfo = info;</span>
+<span class="nc" id="L305">        }</span>
+
+        @Override
+        public Integer epoch() {
+<span class="nc" id="L309">            return this.epoch;</span>
+        }
+
+        @Override
+        public String node() {
+<span class="nc" id="L314">            return this.node;</span>
+        }
+
+        @Override
+        public void epoch(Integer epoch) {
+<span class="nc" id="L319">            this.epoch = epoch;</span>
+<span class="nc" id="L320">        }</span>
+
+        @Override
+        public ClusterRoleStore roleStore() {
+<span class="nc" id="L324">            return this.machine.roleStore();</span>
+        }
+
+        @Override
+        public Config config() {
+<span class="nc" id="L329">            return this.machine.config;</span>
+        }
+
+        @Override
+        public MasterServerInfo master() {
+<span class="nc" id="L334">            return this.masterServerInfo;</span>
+        }
+
+        @Override
+        public RoleElectionStateMachine stateMachine() {
+<span class="nc" id="L339">            return this.machine;</span>
+        }
+
+        @Override
+        public void reset() {
+<span class="nc" id="L344">            this.epoch = null;</span>
+<span class="nc" id="L345">        }</span>
+    }
+
+    private static class MasterServerInfoImpl implements StateMachineContext.MasterServerInfo {
+
+        private final String node;
+        private final String url;
+
+<span class="nc" id="L353">        public MasterServerInfoImpl(String node, String url) {</span>
+<span class="nc" id="L354">            this.node = node;</span>
+<span class="nc" id="L355">            this.url = url;</span>
+<span class="nc" id="L356">        }</span>
+
+        @Override
+        public String url() {
+<span class="nc" id="L360">            return this.url;</span>
+        }
+
+        @Override
+        public String node() {
+<span class="nc" id="L365">            return this.node;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeGryoModule.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.io</a> &gt; <span class="el_source">HugeGryoModule.java</span></div><h1>HugeGryoModule.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.io;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
+
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.Id.IdType;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.StringEncoding;
+import org.apache.tinkerpop.gremlin.structure.io.gryo.GryoIo;
+import org.apache.tinkerpop.shaded.kryo.Kryo;
+import org.apache.tinkerpop.shaded.kryo.Serializer;
+import org.apache.tinkerpop.shaded.kryo.io.Input;
+import org.apache.tinkerpop.shaded.kryo.io.Output;
+
+<span class="nc" id="L40">public class HugeGryoModule {</span>
+
+<span class="nc" id="L42">    private static GraphSONSchemaSerializer schemaSerializer =</span>
+                   new GraphSONSchemaSerializer();
+
+    public static void register(HugeGraphIoRegistry io) {
+<span class="nc" id="L46">        io.register(GryoIo.class, Optional.class, new OptionalSerializer());</span>
+
+        // HugeGraph id serializer
+<span class="nc" id="L49">        io.register(GryoIo.class, IdGenerator.StringId.class,</span>
+                    new IdSerializer());
+<span class="nc" id="L51">        io.register(GryoIo.class, IdGenerator.LongId.class,</span>
+                    new IdSerializer());
+<span class="nc" id="L53">        io.register(GryoIo.class, EdgeId.class, new EdgeIdSerializer());</span>
+
+        // HugeGraph schema serializer
+<span class="nc" id="L56">        io.register(GryoIo.class, PropertyKey.class,</span>
+                    new PropertyKeyKryoSerializer());
+<span class="nc" id="L58">        io.register(GryoIo.class, VertexLabel.class,</span>
+                    new VertexLabelKryoSerializer());
+<span class="nc" id="L60">        io.register(GryoIo.class, EdgeLabel.class,</span>
+                    new EdgeLabelKryoSerializer());
+<span class="nc" id="L62">        io.register(GryoIo.class, IndexLabel.class,</span>
+                    new IndexLabelKryoSerializer());
+<span class="nc" id="L64">    }</span>
+
+<span class="nc" id="L66">    static class OptionalSerializer extends Serializer&lt;Optional&lt;?&gt;&gt; {</span>
+
+        @Override
+        public void write(Kryo kryo, Output output, Optional&lt;?&gt; optional) {
+<span class="nc bnc" id="L70" title="All 2 branches missed.">            if (optional.isPresent()) {</span>
+<span class="nc" id="L71">                kryo.writeClassAndObject(output, optional.get());</span>
+            } else {
+<span class="nc" id="L73">                kryo.writeObject(output, null);</span>
+            }
+<span class="nc" id="L75">        }</span>
+
+        @Override
+        public Optional&lt;?&gt; read(Kryo kryo, Input input, Class&lt;Optional&lt;?&gt;&gt; c) {
+<span class="nc" id="L79">            Object value = kryo.readClassAndObject(input);</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">            return value == null ? Optional.empty() : Optional.of(value);</span>
+        }
+    }
+
+<span class="nc" id="L84">    static class IdSerializer extends Serializer&lt;Id&gt; {</span>
+
+        @Override
+        public void write(Kryo kryo, Output output, Id id) {
+<span class="nc" id="L88">            output.writeByte(id.type().ordinal());</span>
+<span class="nc" id="L89">            byte[] idBytes = id.asBytes();</span>
+<span class="nc" id="L90">            output.write(idBytes.length);</span>
+<span class="nc" id="L91">            output.writeBytes(id.asBytes());</span>
+<span class="nc" id="L92">        }</span>
+
+        @Override
+        public Id read(Kryo kryo, Input input, Class&lt;Id&gt; clazz) {
+<span class="nc" id="L96">            int type = input.readByteUnsigned();</span>
+<span class="nc" id="L97">            int length = input.read();</span>
+<span class="nc" id="L98">            byte[] idBytes = input.readBytes(length);</span>
+<span class="nc" id="L99">            return IdGenerator.of(idBytes, IdType.values()[type]);</span>
+        }
+    }
+
+<span class="nc" id="L103">    static class EdgeIdSerializer extends Serializer&lt;EdgeId&gt; {</span>
+
+        @Override
+        public void write(Kryo kryo, Output output, EdgeId edgeId) {
+<span class="nc" id="L107">            byte[] idBytes = edgeId.asBytes();</span>
+<span class="nc" id="L108">            output.write(idBytes.length);</span>
+<span class="nc" id="L109">            output.writeBytes(edgeId.asBytes());</span>
+<span class="nc" id="L110">        }</span>
+
+        @Override
+        public EdgeId read(Kryo kryo, Input input, Class&lt;EdgeId&gt; clazz) {
+<span class="nc" id="L114">            int length = input.read();</span>
+<span class="nc" id="L115">            byte[] idBytes = input.readBytes(length);</span>
+<span class="nc" id="L116">            return EdgeId.parse(StringEncoding.decode(idBytes));</span>
+        }
+    }
+
+    private static void writeEntry(Kryo kryo,
+                                   Output output,
+                                   Map&lt;HugeKeys, Object&gt; schema) {
+        /* Write columns size and data */
+<span class="nc" id="L124">        output.writeInt(schema.keySet().size());</span>
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        for (Map.Entry&lt;HugeKeys, Object&gt; entry : schema.entrySet()) {</span>
+<span class="nc" id="L126">            kryo.writeObject(output, entry.getKey());</span>
+<span class="nc" id="L127">            kryo.writeClassAndObject(output, entry.getValue());</span>
+<span class="nc" id="L128">        }</span>
+<span class="nc" id="L129">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    private static Map&lt;HugeKeys, Object&gt; readEntry(Kryo kryo, Input input) {
+<span class="nc" id="L133">        int columnSize = input.readInt();</span>
+<span class="nc" id="L134">        Map&lt;HugeKeys, Object&gt; map = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        for (int i = 0; i &lt; columnSize; i++) {</span>
+<span class="nc" id="L136">            HugeKeys key = kryo.readObject(input, HugeKeys.class);</span>
+<span class="nc" id="L137">            Object val = kryo.readClassAndObject(input);</span>
+<span class="nc" id="L138">            map.put(key, val);</span>
+        }
+<span class="nc" id="L140">        return map;</span>
+    }
+
+<span class="nc" id="L143">    static class PropertyKeyKryoSerializer extends Serializer&lt;PropertyKey&gt; {</span>
+
+        @Override
+        public void write(Kryo kryo, Output output, PropertyKey pk) {
+<span class="nc" id="L147">            writeEntry(kryo, output, schemaSerializer.writePropertyKey(pk));</span>
+<span class="nc" id="L148">        }</span>
+
+        @Override
+        public PropertyKey read(Kryo kryo, Input input, Class&lt;PropertyKey&gt; c) {
+            // TODO
+<span class="nc" id="L153">            return null;</span>
+        }
+    }
+
+<span class="nc" id="L157">    static class VertexLabelKryoSerializer extends Serializer&lt;VertexLabel&gt; {</span>
+
+        @Override
+        public void write(Kryo kryo, Output output, VertexLabel vl) {
+<span class="nc" id="L161">            writeEntry(kryo, output, schemaSerializer.writeVertexLabel(vl));</span>
+<span class="nc" id="L162">        }</span>
+
+        @Override
+        public VertexLabel read(Kryo kryo, Input input, Class&lt;VertexLabel&gt; c) {
+            // TODO
+<span class="nc" id="L167">            return null;</span>
+        }
+    }
+
+<span class="nc" id="L171">    static class EdgeLabelKryoSerializer extends Serializer&lt;EdgeLabel&gt; {</span>
+
+        @Override
+        public void write(Kryo kryo, Output output, EdgeLabel el) {
+<span class="nc" id="L175">            writeEntry(kryo, output, schemaSerializer.writeEdgeLabel(el));</span>
+<span class="nc" id="L176">        }</span>
+
+        @Override
+        public EdgeLabel read(Kryo kryo, Input input, Class&lt;EdgeLabel&gt; clazz) {
+            // TODO
+<span class="nc" id="L181">            return null;</span>
+        }
+    }
+
+<span class="nc" id="L185">    static class IndexLabelKryoSerializer extends Serializer&lt;IndexLabel&gt; {</span>
+
+        @Override
+        public void write(Kryo kryo, Output output, IndexLabel il) {
+<span class="nc" id="L189">            writeEntry(kryo, output, schemaSerializer.writeIndexLabel(il));</span>
+<span class="nc" id="L190">        }</span>
+
+        @Override
+        public IndexLabel read(Kryo kryo, Input input, Class&lt;IndexLabel&gt; c) {
+            // TODO
+<span class="nc" id="L195">            return null;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

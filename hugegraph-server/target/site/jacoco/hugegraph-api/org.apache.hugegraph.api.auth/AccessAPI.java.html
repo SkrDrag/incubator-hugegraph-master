@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AccessAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.auth</a> &gt; <span class="el_source">AccessAPI.java</span></div><h1>AccessAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.auth;
+
+import java.util.List;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Path;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.auth.HugeAccess;
+import org.apache.hugegraph.auth.HugePermission;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Path(&quot;graphs/{graph}/auth/accesses&quot;)
+@Singleton
+@Tag(name = &quot;AccessAPI&quot;)
+<span class="nc" id="L56">public class AccessAPI extends API {</span>
+
+<span class="nc" id="L58">    private static final Logger LOG = Log.logger(AccessAPI.class);</span>
+
+    @POST
+    @Timed
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonAccess jsonAccess) {
+<span class="nc" id="L68">        LOG.debug(&quot;Graph [{}] create access: {}&quot;, graph, jsonAccess);</span>
+<span class="nc" id="L69">        checkCreatingBody(jsonAccess);</span>
+
+<span class="nc" id="L71">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L72">        HugeAccess access = jsonAccess.build();</span>
+<span class="nc" id="L73">        access.id(manager.authManager().createAccess(access));</span>
+<span class="nc" id="L74">        return manager.serializer(g).writeAuthElement(access);</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;id&quot;) String id,
+                         JsonAccess jsonAccess) {
+<span class="nc" id="L86">        LOG.debug(&quot;Graph [{}] update access: {}&quot;, graph, jsonAccess);</span>
+<span class="nc" id="L87">        checkUpdatingBody(jsonAccess);</span>
+
+<span class="nc" id="L89">        HugeGraph g = graph(manager, graph);</span>
+        HugeAccess access;
+        try {
+<span class="nc" id="L92">            access = manager.authManager().getAccess(UserAPI.parseId(id));</span>
+<span class="nc" id="L93">        } catch (NotFoundException e) {</span>
+<span class="nc" id="L94">            throw new IllegalArgumentException(&quot;Invalid access id: &quot; + id);</span>
+<span class="nc" id="L95">        }</span>
+<span class="nc" id="L96">        access = jsonAccess.build(access);</span>
+<span class="nc" id="L97">        manager.authManager().updateAccess(access);</span>
+<span class="nc" id="L98">        return manager.serializer(g).writeAuthElement(access);</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;group&quot;) String group,
+                       @QueryParam(&quot;target&quot;) String target,
+                       @QueryParam(&quot;limit&quot;) @DefaultValue(&quot;100&quot;) long limit) {
+<span class="nc" id="L109">        LOG.debug(&quot;Graph [{}] list belongs by group {} or target {}&quot;,</span>
+                  graph, group, target);
+<span class="nc bnc" id="L111" title="All 4 branches missed.">        E.checkArgument(group == null || target == null,</span>
+                        &quot;Can't pass both group and target at the same time&quot;);
+
+<span class="nc" id="L114">        HugeGraph g = graph(manager, graph);</span>
+        List&lt;HugeAccess&gt; belongs;
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (group != null) {</span>
+<span class="nc" id="L117">            Id id = UserAPI.parseId(group);</span>
+<span class="nc" id="L118">            belongs = manager.authManager().listAccessByGroup(id, limit);</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        } else if (target != null) {</span>
+<span class="nc" id="L120">            Id id = UserAPI.parseId(target);</span>
+<span class="nc" id="L121">            belongs = manager.authManager().listAccessByTarget(id, limit);</span>
+<span class="nc" id="L122">        } else {</span>
+<span class="nc" id="L123">            belongs = manager.authManager().listAllAccess(limit);</span>
+        }
+<span class="nc" id="L125">        return manager.serializer(g).writeAuthElements(&quot;accesses&quot;, belongs);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L135">        LOG.debug(&quot;Graph [{}] get access: {}&quot;, graph, id);</span>
+
+<span class="nc" id="L137">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L138">        HugeAccess access = manager.authManager().getAccess(UserAPI.parseId(id));</span>
+<span class="nc" id="L139">        return manager.serializer(g).writeAuthElement(access);</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    public void delete(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L149">        LOG.debug(&quot;Graph [{}] delete access: {}&quot;, graph, id);</span>
+
+        @SuppressWarnings(&quot;unused&quot;) // just check if the graph exists
+<span class="nc" id="L152">        HugeGraph g = graph(manager, graph);</span>
+        try {
+<span class="nc" id="L154">            manager.authManager().deleteAccess(UserAPI.parseId(id));</span>
+<span class="nc" id="L155">        } catch (NotFoundException e) {</span>
+<span class="nc" id="L156">            throw new IllegalArgumentException(&quot;Invalid access id: &quot; + id);</span>
+<span class="nc" id="L157">        }</span>
+<span class="nc" id="L158">    }</span>
+
+    @JsonIgnoreProperties(value = {&quot;id&quot;, &quot;access_creator&quot;,
+                                   &quot;access_create&quot;, &quot;access_update&quot;})
+    private static class JsonAccess implements Checkable {
+
+        @JsonProperty(&quot;group&quot;)
+        private String group;
+        @JsonProperty(&quot;target&quot;)
+        private String target;
+        @JsonProperty(&quot;access_permission&quot;)
+        private HugePermission permission;
+        @JsonProperty(&quot;access_description&quot;)
+        private String description;
+
+        public HugeAccess build(HugeAccess access) {
+<span class="nc bnc" id="L174" title="All 2 branches missed.">            E.checkArgument(this.group == null ||</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">                            access.source().equals(UserAPI.parseId(this.group)),</span>
+                            &quot;The group of access can't be updated&quot;);
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            E.checkArgument(this.target == null ||</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">                            access.target().equals(UserAPI.parseId(this.target)),</span>
+                            &quot;The target of access can't be updated&quot;);
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            E.checkArgument(this.permission == null ||</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">                            access.permission().equals(this.permission),</span>
+                            &quot;The permission of access can't be updated&quot;);
+<span class="nc bnc" id="L183" title="All 2 branches missed.">            if (this.description != null) {</span>
+<span class="nc" id="L184">                access.description(this.description);</span>
+            }
+<span class="nc" id="L186">            return access;</span>
+        }
+
+        public HugeAccess build() {
+<span class="nc" id="L190">            HugeAccess access = new HugeAccess(UserAPI.parseId(this.group),</span>
+<span class="nc" id="L191">                                               UserAPI.parseId(this.target));</span>
+<span class="nc" id="L192">            access.permission(this.permission);</span>
+<span class="nc" id="L193">            access.description(this.description);</span>
+<span class="nc" id="L194">            return access;</span>
+        }
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L199">            E.checkArgumentNotNull(this.group,</span>
+                                   &quot;The group of access can't be null&quot;);
+<span class="nc" id="L201">            E.checkArgumentNotNull(this.target,</span>
+                                   &quot;The target of access can't be null&quot;);
+<span class="nc" id="L203">            E.checkArgumentNotNull(this.permission,</span>
+                                   &quot;The permission of access can't be null&quot;);
+<span class="nc" id="L205">        }</span>
+
+        @Override
+        public void checkUpdate() {
+<span class="nc" id="L209">            E.checkArgumentNotNull(this.description,</span>
+                                   &quot;The description of access can't be null&quot;);
+<span class="nc" id="L211">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

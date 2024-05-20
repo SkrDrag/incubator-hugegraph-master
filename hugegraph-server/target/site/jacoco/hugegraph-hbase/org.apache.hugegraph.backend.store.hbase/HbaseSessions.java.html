@@ -1,0 +1,970 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HbaseSessions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-hbase</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.hbase</a> &gt; <span class="el_source">HbaseSessions.java</span></div><h1>HbaseSessions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.hbase;
+
+import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.Future;
+import org.apache.hugegraph.util.Log;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CellScanner;
+import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.NamespaceDescriptor;
+import org.apache.hadoop.hbase.RegionMetrics;
+import org.apache.hadoop.hbase.ServerName;
+import org.apache.hadoop.hbase.Size;
+import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.TableNotDisabledException;
+import org.apache.hadoop.hbase.TableNotEnabledException;
+import org.apache.hadoop.hbase.client.Admin;
+import org.apache.hadoop.hbase.client.ColumnFamilyDescriptorBuilder;
+import org.apache.hadoop.hbase.client.Connection;
+import org.apache.hadoop.hbase.client.ConnectionFactory;
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.ResultScanner;
+import org.apache.hadoop.hbase.client.Row;
+import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.client.Table;
+import org.apache.hadoop.hbase.client.TableDescriptorBuilder;
+import org.apache.hadoop.hbase.client.coprocessor.AggregationClient;
+import org.apache.hadoop.hbase.client.coprocessor.LongColumnInterpreter;
+import org.apache.hadoop.hbase.filter.FilterList;
+import org.apache.hadoop.hbase.filter.FilterList.Operator;
+import org.apache.hadoop.hbase.filter.MultiRowRangeFilter;
+import org.apache.hadoop.hbase.filter.MultiRowRangeFilter.RowRange;
+import org.apache.hadoop.hbase.filter.PageFilter;
+import org.apache.hadoop.hbase.filter.PrefixFilter;
+import org.apache.hadoop.hbase.util.VersionInfo;
+import org.apache.hadoop.security.UserGroupInformation;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumn;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendIterator;
+import org.apache.hugegraph.backend.store.BackendSession.AbstractBackendSession;
+import org.apache.hugegraph.backend.store.BackendSessionPool;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.StringEncoding;
+import org.apache.hugegraph.util.VersionUtil;
+import com.google.common.util.concurrent.Futures;
+
+public class HbaseSessions extends BackendSessionPool {
+
+<span class="nc" id="L88">    private static final Logger LOG = Log.logger(HbaseSessions.class);</span>
+
+    private static final String COPROCESSOR_AGGR =
+            &quot;org.apache.hadoop.hbase.coprocessor.AggregateImplementation&quot;;
+    private static final long SCANNER_CACHING = 1000L;
+
+    private final String namespace;
+    private Connection hbase;
+
+    public HbaseSessions(HugeConfig config, String namespace, String store) {
+<span class="nc" id="L98">        super(config, namespace + &quot;/&quot; + store);</span>
+<span class="nc" id="L99">        this.namespace = namespace;</span>
+<span class="nc" id="L100">    }</span>
+
+    protected Connection hbase() {
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        E.checkState(this.hbase != null, &quot;HBase connection is not opened&quot;);</span>
+<span class="nc" id="L104">        return this.hbase;</span>
+    }
+
+    private Table table(String table) throws IOException {
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        E.checkState(this.hbase != null, &quot;HBase connection is not opened&quot;);</span>
+<span class="nc" id="L109">        TableName tableName = TableName.valueOf(this.namespace, table);</span>
+<span class="nc" id="L110">        return this.hbase.getTable(tableName);</span>
+    }
+
+    private AggregationClient aggregationClient() {
+<span class="nc" id="L114">        Configuration hConfig = this.hbase.getConfiguration();</span>
+<span class="nc" id="L115">        hConfig = HBaseConfiguration.create(hConfig);</span>
+<span class="nc" id="L116">        long timeout = this.config().get(HbaseOptions.AGGR_TIMEOUT);</span>
+<span class="nc" id="L117">        hConfig.setLong(&quot;hbase.rpc.timeout&quot;, timeout * 1000L);</span>
+<span class="nc" id="L118">        hConfig.setLong(&quot;hbase.client.scanner.caching&quot;, SCANNER_CACHING);</span>
+<span class="nc" id="L119">        return new AggregationClient(hConfig);</span>
+    }
+
+    @Override
+    public synchronized void open() throws IOException {
+<span class="nc" id="L124">        HugeConfig config = this.config();</span>
+<span class="nc" id="L125">        String hosts = config.get(HbaseOptions.HBASE_HOSTS);</span>
+<span class="nc" id="L126">        int port = config.get(HbaseOptions.HBASE_PORT);</span>
+<span class="nc" id="L127">        String znodeParent = config.get(HbaseOptions.HBASE_ZNODE_PARENT);</span>
+<span class="nc" id="L128">        boolean isEnableKerberos = config.get(HbaseOptions.HBASE_KERBEROS_ENABLE);</span>
+<span class="nc" id="L129">        Configuration hConfig = HBaseConfiguration.create();</span>
+<span class="nc" id="L130">        hConfig.set(HConstants.ZOOKEEPER_QUORUM, hosts);</span>
+<span class="nc" id="L131">        hConfig.set(HConstants.ZOOKEEPER_CLIENT_PORT, String.valueOf(port));</span>
+<span class="nc" id="L132">        hConfig.set(HConstants.ZOOKEEPER_ZNODE_PARENT, znodeParent);</span>
+
+<span class="nc" id="L134">        hConfig.setInt(&quot;zookeeper.recovery.retry&quot;,</span>
+<span class="nc" id="L135">                       config.get(HbaseOptions.HBASE_ZK_RETRY));</span>
+
+        // Set hbase.hconnection.threads.max 64 to avoid OOM(default value: 256)
+<span class="nc" id="L138">        hConfig.setInt(&quot;hbase.hconnection.threads.max&quot;,</span>
+<span class="nc" id="L139">                       config.get(HbaseOptions.HBASE_THREADS_MAX));</span>
+
+<span class="nc" id="L141">        String hbaseSite = config.get(HbaseOptions.HBASE_HBASE_SITE);</span>
+<span class="nc" id="L142">        hConfig.addResource(new Path(hbaseSite));</span>
+
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (isEnableKerberos) {</span>
+<span class="nc" id="L145">            String krb5Conf = config.get(HbaseOptions.HBASE_KRB5_CONF);</span>
+<span class="nc" id="L146">            System.setProperty(&quot;java.security.krb5.conf&quot;, krb5Conf);</span>
+<span class="nc" id="L147">            String principal = config.get(HbaseOptions.HBASE_KERBEROS_PRINCIPAL);</span>
+<span class="nc" id="L148">            String keyTab = config.get(HbaseOptions.HBASE_KERBEROS_KEYTAB);</span>
+<span class="nc" id="L149">            hConfig.set(&quot;hadoop.security.authentication&quot;, &quot;kerberos&quot;);</span>
+<span class="nc" id="L150">            hConfig.set(&quot;hbase.security.authentication&quot;, &quot;kerberos&quot;);</span>
+
+            //  login/authenticate using keytab
+<span class="nc" id="L153">            UserGroupInformation.setConfiguration(hConfig);</span>
+<span class="nc" id="L154">            UserGroupInformation.loginUserFromKeytab(principal, keyTab);</span>
+        }
+<span class="nc" id="L156">        this.hbase = ConnectionFactory.createConnection(hConfig);</span>
+<span class="nc" id="L157">    }</span>
+
+    @Override
+    protected synchronized boolean opened() {
+        // NOTE: isClosed() seems to always return true even if not connected
+<span class="nc bnc" id="L162" title="All 4 branches missed.">        return this.hbase != null &amp;&amp; !this.hbase.isClosed();</span>
+    }
+
+    @Override
+    public final Session session() {
+<span class="nc" id="L167">        return (Session) super.getOrNewSession();</span>
+    }
+
+    @Override
+    protected Session newSession() {
+<span class="nc" id="L172">        return new Session();</span>
+    }
+
+    @Override
+    protected synchronized void doClose() {
+<span class="nc bnc" id="L177" title="All 4 branches missed.">        if (this.hbase == null || this.hbase.isClosed()) {</span>
+<span class="nc" id="L178">            return;</span>
+        }
+        try {
+<span class="nc" id="L181">            this.hbase.close();</span>
+<span class="nc" id="L182">        } catch (IOException e) {</span>
+<span class="nc" id="L183">            throw new BackendException(&quot;Failed to close HBase connection&quot;, e);</span>
+<span class="nc" id="L184">        }</span>
+<span class="nc" id="L185">    }</span>
+
+    public boolean existsNamespace() throws IOException {
+<span class="nc" id="L188">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            for (NamespaceDescriptor ns : admin.listNamespaceDescriptors()) {</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">                if (this.namespace.equals(ns.getName())) {</span>
+<span class="nc" id="L191">                    return true;</span>
+                }
+            }
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        }</span>
+<span class="nc" id="L195">        return false;</span>
+    }
+
+    public void createNamespace() throws IOException {
+<span class="nc" id="L199">        NamespaceDescriptor ns = NamespaceDescriptor.create(this.namespace)</span>
+<span class="nc" id="L200">                                                    .build();</span>
+<span class="nc" id="L201">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc" id="L202">            admin.createNamespace(ns);</span>
+        }
+<span class="nc" id="L204">    }</span>
+
+    public void dropNamespace() throws IOException {
+<span class="nc" id="L207">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc" id="L208">            admin.deleteNamespace(this.namespace);</span>
+        }
+<span class="nc" id="L210">    }</span>
+
+    public boolean existsTable(String table) throws IOException {
+<span class="nc" id="L213">        TableName tableName = TableName.valueOf(this.namespace, table);</span>
+<span class="nc" id="L214">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc" id="L215">            return admin.tableExists(tableName);</span>
+        }
+    }
+
+    public void createTable(String table, List&lt;byte[]&gt; cfs) throws IOException {
+<span class="nc" id="L220">        TableDescriptorBuilder tdb = TableDescriptorBuilder.newBuilder(</span>
+<span class="nc" id="L221">                                     TableName.valueOf(this.namespace, table));</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">        for (byte[] cf : cfs) {</span>
+<span class="nc" id="L223">            tdb.setColumnFamily(ColumnFamilyDescriptorBuilder.newBuilder(cf)</span>
+<span class="nc" id="L224">                                                             .build());</span>
+<span class="nc" id="L225">        }</span>
+<span class="nc" id="L226">        tdb.setCoprocessor(COPROCESSOR_AGGR);</span>
+<span class="nc" id="L227">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc" id="L228">            admin.createTable(tdb.build());</span>
+        }
+<span class="nc" id="L230">    }</span>
+
+    public void createPreSplitTable(String table, List&lt;byte[]&gt; cfs,
+                                    short numOfPartitions) throws IOException {
+<span class="nc" id="L234">        TableDescriptorBuilder builder = TableDescriptorBuilder.newBuilder(</span>
+<span class="nc" id="L235">                TableName.valueOf(this.namespace, table));</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        for (byte[] cf : cfs) {</span>
+<span class="nc" id="L237">            builder.setColumnFamily(ColumnFamilyDescriptorBuilder.newBuilder(cf).build());</span>
+<span class="nc" id="L238">        }</span>
+<span class="nc" id="L239">        byte[][] splits = new byte[numOfPartitions - 1]</span>
+                                  [org.apache.hadoop.hbase.util.Bytes.SIZEOF_SHORT];
+<span class="nc bnc" id="L241" title="All 2 branches missed.">        for (short split = 1; split &lt; numOfPartitions; split++) {</span>
+<span class="nc" id="L242">            splits[split - 1] = org.apache.hadoop.hbase.util.Bytes.toBytes(split);</span>
+        }
+<span class="nc" id="L244">        builder.setCoprocessor(COPROCESSOR_AGGR);</span>
+<span class="nc" id="L245">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc" id="L246">            admin.createTable(builder.build(), splits);</span>
+        }
+<span class="nc" id="L248">    }</span>
+
+    public void dropTable(String table) throws IOException {
+<span class="nc" id="L251">        TableName tableName = TableName.valueOf(this.namespace, table);</span>
+<span class="nc" id="L252">        try (Admin admin = this.hbase.getAdmin()) {</span>
+            try {
+<span class="nc" id="L254">                admin.disableTable(tableName);</span>
+<span class="nc" id="L255">            } catch (TableNotEnabledException ignored) {</span>
+                // pass
+<span class="nc" id="L257">            }</span>
+<span class="nc" id="L258">            admin.deleteTable(tableName);</span>
+        }
+<span class="nc" id="L260">    }</span>
+
+    public void enableTable(String table) throws IOException {
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        assert this.existsTable(table);</span>
+<span class="nc" id="L264">        TableName tableName = TableName.valueOf(this.namespace, table);</span>
+<span class="nc" id="L265">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">            if (admin.isTableEnabled(tableName)) {</span>
+<span class="nc" id="L267">                return;</span>
+            }
+            try {
+<span class="nc" id="L270">                admin.enableTable(tableName);</span>
+<span class="nc" id="L271">            } catch (TableNotDisabledException ignored) {</span>
+                // pass
+<span class="nc" id="L273">            }</span>
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        }</span>
+<span class="nc" id="L275">    }</span>
+
+    public Future&lt;Void&gt; disableTableAsync(String table) throws IOException {
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        assert this.existsTable(table);</span>
+<span class="nc" id="L279">        TableName tableName = TableName.valueOf(this.namespace, table);</span>
+<span class="nc" id="L280">        try (Admin admin = this.hbase.getAdmin()) {</span>
+            try {
+<span class="nc" id="L282">                return admin.disableTableAsync(tableName);</span>
+<span class="nc" id="L283">            } catch (TableNotEnabledException ignored) {</span>
+                // Ignore if it's disabled
+<span class="nc" id="L285">                return Futures.immediateFuture(null);</span>
+            }
+<span class="nc bnc" id="L287" title="All 2 branches missed.">        }</span>
+    }
+
+    public Future&lt;Void&gt; truncateTableAsync(String table) throws IOException {
+<span class="nc bnc" id="L291" title="All 2 branches missed.">        assert this.existsTable(table);</span>
+<span class="nc" id="L292">        TableName tableName = TableName.valueOf(this.namespace, table);</span>
+<span class="nc" id="L293">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc" id="L294">            return admin.truncateTableAsync(tableName, true);</span>
+        }
+    }
+
+    public void compactTables(List&lt;String&gt; tableNames) throws IOException {
+<span class="nc" id="L299">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">            for (String table : tableNames) {</span>
+<span class="nc" id="L301">                admin.compact(TableName.valueOf(this.namespace, table));</span>
+<span class="nc" id="L302">            }</span>
+        }
+<span class="nc" id="L304">    }</span>
+
+    public long storeSize(String table) throws IOException {
+<span class="nc" id="L307">        long total = 0L;</span>
+<span class="nc" id="L308">        try (Admin admin = this.hbase.getAdmin()) {</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">            for (ServerName rs : admin.getRegionServers()) {</span>
+                // NOTE: we can use getLoad() before hbase 2.0
+                //ServerLoad load = admin.getClusterStatus().getLoad(rs);
+                //total += load.getStorefileSizeMB() * Bytes.MB;
+                //total += load.getMemStoreSizeMB() * Bytes.MB;
+<span class="nc" id="L314">                TableName tableName = TableName.valueOf(this.namespace, table);</span>
+<span class="nc bnc" id="L315" title="All 2 branches missed.">                for (RegionMetrics m : admin.getRegionMetrics(rs, tableName)) {</span>
+<span class="nc" id="L316">                    Double storeFileSize = m.getStoreFileSize().get(Size.Unit.BYTE);</span>
+<span class="nc" id="L317">                    total += storeFileSize.longValue();</span>
+
+<span class="nc" id="L319">                    Double memStoreFileSize = m.getMemStoreSize().get(Size.Unit.BYTE);</span>
+<span class="nc" id="L320">                    total += memStoreFileSize.longValue();</span>
+<span class="nc" id="L321">                }</span>
+<span class="nc" id="L322">            }</span>
+        }
+<span class="nc" id="L324">        return total;</span>
+    }
+
+    /**
+     * Session interface for HBase
+     */
+    public interface HbaseSession&lt;R&gt; {
+
+        /**
+         * Add a row record to a table
+         */
+        void put(String table, byte[] family, byte[] rowkey,
+                 Collection&lt;BackendColumn&gt; columns);
+
+        /**
+         * Add a row record to a table(can be used when adding an index)
+         */
+        void put(String table, byte[] family, byte[] rowkey, byte[] qualifier,
+                 byte[] value);
+
+        /**
+         * Delete a record by rowkey and qualifier from a table
+         */
+        default void remove(String table, byte[] family, byte[] rowkey,
+                            byte[] qualifier) {
+<span class="nc" id="L349">            this.remove(table, family, rowkey, qualifier, false);</span>
+<span class="nc" id="L350">        }</span>
+
+        /**
+         * Delete a record by rowkey and qualifier from a table,
+         * just delete the latest version of the specified column if need
+         */
+        void remove(String table, byte[] family, byte[] rowkey,
+                    byte[] qualifier, boolean latestVersion);
+
+        /**
+         * Delete a record by rowkey from a table
+         */
+        void delete(String table, byte[] family, byte[] rowkey);
+
+        /**
+         * Get a record by rowkey and qualifier from a table
+         */
+        R get(String table, byte[] family, byte[] rowkey, byte[] qualifier);
+
+        /**
+         * Get a record by rowkey from a table
+         */
+        R get(String table, byte[] family, byte[] rowkey);
+
+        /**
+         * Get multi records by rowkeys from a table
+         */
+        R get(String table, byte[] family, Set&lt;byte[]&gt; rowkeys);
+
+        /**
+         * Scan all records from a table
+         */
+        default R scan(String table, long limit) {
+<span class="nc" id="L383">            Scan scan = new Scan();</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">            if (limit &gt;= 0) {</span>
+<span class="nc" id="L385">                scan.setFilter(new PageFilter(limit));</span>
+            }
+<span class="nc" id="L387">            return this.scan(table, scan);</span>
+        }
+
+        /**
+         * Scan records by rowkey prefix from a table
+         */
+        default R scan(String table, byte[] prefix) {
+<span class="nc" id="L394">            return this.scan(table, prefix, true, prefix);</span>
+        }
+
+        /**
+         * Scan records by multi rowkey prefixes from a table
+         */
+        default R scan(String table, Set&lt;byte[]&gt; prefixes) {
+<span class="nc" id="L401">            FilterList orFilters = new FilterList(Operator.MUST_PASS_ONE);</span>
+<span class="nc bnc" id="L402" title="All 2 branches missed.">            for (byte[] prefix : prefixes) {</span>
+<span class="nc" id="L403">                FilterList andFilters = new FilterList(Operator.MUST_PASS_ALL);</span>
+<span class="nc" id="L404">                List&lt;RowRange&gt; ranges = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L405">                ranges.add(new RowRange(prefix, true, null, true));</span>
+<span class="nc" id="L406">                andFilters.addFilter(new MultiRowRangeFilter(ranges));</span>
+<span class="nc" id="L407">                andFilters.addFilter(new PrefixFilter(prefix));</span>
+
+<span class="nc" id="L409">                orFilters.addFilter(andFilters);</span>
+<span class="nc" id="L410">            }</span>
+
+<span class="nc" id="L412">            Scan scan = new Scan().setFilter(orFilters);</span>
+<span class="nc" id="L413">            return this.scan(table, scan);</span>
+        }
+
+        /**
+         * Scan records by rowkey start and prefix from a table
+         * TODO: setRowPrefixFilter deprecated since HBase 2.5.0, will be removed in 4.0.0,
+         * use setStartStopRowForPrefixScan(byte[]) instead.
+         */
+        default R scan(String table, byte[] startRow, boolean inclusiveStart,
+                       byte[] prefix) {
+<span class="nc" id="L423">            final Scan scan = new Scan();</span>
+<span class="nc bnc" id="L424" title="All 2 branches missed.">            if(startRow == prefix) {</span>
+<span class="nc" id="L425">                scan.setRowPrefixFilter(prefix);</span>
+            } else {
+<span class="nc" id="L427">                scan.withStartRow(startRow, inclusiveStart)</span>
+<span class="nc" id="L428">                    .setFilter(new PrefixFilter(prefix));</span>
+            }
+<span class="nc" id="L430">            return this.scan(table, scan);</span>
+        }
+
+        /**
+         * Scan records by rowkey range from a table
+         */
+        default R scan(String table, byte[] startRow, byte[] stopRow) {
+<span class="nc" id="L437">            return this.scan(table, startRow, true, stopRow, false);</span>
+        }
+
+        /**
+         * Scan records by rowkey range from a table
+         */
+        default R scan(String table, byte[] startRow, boolean inclusiveStart,
+                       byte[] stopRow, boolean inclusiveStop) {
+<span class="nc" id="L445">            Scan scan = new Scan().withStartRow(startRow, inclusiveStart);</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">            if (stopRow != null) {</span>
+<span class="nc" id="L447">                scan.withStopRow(stopRow, inclusiveStop);</span>
+            }
+<span class="nc" id="L449">            return this.scan(table, scan);</span>
+        }
+
+        /**
+         * Inner scan: send scan request to HBase and get iterator
+         */
+        R scan(String table, Scan scan);
+
+        /**
+         * Increase a counter by rowkey and qualifier to a table
+         */
+        long increase(String table, byte[] family, byte[] rowkey,
+                      byte[] qualifier, long value);
+    }
+
+    /**
+     * Session implement for HBase
+     */
+<span class="nc" id="L467">    public class Session extends AbstractBackendSession</span>
+                         implements HbaseSession&lt;RowIterator&gt; {
+
+        private final Map&lt;String, List&lt;Row&gt;&gt; batch;
+
+<span class="nc" id="L472">        public Session() {</span>
+<span class="nc" id="L473">            this.batch = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L474">        }</span>
+
+        private void batch(String table, Row row) {
+<span class="nc" id="L477">            List&lt;Row&gt; rows = this.batch.get(table);</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">            if (rows == null) {</span>
+<span class="nc" id="L479">                rows = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L480">                this.batch.put(table, rows);</span>
+            }
+<span class="nc" id="L482">            rows.add(row);</span>
+<span class="nc" id="L483">        }</span>
+
+        private int batchSize() {
+<span class="nc" id="L486">            int size = 0;</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">            for (List&lt;Row&gt; puts : this.batch.values()) {</span>
+<span class="nc" id="L488">                size += puts.size();</span>
+<span class="nc" id="L489">            }</span>
+<span class="nc" id="L490">            return size;</span>
+        }
+
+        private void checkBatchResults(Object[] results, List&lt;Row&gt; rows)
+                                       throws Throwable {
+<span class="nc bnc" id="L495" title="All 2 branches missed.">            assert rows.size() == results.length;</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">            for (int i = 0; i &lt; results.length; i++) {</span>
+<span class="nc" id="L497">                Object result = results[i];</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">                if (result instanceof Throwable) {</span>
+<span class="nc" id="L499">                    throw (Throwable) result;</span>
+                }
+<span class="nc bnc" id="L501" title="All 4 branches missed.">                if (result == null || !((Result) result).isEmpty()) {</span>
+<span class="nc" id="L502">                    throw new BackendException(&quot;Failed batch for row: %s&quot;,</span>
+<span class="nc" id="L503">                                               rows.get(i));</span>
+                }
+            }
+<span class="nc" id="L506">        }</span>
+
+        public Connection hbase() {
+<span class="nc" id="L509">            return HbaseSessions.this.hbase();</span>
+        }
+
+        public String namespace() {
+<span class="nc" id="L513">            return HbaseSessions.this.namespace;</span>
+        }
+
+        @Override
+        public void open() {
+<span class="nc" id="L518">            this.opened = true;</span>
+<span class="nc" id="L519">        }</span>
+
+        @Override
+        public void close() {
+<span class="nc bnc" id="L523" title="All 2 branches missed.">            assert this.closeable();</span>
+<span class="nc" id="L524">            this.opened = false;</span>
+<span class="nc" id="L525">        }</span>
+
+        @Override
+        public boolean closed() {
+<span class="nc bnc" id="L529" title="All 4 branches missed.">            return !this.opened || !HbaseSessions.this.opened();</span>
+        }
+
+        /**
+         * Any change in the session
+         */
+        @Override
+        public boolean hasChanges() {
+<span class="nc bnc" id="L537" title="All 2 branches missed.">            return this.batch.size() &gt; 0;</span>
+        }
+
+        /**
+         * Commit all updates(put/delete) to DB
+         */
+        @Override
+        public Integer commit() {
+<span class="nc" id="L545">            int count = this.batchSize();</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">            if (count &lt;= 0) {</span>
+<span class="nc" id="L547">                return 0;</span>
+            }
+
+            // TODO: this will not be atomic, to be improved
+<span class="nc bnc" id="L551" title="All 2 branches missed.">            for (Entry&lt;String, List&lt;Row&gt;&gt; action : this.batch.entrySet()) {</span>
+<span class="nc" id="L552">                List&lt;Row&gt; rows = action.getValue();</span>
+<span class="nc" id="L553">                Object[] results = new Object[rows.size()];</span>
+<span class="nc" id="L554">                try (Table table = table(action.getKey())) {</span>
+<span class="nc" id="L555">                    table.batch(rows, results);</span>
+<span class="nc" id="L556">                    checkBatchResults(results, rows);</span>
+<span class="nc" id="L557">                } catch (InterruptedIOException e) {</span>
+<span class="nc" id="L558">                    throw new BackendException(&quot;Interrupted, &quot; +</span>
+                                               &quot;maybe it is timed out&quot;, e);
+<span class="nc" id="L560">                } catch (Throwable e) {</span>
+                    // TODO: Mark and delete committed records
+<span class="nc" id="L562">                    throw new BackendException(&quot;Failed to commit, &quot; +</span>
+                              &quot;there may be inconsistent states for HBase&quot;, e);
+<span class="nc" id="L564">                }</span>
+<span class="nc" id="L565">            }</span>
+
+            // Clear batch if write() successfully (retained if failed)
+<span class="nc" id="L568">            this.batch.clear();</span>
+
+<span class="nc" id="L570">            return count;</span>
+        }
+
+        /**
+         * Rollback all updates(put/delete) not committed
+         */
+        @Override
+        public void rollback() {
+<span class="nc" id="L578">            this.batch.clear();</span>
+<span class="nc" id="L579">        }</span>
+
+        /**
+         * Add a row record to a table
+         */
+        @Override
+        public void put(String table, byte[] family, byte[] rowkey,
+                        Collection&lt;BackendColumn&gt; columns) {
+<span class="nc" id="L587">            Put put = new Put(rowkey);</span>
+<span class="nc bnc" id="L588" title="All 2 branches missed.">            for (BackendColumn column : columns) {</span>
+<span class="nc" id="L589">                put.addColumn(family, column.name, column.value);</span>
+<span class="nc" id="L590">            }</span>
+<span class="nc" id="L591">            this.batch(table, put);</span>
+<span class="nc" id="L592">        }</span>
+
+        /**
+         * Add a row record to a table with ttl
+         */
+        public void put(String table, byte[] family, byte[] rowkey,
+                        Collection&lt;BackendColumn&gt; columns, long ttl) {
+<span class="nc" id="L599">            Put put = new Put(rowkey);</span>
+<span class="nc bnc" id="L600" title="All 2 branches missed.">            for (BackendColumn column : columns) {</span>
+<span class="nc" id="L601">                put.addColumn(family, column.name, column.value);</span>
+<span class="nc" id="L602">            }</span>
+<span class="nc" id="L603">            put.setTTL(ttl);</span>
+<span class="nc" id="L604">            this.batch(table, put);</span>
+<span class="nc" id="L605">        }</span>
+
+        /**
+         * Add a row record to a table(can be used when adding an index)
+         */
+        @Override
+        public void put(String table, byte[] family,
+                        byte[] rowkey, byte[] qualifier, byte[] value) {
+<span class="nc" id="L613">            Put put = new Put(rowkey);</span>
+<span class="nc" id="L614">            put.addColumn(family, qualifier, value);</span>
+<span class="nc" id="L615">            this.batch(table, put);</span>
+<span class="nc" id="L616">        }</span>
+
+        /**
+         * Add a row record to a table with ttl for index
+         */
+        public void put(String table, byte[] family, byte[] rowkey,
+                        byte[] qualifier, byte[] value, long ttl) {
+<span class="nc" id="L623">            Put put = new Put(rowkey);</span>
+<span class="nc" id="L624">            put.addColumn(family, qualifier, value);</span>
+<span class="nc" id="L625">            put.setTTL(ttl);</span>
+<span class="nc" id="L626">            this.batch(table, put);</span>
+<span class="nc" id="L627">        }</span>
+
+        /**
+         * Delete a record by rowkey and qualifier from a table
+         */
+        @Override
+        public void remove(String table, byte[] family,
+                           byte[] rowkey, byte[] qualifier) {
+<span class="nc" id="L635">            this.remove(table, family, rowkey, qualifier, false);</span>
+<span class="nc" id="L636">        }</span>
+
+        /**
+         * Delete a record by rowkey and qualifier from a table,
+         * just delete the latest version of the specified column if need
+         */
+        @Override
+        public void remove(String table, byte[] family, byte[] rowkey,
+                           byte[] qualifier, boolean latestVersion) {
+<span class="nc bnc" id="L645" title="All 2 branches missed.">            assert family != null;</span>
+<span class="nc bnc" id="L646" title="All 2 branches missed.">            assert rowkey != null;</span>
+<span class="nc bnc" id="L647" title="All 2 branches missed.">            E.checkArgument(qualifier != null,</span>
+                            &quot;HBase qualifier can't be null when removing&quot;);
+<span class="nc" id="L649">            Delete delete = new Delete(rowkey);</span>
+<span class="nc bnc" id="L650" title="All 2 branches missed.">            if (latestVersion) {</span>
+                // Just delete the latest version of the specified column
+<span class="nc" id="L652">                delete.addColumn(family, qualifier);</span>
+            } else {
+                // Delete all versions of the specified column
+<span class="nc" id="L655">                delete.addColumns(family, qualifier);</span>
+            }
+<span class="nc" id="L657">            this.batch(table, delete);</span>
+<span class="nc" id="L658">        }</span>
+
+        /**
+         * Delete a record by rowkey from a table
+         */
+        @Override
+        public void delete(String table, byte[] family, byte[] rowkey) {
+<span class="nc bnc" id="L665" title="All 2 branches missed.">            assert rowkey != null;</span>
+<span class="nc" id="L666">            Delete delete = new Delete(rowkey);</span>
+<span class="nc bnc" id="L667" title="All 2 branches missed.">            if (family != null) {</span>
+<span class="nc" id="L668">                delete.addFamily(family);</span>
+            }
+<span class="nc" id="L670">            this.batch(table, delete);</span>
+<span class="nc" id="L671">        }</span>
+
+        /**
+         * Get a record by rowkey and qualifier from a table
+         */
+        @Override
+        public RowIterator get(String table, byte[] family,
+                               byte[] rowkey, byte[] qualifier) {
+<span class="nc bnc" id="L679" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+
+<span class="nc" id="L681">            Get get = new Get(rowkey);</span>
+<span class="nc" id="L682">            get.addColumn(family, qualifier);</span>
+
+<span class="nc" id="L684">            try (Table htable = table(table)) {</span>
+<span class="nc" id="L685">                return new RowIterator(htable.get(get));</span>
+<span class="nc" id="L686">            } catch (IOException e) {</span>
+<span class="nc" id="L687">                throw new BackendException(e);</span>
+            }
+        }
+
+        /**
+         * Get a record by rowkey from a table
+         */
+        @Override
+        public RowIterator get(String table, byte[] family, byte[] rowkey) {
+<span class="nc bnc" id="L696" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+
+<span class="nc" id="L698">            Get get = new Get(rowkey);</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">            if (family != null) {</span>
+<span class="nc" id="L700">                get.addFamily(family);</span>
+            }
+
+<span class="nc" id="L703">            try (Table htable = table(table)) {</span>
+<span class="nc" id="L704">                return new RowIterator(htable.get(get));</span>
+<span class="nc" id="L705">            } catch (IOException e) {</span>
+<span class="nc" id="L706">                throw new BackendException(e);</span>
+            }
+        }
+
+        /**
+         * Get multi records by rowkeys from a table
+         */
+        @Override
+        public RowIterator get(String table, byte[] family,
+                               Set&lt;byte[]&gt; rowkeys) {
+<span class="nc bnc" id="L716" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+
+<span class="nc" id="L718">            List&lt;Get&gt; gets = new ArrayList&lt;&gt;(rowkeys.size());</span>
+<span class="nc bnc" id="L719" title="All 2 branches missed.">            for (byte[] rowkey : rowkeys) {</span>
+<span class="nc" id="L720">                Get get = new Get(rowkey);</span>
+<span class="nc bnc" id="L721" title="All 2 branches missed.">                if (family != null) {</span>
+<span class="nc" id="L722">                    get.addFamily(family);</span>
+                }
+<span class="nc" id="L724">                gets.add(get);</span>
+<span class="nc" id="L725">            }</span>
+
+<span class="nc" id="L727">            try (Table htable = table(table)) {</span>
+<span class="nc" id="L728">                return new RowIterator(htable.get(gets));</span>
+<span class="nc" id="L729">            } catch (IOException e) {</span>
+<span class="nc" id="L730">                throw new BackendException(e);</span>
+            }
+        }
+
+        /**
+         * Scan records by rowkey range from a table
+         */
+        @Override
+        public RowIterator scan(String table,
+                                byte[] startRow, boolean inclusiveStart,
+                                byte[] stopRow, boolean inclusiveStop) {
+<span class="nc bnc" id="L741" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+
+<span class="nc" id="L743">            Scan scan = new Scan();</span>
+<span class="nc bnc" id="L744" title="All 2 branches missed.">            if (startRow != null) {</span>
+                // Refer: https://issues.apache.org/jira/browse/HBASE-16498 (Bug Fix)
+<span class="nc" id="L746">                scan.withStartRow(startRow, inclusiveStart);</span>
+            }
+<span class="nc bnc" id="L748" title="All 2 branches missed.">            if (stopRow != null) {</span>
+<span class="nc" id="L749">                String version = VersionInfo.getVersion();</span>
+<span class="nc bnc" id="L750" title="All 4 branches missed.">                if (inclusiveStop &amp;&amp; !VersionUtil.gte(version, &quot;2.0&quot;)) {</span>
+                    // The parameter stoprow-inclusive doesn't work before v2.0
+                    // https://issues.apache.org/jira/browse/HBASE-20675
+<span class="nc" id="L753">                    inclusiveStop = false;</span>
+                    // Add a trailing 0 byte to stopRow
+<span class="nc" id="L755">                    stopRow = Arrays.copyOf(stopRow, stopRow.length + 1);</span>
+                }
+<span class="nc bnc" id="L757" title="All 6 branches missed.">                if (Bytes.equals(startRow, stopRow) &amp;&amp;</span>
+                    inclusiveStart &amp;&amp; !inclusiveStop) {
+                    // Bug https://issues.apache.org/jira/browse/HBASE-21618
+<span class="nc" id="L760">                    return new RowIterator();</span>
+                }
+<span class="nc" id="L762">                scan.withStopRow(stopRow, inclusiveStop);</span>
+            }
+<span class="nc" id="L764">            return this.scan(table, scan);</span>
+        }
+
+        /**
+         * Inner scan: send scan request to HBase and get iterator
+         */
+        @Override
+        public RowIterator scan(String table, Scan scan) {
+<span class="nc bnc" id="L772" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+
+<span class="nc" id="L774">            try (Table htable = table(table)) {</span>
+<span class="nc" id="L775">                return new RowIterator(htable.getScanner(scan));</span>
+<span class="nc" id="L776">            } catch (IOException e) {</span>
+<span class="nc" id="L777">                throw new BackendException(e);</span>
+            }
+        }
+
+        /**
+         * Increase a counter by rowkey and qualifier to a table
+         */
+        @Override
+        public long increase(String table, byte[] family, byte[] rowkey,
+                             byte[] qualifier, long value) {
+<span class="nc" id="L787">            try (Table htable = table(table)) {</span>
+<span class="nc" id="L788">                return htable.incrementColumnValue(rowkey, family,</span>
+                                                   qualifier, value);
+<span class="nc" id="L790">            } catch (IOException e) {</span>
+<span class="nc" id="L791">                throw new BackendException(e);</span>
+            }
+        }
+
+        /**
+         * Get store size of specified table
+         */
+        public long storeSize(String table) throws IOException {
+<span class="nc" id="L799">            return HbaseSessions.this.storeSize(table);</span>
+        }
+
+        /**
+         * Just for debug
+         */
+        @SuppressWarnings(&quot;unused&quot;)
+        private void dump(String table, Scan scan) throws IOException {
+<span class="nc" id="L807">            LOG.info(String.format(&quot;&gt;&gt;&gt;&gt; scan table {} with {}&quot;, table, scan));</span>
+<span class="nc" id="L808">            RowIterator iterator = this.scan(table, scan);</span>
+<span class="nc bnc" id="L809" title="All 2 branches missed.">            while (iterator.hasNext()) {</span>
+<span class="nc" id="L810">                Result row = iterator.next();</span>
+<span class="nc" id="L811">                LOG.info(StringEncoding.format(row.getRow()));</span>
+<span class="nc" id="L812">                CellScanner cellScanner = row.cellScanner();</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">                while (cellScanner.advance()) {</span>
+<span class="nc" id="L814">                    Cell cell = cellScanner.current();</span>
+<span class="nc" id="L815">                    byte[] key = CellUtil.cloneQualifier(cell);</span>
+<span class="nc" id="L816">                    byte[] val = CellUtil.cloneValue(cell);</span>
+<span class="nc" id="L817">                    LOG.info(&quot;  {}={}&quot;,</span>
+<span class="nc" id="L818">                             StringEncoding.format(key),</span>
+<span class="nc" id="L819">                             StringEncoding.format(val));</span>
+<span class="nc" id="L820">                }</span>
+<span class="nc" id="L821">            }</span>
+<span class="nc" id="L822">        }</span>
+
+        public CountSession countSession() {
+<span class="nc" id="L825">            return new CountSession(this);</span>
+        }
+    }
+
+    public class CountSession implements HbaseSession&lt;Number&gt;, AutoCloseable {
+
+        private final Session origin;
+        private final AggregationClient aggrClient;
+
+<span class="nc" id="L834">        public CountSession(Session origin) {</span>
+<span class="nc" id="L835">            this.origin = origin;</span>
+<span class="nc" id="L836">            this.aggrClient = aggregationClient();</span>
+<span class="nc" id="L837">        }</span>
+
+        @Override
+        public void put(String table, byte[] family, byte[] rowkey,
+                        Collection&lt;BackendColumn&gt; columns) {
+<span class="nc" id="L842">            throw new NotSupportException(&quot;AggrSession.put&quot;);</span>
+        }
+
+        @Override
+        public void put(String table, byte[] family, byte[] rowkey,
+                        byte[] qualifier, byte[] value) {
+<span class="nc" id="L848">            throw new NotSupportException(&quot;AggrSession.put&quot;);</span>
+        }
+
+        @Override
+        public void remove(String table, byte[] family, byte[] rowkey,
+                           byte[] qualifier, boolean latestVersion) {
+<span class="nc" id="L854">            throw new NotSupportException(&quot;AggrSession.remove&quot;);</span>
+        }
+
+        @Override
+        public void delete(String table, byte[] family, byte[] rowkey) {
+<span class="nc" id="L859">            throw new NotSupportException(&quot;AggrSession.delete&quot;);</span>
+        }
+
+        @Override
+        public Number get(String table, byte[] family, byte[] rowkey,
+                          byte[] qualifier) {
+<span class="nc" id="L865">            return count(this.origin.get(table, family, rowkey, qualifier));</span>
+        }
+
+        @Override
+        public Number get(String table, byte[] family, byte[] rowkey) {
+<span class="nc" id="L870">            return count(this.origin.get(table, family, rowkey));</span>
+        }
+
+        @Override
+        public Number get(String table, byte[] family, Set&lt;byte[]&gt; rowkeys) {
+<span class="nc" id="L875">            return count(this.origin.get(table, family, rowkeys));</span>
+        }
+
+        private long count(RowIterator iter) {
+<span class="nc" id="L879">            long count = 0L;</span>
+<span class="nc bnc" id="L880" title="All 2 branches missed.">            while (iter.hasNext()) {</span>
+<span class="nc bnc" id="L881" title="All 2 branches missed.">                if (!iter.next().isEmpty()) {</span>
+<span class="nc" id="L882">                    count++;</span>
+                }
+            }
+<span class="nc" id="L885">            return count;</span>
+        }
+
+        @Override
+        public Number scan(String table, Scan scan) {
+<span class="nc" id="L890">            LongColumnInterpreter ci = new LongColumnInterpreter();</span>
+            try {
+<span class="nc" id="L892">                return this.aggrClient.rowCount(table(table), ci, scan);</span>
+<span class="nc" id="L893">            } catch (Throwable e) {</span>
+<span class="nc" id="L894">                throw new BackendException(e);</span>
+            }
+        }
+
+        @Override
+        public long increase(String table, byte[] family, byte[] rowkey,
+                             byte[] qualifier, long value) {
+<span class="nc" id="L901">            throw new NotSupportException(&quot;AggrSession.increase&quot;);</span>
+        }
+
+        @Override
+        public void close() throws IOException {
+<span class="nc" id="L906">            this.aggrClient.close();</span>
+<span class="nc" id="L907">        }</span>
+    }
+
+    protected static class RowIterator implements BackendIterator&lt;Result&gt; {
+
+        private final ResultScanner resultScanner;
+        private final Iterator&lt;Result&gt; results;
+
+<span class="nc" id="L915">        private byte[] position = null;</span>
+
+<span class="nc" id="L917">        public RowIterator(ResultScanner resultScanner) {</span>
+<span class="nc" id="L918">            this.resultScanner = resultScanner;</span>
+<span class="nc" id="L919">            this.results = resultScanner.iterator();</span>
+<span class="nc" id="L920">        }</span>
+
+<span class="nc" id="L922">        public RowIterator(Result... results) {</span>
+<span class="nc" id="L923">            this.resultScanner = null;</span>
+<span class="nc" id="L924">            List&lt;Result&gt; rs = new ArrayList&lt;&gt;(results.length);</span>
+<span class="nc bnc" id="L925" title="All 2 branches missed.">            for (Result result : results) {</span>
+                // Get by Ids may return empty result
+<span class="nc bnc" id="L927" title="All 2 branches missed.">                if (!result.isEmpty()) {</span>
+<span class="nc" id="L928">                    rs.add(result);</span>
+                }
+            }
+<span class="nc" id="L931">            this.results = rs.iterator();</span>
+<span class="nc" id="L932">        }</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="nc" id="L936">            boolean has = this.results.hasNext();</span>
+<span class="nc bnc" id="L937" title="All 2 branches missed.">            if (!has) {</span>
+<span class="nc" id="L938">                this.position = null;</span>
+<span class="nc" id="L939">                this.close();</span>
+            }
+<span class="nc" id="L941">            return has;</span>
+        }
+
+        @Override
+        public Result next() {
+            // Reset position due to results.next() may throw ex
+<span class="nc" id="L947">            this.position = null;</span>
+
+<span class="nc" id="L949">            Result next = this.results.next();</span>
+
+            // Update position for paging
+<span class="nc" id="L952">            this.position = next.getRow();</span>
+
+<span class="nc" id="L954">            return next;</span>
+        }
+
+        @Override
+        public void close() {
+<span class="nc bnc" id="L959" title="All 2 branches missed.">            if (this.resultScanner != null) {</span>
+<span class="nc" id="L960">                this.resultScanner.close();</span>
+            }
+<span class="nc" id="L962">        }</span>
+
+        @Override
+        public byte[] position() {
+<span class="nc" id="L966">            return this.position;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

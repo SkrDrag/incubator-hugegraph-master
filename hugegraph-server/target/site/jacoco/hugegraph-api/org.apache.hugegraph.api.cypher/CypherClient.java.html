@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CypherClient.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.cypher</a> &gt; <span class="el_source">CypherClient.java</span></div><h1>CypherClient.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.cypher;
+
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.commons.configuration2.Configuration;
+import org.apache.tinkerpop.gremlin.driver.*;
+import org.apache.tinkerpop.gremlin.driver.message.RequestMessage;
+import org.slf4j.Logger;
+
+import javax.annotation.Nullable;
+import javax.annotation.concurrent.ThreadSafe;
+
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.function.Supplier;
+
+@ThreadSafe
+public final class CypherClient {
+
+<span class="nc" id="L41">    private static final Logger LOG = Log.logger(CypherClient.class);</span>
+    private final Supplier&lt;Configuration&gt; configurationSupplier;
+    private String userName;
+    private String password;
+    private String token;
+
+    CypherClient(String userName, String password,
+<span class="nc" id="L48">                 Supplier&lt;Configuration&gt; configurationSupplier) {</span>
+<span class="nc" id="L49">        this.userName = userName;</span>
+<span class="nc" id="L50">        this.password = password;</span>
+<span class="nc" id="L51">        this.configurationSupplier = configurationSupplier;</span>
+<span class="nc" id="L52">    }</span>
+
+<span class="nc" id="L54">    CypherClient(String token, Supplier&lt;Configuration&gt; configurationSupplier) {</span>
+<span class="nc" id="L55">        this.token = token;</span>
+<span class="nc" id="L56">        this.configurationSupplier = configurationSupplier;</span>
+<span class="nc" id="L57">    }</span>
+
+    public CypherModel submitQuery(String cypherQuery, @Nullable Map&lt;String, String&gt; aliases) {
+<span class="nc bnc" id="L60" title="All 4 branches missed.">        E.checkArgument(cypherQuery != null &amp;&amp; !cypherQuery.isEmpty(),</span>
+                        &quot;The cypher-query parameter can't be null or empty&quot;);
+
+<span class="nc" id="L63">        Cluster cluster = Cluster.open(getConfig());</span>
+<span class="nc" id="L64">        Client client = cluster.connect();</span>
+
+<span class="nc bnc" id="L66" title="All 4 branches missed.">        if (aliases != null &amp;&amp; !aliases.isEmpty()) {</span>
+<span class="nc" id="L67">            client = client.alias(aliases);</span>
+        }
+
+<span class="nc" id="L70">        RequestMessage request = createRequest(cypherQuery);</span>
+        CypherModel res;
+
+        try {
+<span class="nc" id="L74">            List&lt;Object&gt; list = this.doQueryList(client, request);</span>
+<span class="nc" id="L75">            res = CypherModel.dataOf(request.getRequestId().toString(), list);</span>
+<span class="nc" id="L76">        } catch (Exception e) {</span>
+<span class="nc" id="L77">            LOG.error(String.format(&quot;Failed to submit cypher-query: [ %s ], caused by:&quot;,</span>
+                                    cypherQuery), e);
+<span class="nc" id="L79">            res = CypherModel.failOf(request.getRequestId().toString(), e.getMessage());</span>
+        } finally {
+<span class="nc" id="L81">            client.close();</span>
+<span class="nc" id="L82">            cluster.close();</span>
+        }
+
+<span class="nc" id="L85">        return res;</span>
+    }
+
+    private RequestMessage createRequest(String cypherQuery) {
+<span class="nc" id="L89">        return RequestMessage.build(Tokens.OPS_EVAL)</span>
+<span class="nc" id="L90">                             .processor(&quot;cypher&quot;)</span>
+<span class="nc" id="L91">                             .add(Tokens.ARGS_GREMLIN, cypherQuery)</span>
+<span class="nc" id="L92">                             .create();</span>
+    }
+
+    private List&lt;Object&gt; doQueryList(Client client, RequestMessage request)
+        throws ExecutionException, InterruptedException {
+<span class="nc" id="L97">        ResultSet results = client.submitAsync(request).get();</span>
+
+<span class="nc" id="L99">        Iterator&lt;Result&gt; iter = results.iterator();</span>
+<span class="nc" id="L100">        List&lt;Object&gt; list = new LinkedList&lt;&gt;();</span>
+
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        while (iter.hasNext()) {</span>
+<span class="nc" id="L103">            Result data = iter.next();</span>
+<span class="nc" id="L104">            list.add(data.getObject());</span>
+<span class="nc" id="L105">        }</span>
+
+<span class="nc" id="L107">        return list;</span>
+    }
+
+    /**
+     * As Sasl does not support a token, which is a coded string to indicate a legal user,
+     * we had to use a trick to fix it. When the token is set, the password will be set to
+     * an empty string, which is an uncommon value under normal conditions.
+     * The token will then be transferred through the userName-property.
+     * To see org.apache.hugegraph.auth.StandardAuthenticator.TokenSaslAuthenticator
+     */
+    private Configuration getConfig() {
+<span class="nc" id="L118">        Configuration conf = this.configurationSupplier.get();</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        conf.addProperty(&quot;username&quot;, this.token == null ? this.userName : this.token);</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        conf.addProperty(&quot;password&quot;, this.token == null ? this.password : &quot;&quot;);</span>
+
+<span class="nc" id="L122">        return conf;</span>
+    }
+
+    @Override
+    public boolean equals(Object o) {
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        if (this == o) {</span>
+<span class="nc" id="L128">            return true;</span>
+        }
+<span class="nc bnc" id="L130" title="All 4 branches missed.">        if (o == null || getClass() != o.getClass()) {</span>
+<span class="nc" id="L131">            return false;</span>
+        }
+<span class="nc" id="L133">        CypherClient that = (CypherClient) o;</span>
+
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        return Objects.equals(userName, that.userName) &amp;&amp;</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">               Objects.equals(password, that.password) &amp;&amp;</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">               Objects.equals(token, that.token);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc" id="L142">        return Objects.hash(userName, password, token);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L147">        final StringBuilder builder = new StringBuilder(&quot;CypherClient{&quot;);</span>
+<span class="nc" id="L148">        builder.append(&quot;userName='&quot;).append(userName).append('\'')</span>
+<span class="nc" id="L149">               .append(&quot;, token='&quot;).append(token).append('\'').append('}');</span>
+
+<span class="nc" id="L151">        return builder.toString();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

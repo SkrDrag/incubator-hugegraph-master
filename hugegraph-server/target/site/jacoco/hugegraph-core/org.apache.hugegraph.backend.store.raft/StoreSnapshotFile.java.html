@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StoreSnapshotFile.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.raft</a> &gt; <span class="el_source">StoreSnapshotFile.java</span></div><h1>StoreSnapshotFile.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.raft;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Paths;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.zip.Checksum;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hugegraph.backend.store.raft.compress.CompressStrategyManager;
+import org.apache.hugegraph.testutil.Whitebox;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.alipay.sofa.jraft.Closure;
+import com.alipay.sofa.jraft.Status;
+import com.alipay.sofa.jraft.entity.LocalFileMetaOutter.LocalFileMeta;
+import com.alipay.sofa.jraft.error.RaftError;
+import com.alipay.sofa.jraft.storage.snapshot.SnapshotReader;
+import com.alipay.sofa.jraft.storage.snapshot.SnapshotWriter;
+import com.alipay.sofa.jraft.util.CRC64;
+import com.google.protobuf.ByteString;
+
+public class StoreSnapshotFile {
+
+<span class="nc" id="L51">    private static final Logger LOG = Log.logger(StoreSnapshotFile.class);</span>
+
+    public static final String SNAPSHOT_DIR = &quot;snapshot&quot;;
+    private static final String TAR = &quot;.zip&quot;;
+
+    private final RaftBackendStore[] stores;
+    private final Map&lt;String, String&gt; dataDisks;
+    private final AtomicBoolean compressing;
+
+<span class="nc" id="L60">    public StoreSnapshotFile(RaftBackendStore[] stores) {</span>
+<span class="nc" id="L61">        this.stores = stores;</span>
+<span class="nc" id="L62">        this.dataDisks = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        for (RaftBackendStore raftStore : stores) {</span>
+            // Call RocksDBStore method reportDiskMapping()
+<span class="nc" id="L65">            this.dataDisks.putAll(Whitebox.invoke(raftStore, &quot;store&quot;,</span>
+                                                  &quot;reportDiskMapping&quot;));
+        }
+<span class="nc" id="L68">        this.compressing = new AtomicBoolean(false);</span>
+        /*
+         * Like that:
+         * general=/parent_path/rocksdb-data
+         * g/VERTEX=/parent_path/rocksdb-vertex
+         */
+<span class="nc" id="L74">        LOG.debug(&quot;The store data disks mapping {}&quot;, this.dataDisks);</span>
+<span class="nc" id="L75">    }</span>
+
+    public void save(SnapshotWriter writer, Closure done,
+                     ExecutorService executor) {
+        try {
+            // Write snapshot to real directory
+<span class="nc" id="L81">            Map&lt;String, String&gt; snapshotDirMaps = this.doSnapshotSave();</span>
+<span class="nc" id="L82">            executor.execute(() -&gt; {</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">                if (!this.compressing.compareAndSet(false, true)) {</span>
+<span class="nc" id="L84">                    LOG.info(&quot;Last compress task doesn't finish, skipped it&quot;);</span>
+<span class="nc" id="L85">                    done.run(new Status(RaftError.EBUSY,</span>
+                                        &quot;Last compress task doesn't finish, skipped it&quot;));
+<span class="nc" id="L87">                    return;</span>
+                }
+
+                try {
+<span class="nc" id="L91">                    this.compressSnapshotDir(writer, snapshotDirMaps);</span>
+<span class="nc" id="L92">                    this.deleteSnapshotDirs(snapshotDirMaps.keySet());</span>
+<span class="nc" id="L93">                    done.run(Status.OK());</span>
+<span class="nc" id="L94">                } catch (Throwable e) {</span>
+<span class="nc" id="L95">                    LOG.error(&quot;Failed to compress snapshot&quot;, e);</span>
+<span class="nc" id="L96">                    done.run(new Status(RaftError.EIO,</span>
+                                        &quot;Failed to compress snapshot, &quot; +
+<span class="nc" id="L98">                                        &quot;error is %s&quot;, e.getMessage()));</span>
+                } finally {
+<span class="nc" id="L100">                    this.compressing.compareAndSet(true, false);</span>
+                }
+<span class="nc" id="L102">            });</span>
+<span class="nc" id="L103">        } catch (Throwable e) {</span>
+<span class="nc" id="L104">            LOG.error(&quot;Failed to save snapshot&quot;, e);</span>
+<span class="nc" id="L105">            done.run(new Status(RaftError.EIO,</span>
+<span class="nc" id="L106">                                &quot;Failed to save snapshot, error is %s&quot;, e.getMessage()));</span>
+<span class="nc" id="L107">        }</span>
+<span class="nc" id="L108">    }</span>
+
+    public boolean load(SnapshotReader reader) {
+<span class="nc" id="L111">        Set&lt;String&gt; snapshotDirTars = reader.listFiles();</span>
+<span class="nc" id="L112">        LOG.info(&quot;The snapshot tar files to be loaded are {}&quot;, snapshotDirTars);</span>
+<span class="nc" id="L113">        Set&lt;String&gt; snapshotDirs = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        if (!this.compressing.compareAndSet(false, true)) {</span>
+<span class="nc" id="L115">            LOG.info(&quot;Last decompress task doesn't finish, skipped it&quot;);</span>
+<span class="nc" id="L116">            return false;</span>
+        }
+
+        try {
+<span class="nc bnc" id="L120" title="All 2 branches missed.">            for (String snapshotDirTar : snapshotDirTars) {</span>
+<span class="nc" id="L121">                String snapshotDir = this.decompressSnapshot(reader, snapshotDirTar);</span>
+<span class="nc" id="L122">                snapshotDirs.add(snapshotDir);</span>
+<span class="nc" id="L123">            }</span>
+<span class="nc" id="L124">        } catch (Throwable e) {</span>
+<span class="nc" id="L125">            LOG.error(&quot;Failed to decompress snapshot tar&quot;, e);</span>
+<span class="nc" id="L126">            return false;</span>
+        } finally {
+<span class="nc" id="L128">            this.compressing.compareAndSet(true, false);</span>
+        }
+
+        try {
+<span class="nc" id="L132">            this.doSnapshotLoad();</span>
+<span class="nc" id="L133">            this.deleteSnapshotDirs(snapshotDirs);</span>
+<span class="nc" id="L134">        } catch (Throwable e) {</span>
+<span class="nc" id="L135">            LOG.error(&quot;Failed to load snapshot&quot;, e);</span>
+<span class="nc" id="L136">            return false;</span>
+<span class="nc" id="L137">        }</span>
+<span class="nc" id="L138">        return true;</span>
+    }
+
+    private Map&lt;String, String&gt; doSnapshotSave() {
+<span class="nc" id="L142">        Map&lt;String, String&gt; snapshotDirMaps = InsertionOrderUtil.newMap();</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        for (RaftBackendStore store : this.stores) {</span>
+<span class="nc" id="L144">            snapshotDirMaps.putAll(store.originStore().createSnapshot(SNAPSHOT_DIR));</span>
+        }
+<span class="nc" id="L146">        LOG.info(&quot;Saved all snapshots: {}&quot;, snapshotDirMaps);</span>
+<span class="nc" id="L147">        return snapshotDirMaps;</span>
+    }
+
+    private void doSnapshotLoad() {
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        for (RaftBackendStore store : this.stores) {</span>
+<span class="nc" id="L152">            store.originStore().resumeSnapshot(SNAPSHOT_DIR, false);</span>
+        }
+<span class="nc" id="L154">    }</span>
+
+    private void compressSnapshotDir(SnapshotWriter writer, Map&lt;String, String&gt; snapshotDirMaps) {
+<span class="nc" id="L157">        String writerPath = writer.getPath();</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        for (Map.Entry&lt;String, String&gt; entry : snapshotDirMaps.entrySet()) {</span>
+<span class="nc" id="L159">            String snapshotDir = entry.getKey();</span>
+<span class="nc" id="L160">            String diskTableKey = entry.getValue();</span>
+<span class="nc" id="L161">            String snapshotDirTar = Paths.get(snapshotDir).getFileName().toString() + TAR;</span>
+<span class="nc" id="L162">            String outputFile = Paths.get(writerPath, snapshotDirTar).toString();</span>
+<span class="nc" id="L163">            Checksum checksum = new CRC64();</span>
+            try {
+<span class="nc" id="L165">                LOG.info(&quot;Prepare to compress dir '{}' to '{}'&quot;, snapshotDir, outputFile);</span>
+<span class="nc" id="L166">                long begin = System.currentTimeMillis();</span>
+<span class="nc" id="L167">                String rootDir = Paths.get(snapshotDir).toAbsolutePath().getParent().toString();</span>
+<span class="nc" id="L168">                String sourceDir = Paths.get(snapshotDir).getFileName().toString();</span>
+<span class="nc" id="L169">                CompressStrategyManager.getDefault()</span>
+<span class="nc" id="L170">                                       .compressZip(rootDir, sourceDir, outputFile, checksum);</span>
+<span class="nc" id="L171">                long end = System.currentTimeMillis();</span>
+<span class="nc" id="L172">                LOG.info(&quot;Compressed dir '{}' to '{}', took {} seconds&quot;,</span>
+<span class="nc" id="L173">                         snapshotDir, outputFile, (end - begin) / 1000.0F);</span>
+<span class="nc" id="L174">            } catch (Throwable e) {</span>
+<span class="nc" id="L175">                throw new RaftException(&quot;Failed to compress snapshot, path=%s, files=%s&quot;,</span>
+<span class="nc" id="L176">                                        e, writerPath, snapshotDirMaps.keySet());</span>
+<span class="nc" id="L177">            }</span>
+
+<span class="nc" id="L179">            LocalFileMeta.Builder metaBuilder = LocalFileMeta.newBuilder();</span>
+<span class="nc" id="L180">            metaBuilder.setChecksum(Long.toHexString(checksum.getValue()));</span>
+            /*
+             * snapshot_rocksdb-data.tar -&gt; general
+             * snapshot_rocksdb-vertex.tar -&gt; g/VERTEX
+             */
+<span class="nc" id="L185">            metaBuilder.setUserMeta(ByteString.copyFromUtf8(diskTableKey));</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            if (!writer.addFile(snapshotDirTar, metaBuilder.build())) {</span>
+<span class="nc" id="L187">                throw new RaftException(&quot;Failed to add snapshot file: '%s'&quot;, snapshotDirTar);</span>
+            }
+<span class="nc" id="L189">        }</span>
+<span class="nc" id="L190">    }</span>
+
+    private String decompressSnapshot(SnapshotReader reader,
+                                      String snapshotDirTar) throws IOException {
+<span class="nc" id="L194">        LocalFileMeta meta = (LocalFileMeta) reader.getFileMeta(snapshotDirTar);</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (meta == null) {</span>
+<span class="nc" id="L196">            throw new IOException(&quot;Can't find snapshot archive file, path=&quot; + snapshotDirTar);</span>
+        }
+
+<span class="nc" id="L199">        String diskTableKey = meta.getUserMeta().toStringUtf8();</span>
+<span class="nc" id="L200">        E.checkArgument(this.dataDisks.containsKey(diskTableKey),</span>
+                        &quot;The data path for '%s' should be exist&quot;, diskTableKey);
+<span class="nc" id="L202">        String dataPath = this.dataDisks.get(diskTableKey);</span>
+<span class="nc" id="L203">        String parentPath = Paths.get(dataPath).toAbsolutePath().getParent().toString();</span>
+<span class="nc" id="L204">        String snapshotDir = Paths.get(parentPath, StringUtils.removeEnd(snapshotDirTar, TAR))</span>
+<span class="nc" id="L205">                                  .toString();</span>
+<span class="nc" id="L206">        FileUtils.deleteDirectory(new File(snapshotDir));</span>
+<span class="nc" id="L207">        LOG.info(&quot;Delete stale snapshot dir {}&quot;, snapshotDir);</span>
+
+<span class="nc" id="L209">        Checksum checksum = new CRC64();</span>
+<span class="nc" id="L210">        String archiveFile = Paths.get(reader.getPath(), snapshotDirTar).toString();</span>
+        try {
+<span class="nc" id="L212">            LOG.info(&quot;Prepare to decompress snapshot zip '{}' to '{}'&quot;,</span>
+                     archiveFile, parentPath);
+<span class="nc" id="L214">            long begin = System.currentTimeMillis();</span>
+<span class="nc" id="L215">            CompressStrategyManager.getDefault().decompressZip(archiveFile, parentPath, checksum);</span>
+<span class="nc" id="L216">            long end = System.currentTimeMillis();</span>
+<span class="nc" id="L217">            LOG.info(&quot;Decompress snapshot zip '{}' to '{}', took {} seconds&quot;,</span>
+<span class="nc" id="L218">                     archiveFile, parentPath, (end - begin) / 1000.0F);</span>
+<span class="nc" id="L219">        } catch (Throwable e) {</span>
+<span class="nc" id="L220">            throw new RaftException(</span>
+                &quot;Failed to decompress snapshot, zip=%s&quot;, e, archiveFile);
+<span class="nc" id="L222">        }</span>
+
+<span class="nc bnc" id="L224" title="All 2 branches missed.">        if (meta.hasChecksum()) {</span>
+<span class="nc" id="L225">            String expected = meta.getChecksum();</span>
+<span class="nc" id="L226">            String actual = Long.toHexString(checksum.getValue());</span>
+<span class="nc" id="L227">            E.checkArgument(expected.equals(actual),</span>
+                            &quot;Snapshot checksum error: '%s' != '%s'&quot;, actual, expected);
+        }
+<span class="nc" id="L230">        return snapshotDir;</span>
+    }
+
+    private void deleteSnapshotDirs(Set&lt;String&gt; snapshotDirs) {
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        for (String snapshotDir : snapshotDirs) {</span>
+<span class="nc" id="L235">            FileUtils.deleteQuietly(new File(snapshotDir));</span>
+<span class="nc" id="L236">        }</span>
+<span class="nc" id="L237">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

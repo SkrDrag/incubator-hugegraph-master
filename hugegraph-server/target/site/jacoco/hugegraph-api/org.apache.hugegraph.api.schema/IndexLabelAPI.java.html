@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IndexLabelAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.schema</a> &gt; <span class="el_source">IndexLabelAPI.java</span></div><h1>IndexLabelAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.schema;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.RedirectFilter;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.Userdata;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.type.define.IndexType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.ImmutableMap;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/schema/indexlabels&quot;)
+@Singleton
+@Tag(name = &quot;IndexLabelAPI&quot;)
+<span class="nc" id="L65">public class IndexLabelAPI extends API {</span>
+
+<span class="nc" id="L67">    private static final Logger LOG = Log.logger(IndexLabelAPI.class);</span>
+
+    @POST
+    @Timed
+    @Status(Status.ACCEPTED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=index_label_write&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonIndexLabel jsonIndexLabel) {
+<span class="nc" id="L79">        LOG.debug(&quot;Graph [{}] create index label: {}&quot;, graph, jsonIndexLabel);</span>
+<span class="nc" id="L80">        checkCreatingBody(jsonIndexLabel);</span>
+
+<span class="nc" id="L82">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L83">        IndexLabel.Builder builder = jsonIndexLabel.convert2Builder(g);</span>
+<span class="nc" id="L84">        SchemaElement.TaskWithSchema il = builder.createWithTask();</span>
+<span class="nc" id="L85">        il.indexLabel(mapIndexLabel(il.indexLabel()));</span>
+<span class="nc" id="L86">        return manager.serializer(g).writeTaskWithSchema(il);</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RedirectFilter.RedirectMasterRole
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;name&quot;) String name,
+                         @QueryParam(&quot;action&quot;) String action,
+                         IndexLabelAPI.JsonIndexLabel jsonIndexLabel) {
+<span class="nc" id="L100">        LOG.debug(&quot;Graph [{}] {} index label: {}&quot;,</span>
+                  graph, action, jsonIndexLabel);
+<span class="nc" id="L102">        checkUpdatingBody(jsonIndexLabel);</span>
+<span class="nc" id="L103">        E.checkArgument(name.equals(jsonIndexLabel.name),</span>
+                        &quot;The name in url(%s) and body(%s) are different&quot;,
+                        name, jsonIndexLabel.name);
+        // Parse action parameter
+<span class="nc" id="L107">        boolean append = checkAndParseAction(action);</span>
+
+<span class="nc" id="L109">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L110">        IndexLabel.Builder builder = jsonIndexLabel.convert2Builder(g);</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        IndexLabel indexLabel = append ? builder.append() : builder.eliminate();</span>
+<span class="nc" id="L112">        return manager.serializer(g).writeIndexlabel(mapIndexLabel(indexLabel));</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=index_label_read&quot;})
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;names&quot;) List&lt;String&gt; names) {
+<span class="nc" id="L122">        boolean listAll = CollectionUtils.isEmpty(names);</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (listAll) {</span>
+<span class="nc" id="L124">            LOG.debug(&quot;Graph [{}] list index labels&quot;, graph);</span>
+        } else {
+<span class="nc" id="L126">            LOG.debug(&quot;Graph [{}] get index labels by names {}&quot;, graph, names);</span>
+        }
+
+<span class="nc" id="L129">        HugeGraph g = graph(manager, graph);</span>
+        List&lt;IndexLabel&gt; labels;
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        if (listAll) {</span>
+<span class="nc" id="L132">            labels = g.schema().getIndexLabels();</span>
+        } else {
+<span class="nc" id="L134">            labels = new ArrayList&lt;&gt;(names.size());</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            for (String name : names) {</span>
+<span class="nc" id="L136">                labels.add(g.schema().getIndexLabel(name));</span>
+<span class="nc" id="L137">            }</span>
+        }
+<span class="nc" id="L139">        return manager.serializer(g).writeIndexlabels(mapIndexLabels(labels));</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=index_label_read&quot;})
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L150">        LOG.debug(&quot;Graph [{}] get index label by name '{}'&quot;, graph, name);</span>
+
+<span class="nc" id="L152">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L153">        IndexLabel indexLabel = g.schema().getIndexLabel(name);</span>
+<span class="nc" id="L154">        return manager.serializer(g).writeIndexlabel(mapIndexLabel(indexLabel));</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Status(Status.ACCEPTED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=index_label_delete&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public Map&lt;String, Id&gt; delete(@Context GraphManager manager,
+                                  @PathParam(&quot;graph&quot;) String graph,
+                                  @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L168">        LOG.debug(&quot;Graph [{}] remove index label by name '{}'&quot;, graph, name);</span>
+
+<span class="nc" id="L170">        HugeGraph g = graph(manager, graph);</span>
+        // Throw 404 if not exists
+<span class="nc" id="L172">        g.schema().getIndexLabel(name);</span>
+<span class="nc" id="L173">        return ImmutableMap.of(&quot;task_id&quot;,</span>
+<span class="nc" id="L174">                               g.schema().indexLabel(name).remove());</span>
+    }
+
+    private static List&lt;IndexLabel&gt; mapIndexLabels(List&lt;IndexLabel&gt; labels) {
+<span class="nc" id="L178">        List&lt;IndexLabel&gt; results = new ArrayList&lt;&gt;(labels.size());</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        for (IndexLabel il : labels) {</span>
+<span class="nc" id="L180">            results.add(mapIndexLabel(il));</span>
+<span class="nc" id="L181">        }</span>
+<span class="nc" id="L182">        return results;</span>
+    }
+
+    /**
+     * Map RANGE_INT/RANGE_FLOAT/RANGE_LONG/RANGE_DOUBLE to RANGE
+     */
+    private static IndexLabel mapIndexLabel(IndexLabel label) {
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        if (label.indexType().isRange()) {</span>
+<span class="nc" id="L190">            label = (IndexLabel) label.copy();</span>
+<span class="nc" id="L191">            label.indexType(IndexType.RANGE);</span>
+        }
+<span class="nc" id="L193">        return label;</span>
+    }
+
+    /**
+     * JsonIndexLabel is only used to receive create and append requests
+     */
+<span class="nc" id="L199">    @JsonIgnoreProperties(value = {&quot;status&quot;})</span>
+    private static class JsonIndexLabel implements Checkable {
+
+        @JsonProperty(&quot;id&quot;)
+        public long id;
+        @JsonProperty(&quot;name&quot;)
+        public String name;
+        @JsonProperty(&quot;base_type&quot;)
+        public HugeType baseType;
+        @JsonProperty(&quot;base_value&quot;)
+        public String baseValue;
+        @JsonProperty(&quot;index_type&quot;)
+        public IndexType indexType;
+        @JsonProperty(&quot;fields&quot;)
+        public String[] fields;
+        @JsonProperty(&quot;user_data&quot;)
+        public Userdata userdata;
+        @JsonProperty(&quot;check_exist&quot;)
+        public Boolean checkExist;
+        @JsonProperty(&quot;rebuild&quot;)
+        public Boolean rebuild;
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L223">            E.checkArgumentNotNull(this.name,</span>
+                                   &quot;The name of index label can't be null&quot;);
+<span class="nc" id="L225">            E.checkArgumentNotNull(this.baseType,</span>
+                                   &quot;The base type of index label '%s' &quot; +
+                                   &quot;can't be null&quot;, this.name);
+<span class="nc bnc" id="L228" title="All 4 branches missed.">            E.checkArgument(this.baseType == HugeType.VERTEX_LABEL ||</span>
+                            this.baseType == HugeType.EDGE_LABEL,
+                            &quot;The base type of index label '%s' can only be &quot; +
+                            &quot;either VERTEX_LABEL or EDGE_LABEL&quot;, this.name);
+<span class="nc" id="L232">            E.checkArgumentNotNull(this.baseValue,</span>
+                                   &quot;The base value of index label '%s' &quot; +
+                                   &quot;can't be null&quot;, this.name);
+<span class="nc" id="L235">            E.checkArgumentNotNull(this.indexType,</span>
+                                   &quot;The index type of index label '%s' &quot; +
+                                   &quot;can't be null&quot;, this.name);
+<span class="nc" id="L238">        }</span>
+
+        @Override
+        public void checkUpdate() {
+<span class="nc" id="L242">            E.checkArgumentNotNull(this.name,</span>
+                                   &quot;The name of index label can't be null&quot;);
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            E.checkArgument(this.baseType == null,</span>
+                            &quot;The base type of index label '%s' must be null&quot;,
+                            this.name);
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            E.checkArgument(this.baseValue == null,</span>
+                            &quot;The base value of index label '%s' must be null&quot;,
+                            this.name);
+<span class="nc bnc" id="L250" title="All 2 branches missed.">            E.checkArgument(this.indexType == null,</span>
+                            &quot;The index type of index label '%s' must be null&quot;,
+                            this.name);
+<span class="nc" id="L253">        }</span>
+
+        private IndexLabel.Builder convert2Builder(HugeGraph g) {
+<span class="nc" id="L256">            IndexLabel.Builder builder = g.schema().indexLabel(this.name);</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">            if (this.id != 0) {</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">                E.checkArgument(this.id &gt; 0,</span>
+                                &quot;Only positive number can be assign as &quot; +
+                                &quot;index label id&quot;);
+<span class="nc bnc" id="L261" title="All 2 branches missed.">                E.checkArgument(g.mode() == GraphMode.RESTORING,</span>
+                                &quot;Only accept index label id when graph in &quot; +
+                                &quot;RESTORING mode, but '%s' is in mode '%s'&quot;,
+<span class="nc" id="L264">                                g, g.mode());</span>
+<span class="nc" id="L265">                builder.id(this.id);</span>
+            }
+<span class="nc bnc" id="L267" title="All 2 branches missed.">            if (this.baseType != null) {</span>
+<span class="nc bnc" id="L268" title="All 2 branches missed.">                assert this.baseValue != null;</span>
+<span class="nc" id="L269">                builder.on(this.baseType, this.baseValue);</span>
+            }
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            if (this.indexType != null) {</span>
+<span class="nc" id="L272">                builder.indexType(this.indexType);</span>
+            }
+<span class="nc bnc" id="L274" title="All 4 branches missed.">            if (this.fields != null &amp;&amp; this.fields.length &gt; 0) {</span>
+<span class="nc" id="L275">                builder.by(this.fields);</span>
+            }
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (this.userdata != null) {</span>
+<span class="nc" id="L278">                builder.userdata(this.userdata);</span>
+            }
+<span class="nc bnc" id="L280" title="All 2 branches missed.">            if (this.checkExist != null) {</span>
+<span class="nc" id="L281">                builder.checkExist(this.checkExist);</span>
+            }
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            if (this.rebuild != null) {</span>
+<span class="nc" id="L284">                builder.rebuild(this.rebuild);</span>
+            }
+<span class="nc" id="L286">            return builder;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L291">            return String.format(&quot;JsonIndexLabel{name=%s, baseType=%s,&quot; +</span>
+                                 &quot;baseValue=%s, indexType=%s, fields=%s}&quot;,
+                                 this.name, this.baseType, this.baseValue,
+<span class="nc" id="L294">                                 this.indexType, Arrays.toString(this.fields));</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractBackendStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">AbstractBackendStore.java</span></div><h1>AbstractBackendStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import org.apache.hugegraph.exception.ConnectionException;
+import org.apache.hugegraph.type.HugeType;
+
+public abstract class AbstractBackendStore&lt;Session extends BackendSession&gt;
+                implements BackendStore {
+
+    // TODO: move SystemSchemaStore into backend like MetaStore
+    private final SystemSchemaStore systemSchemaStore;
+    private final MetaDispatcher&lt;Session&gt; dispatcher;
+
+<span class="nc" id="L30">    public AbstractBackendStore() {</span>
+<span class="nc" id="L31">        this.systemSchemaStore = new SystemSchemaStore();</span>
+<span class="nc" id="L32">        this.dispatcher = new MetaDispatcher&lt;&gt;();</span>
+<span class="nc" id="L33">    }</span>
+
+    protected MetaDispatcher&lt;Session&gt; metaDispatcher() {
+<span class="nc" id="L36">        return this.dispatcher;</span>
+    }
+
+    public void registerMetaHandler(String name, MetaHandler&lt;Session&gt; handler) {
+<span class="nc" id="L40">        this.dispatcher.registerMetaHandler(name, handler);</span>
+<span class="nc" id="L41">    }</span>
+
+    @Override
+    public String storedVersion() {
+<span class="nc" id="L45">        throw new UnsupportedOperationException(</span>
+                  &quot;AbstractBackendStore.storedVersion()&quot;);
+    }
+
+    @Override
+    public SystemSchemaStore systemSchemaStore() {
+<span class="nc" id="L51">        return this.systemSchemaStore;</span>
+    }
+
+    // Get metadata by key
+    @Override
+    public &lt;R&gt; R metadata(HugeType type, String meta, Object[] args) {
+<span class="nc" id="L57">        Session session = this.session(type);</span>
+        MetaDispatcher&lt;Session&gt; dispatcher;
+<span class="nc bnc" id="L59" title="All 2 branches missed.">        if (type == null) {</span>
+<span class="nc" id="L60">            dispatcher = this.metaDispatcher();</span>
+        } else {
+<span class="nc" id="L62">            BackendTable&lt;Session, ?&gt; table = this.table(type);</span>
+<span class="nc" id="L63">            dispatcher = table.metaDispatcher();</span>
+        }
+<span class="nc" id="L65">        return dispatcher.dispatchMetaHandler(session, meta, args);</span>
+    }
+
+    protected void checkOpened() throws ConnectionException {
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (!this.opened()) {</span>
+<span class="nc" id="L70">            throw new ConnectionException(</span>
+                      &quot;The '%s' store of %s has not been opened&quot;,
+<span class="nc" id="L72">                      this.database(), this.provider().type());</span>
+        }
+<span class="nc" id="L74">    }</span>
+
+    @Override
+    public String toString() {
+<span class="nc" id="L78">        return String.format(&quot;%s/%s&quot;, this.database(), this.store());</span>
+    }
+
+    protected abstract BackendTable&lt;Session, ?&gt; table(HugeType type);
+
+    // NOTE: Need to support passing null
+    protected abstract Session session(HugeType type);
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

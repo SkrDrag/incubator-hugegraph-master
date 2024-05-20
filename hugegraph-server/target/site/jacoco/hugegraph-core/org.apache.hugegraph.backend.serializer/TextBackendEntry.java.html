@@ -1,0 +1,378 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TextBackendEntry.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.serializer</a> &gt; <span class="el_source">TextBackendEntry.java</span></div><h1>TextBackendEntry.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.serializer;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.NavigableMap;
+import java.util.Set;
+import java.util.concurrent.ConcurrentSkipListMap;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.StringEncoding;
+
+public class TextBackendEntry implements BackendEntry, Cloneable {
+
+    public static final String VALUE_SPLITOR = &quot;\u0003&quot;;
+
+    private final HugeType type;
+    private final Id id;
+    private Id subId;
+    private NavigableMap&lt;String, String&gt; columns;
+
+<span class="nc" id="L47">    public TextBackendEntry(HugeType type, Id id) {</span>
+<span class="nc" id="L48">        this.type = type;</span>
+<span class="nc" id="L49">        this.id = id;</span>
+<span class="nc" id="L50">        this.subId = null;</span>
+<span class="nc" id="L51">        this.resetColumns();</span>
+<span class="nc" id="L52">    }</span>
+
+    @Override
+    public HugeType type() {
+<span class="nc" id="L56">        return this.type;</span>
+    }
+
+    @Override
+    public Id id() {
+<span class="nc" id="L61">        return this.id;</span>
+    }
+
+    @Override
+    public Id originId() {
+<span class="nc" id="L66">        return this.id;</span>
+    }
+
+    @Override
+    public Id subId() {
+<span class="nc" id="L71">        return this.subId;</span>
+    }
+
+    @Override
+    public long ttl() {
+<span class="nc" id="L76">        return 0L;</span>
+    }
+
+    public void subId(Id subId) {
+<span class="nc" id="L80">        this.subId = subId;</span>
+<span class="nc" id="L81">    }</span>
+
+    public Set&lt;String&gt; columnNames() {
+<span class="nc" id="L84">        return this.columns.keySet();</span>
+    }
+
+    public void column(HugeKeys column, String value) {
+<span class="nc" id="L88">        this.columns.put(column.string(), value);</span>
+<span class="nc" id="L89">    }</span>
+
+    public void column(String column, String value) {
+<span class="nc" id="L92">        this.columns.put(column, value);</span>
+<span class="nc" id="L93">    }</span>
+
+    public String column(HugeKeys column) {
+<span class="nc" id="L96">        return this.columns.get(column.string());</span>
+    }
+
+    public String column(String column) {
+<span class="nc" id="L100">        return this.columns.get(column);</span>
+    }
+
+    public BackendColumn columns(String column) {
+<span class="nc" id="L104">        String value = this.columns.get(column);</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L106">            return null;</span>
+        }
+<span class="nc" id="L108">        return BackendColumn.of(StringEncoding.encode(column),</span>
+<span class="nc" id="L109">                                StringEncoding.encode(value));</span>
+    }
+
+    public Collection&lt;BackendColumn&gt; columnsWithPrefix(String prefix) {
+<span class="nc" id="L113">        return this.columnsWithPrefix(prefix, true, prefix);</span>
+    }
+
+    public Collection&lt;BackendColumn&gt; columnsWithPrefix(String start,
+                                                       boolean inclusiveStart,
+                                                       String prefix) {
+<span class="nc" id="L119">        List&lt;BackendColumn&gt; list = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L120">        Map&lt;String, String&gt; map = this.columns.tailMap(start, inclusiveStart);</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        for (Map.Entry&lt;String, String&gt; e : map.entrySet()) {</span>
+<span class="nc" id="L122">            String key = e.getKey();</span>
+<span class="nc" id="L123">            String value = e.getValue();</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            if (key.startsWith(prefix)) {</span>
+<span class="nc" id="L125">                list.add(BackendColumn.of(StringEncoding.encode(key),</span>
+<span class="nc" id="L126">                                          StringEncoding.encode(value)));</span>
+            }
+<span class="nc" id="L128">        }</span>
+<span class="nc" id="L129">        return list;</span>
+    }
+
+    public Collection&lt;BackendColumn&gt; columnsWithRange(String start,
+                                                      boolean inclusiveStart,
+                                                      String end,
+                                                      boolean inclusiveEnd) {
+<span class="nc" id="L136">        List&lt;BackendColumn&gt; list = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L137">        Map&lt;String, String&gt; map = this.columns.subMap(start, inclusiveStart,</span>
+                                                      end, inclusiveEnd);
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        for (Map.Entry&lt;String, String&gt; e : map.entrySet()) {</span>
+<span class="nc" id="L140">            String key = e.getKey();</span>
+<span class="nc" id="L141">            String value = e.getValue();</span>
+<span class="nc" id="L142">            list.add(BackendColumn.of(StringEncoding.encode(key),</span>
+<span class="nc" id="L143">                                      StringEncoding.encode(value)));</span>
+<span class="nc" id="L144">        }</span>
+<span class="nc" id="L145">        return list;</span>
+    }
+
+    public boolean contains(String column) {
+<span class="nc" id="L149">        return this.columns.containsKey(column);</span>
+    }
+
+    public boolean contains(String column, String value) {
+<span class="nc" id="L153">        String col = this.columns.get(column);</span>
+<span class="nc bnc" id="L154" title="All 4 branches missed.">        return col != null &amp;&amp; col.equals(value);</span>
+    }
+
+    public boolean containsPrefix(String column) {
+<span class="nc" id="L158">        Map&lt;String, String&gt; map = this.columns.tailMap(column, true);</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        for (String c : map.keySet()) {</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">            if (c.startsWith(column)) {</span>
+<span class="nc" id="L161">                return true;</span>
+            }
+<span class="nc" id="L163">        }</span>
+<span class="nc" id="L164">        return false;</span>
+    }
+
+    public boolean containsValue(String value) {
+<span class="nc" id="L168">        return this.columns.values().contains(value);</span>
+    }
+
+    public void append(TextBackendEntry entry) {
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        for (Entry&lt;String, String&gt; col : entry.columns.entrySet()) {</span>
+<span class="nc" id="L173">            String newValue = col.getValue();</span>
+<span class="nc" id="L174">            String oldValue = this.column(col.getKey());</span>
+
+            // TODO: use more general method
+<span class="nc bnc" id="L177" title="All 2 branches missed.">            if (col.getKey().startsWith(HugeType.PROPERTY.string())) {</span>
+<span class="nc" id="L178">                this.columns.put(col.getKey(), col.getValue());</span>
+<span class="nc" id="L179">                continue;</span>
+            }
+
+            // TODO: use more general method
+<span class="nc bnc" id="L183" title="All 2 branches missed.">            if (!col.getKey().endsWith(HugeKeys.ELEMENT_IDS.string())) {</span>
+<span class="nc" id="L184">                continue;</span>
+            }
+
+            // TODO: ensure the old value is a list and json format (for index)
+<span class="nc bnc" id="L188" title="All 2 branches missed.">            if (&quot;[]&quot;.equals(oldValue)) {</span>
+<span class="nc" id="L189">                this.column(col.getKey(), newValue);</span>
+<span class="nc" id="L190">                continue;</span>
+            }
+<span class="nc" id="L192">            List&lt;Object&gt; values = new ArrayList&lt;&gt;();</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L194">            List&lt;Object&gt; oldValues = JsonUtil.fromJson(oldValue, List.class);</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L196">            List&lt;Object&gt; newValues = JsonUtil.fromJson(newValue, List.class);</span>
+<span class="nc" id="L197">            values.addAll(oldValues);</span>
+<span class="nc" id="L198">            values.addAll(newValues);</span>
+            // Update the old value
+<span class="nc" id="L200">            this.column(col.getKey(), JsonUtil.toJson(values));</span>
+<span class="nc" id="L201">        }</span>
+<span class="nc" id="L202">    }</span>
+
+    public void eliminate(TextBackendEntry entry) {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        for (Entry&lt;String, String&gt; col : entry.columns.entrySet()) {</span>
+<span class="nc" id="L206">            String newValue = col.getValue();</span>
+<span class="nc" id="L207">            String oldValue = this.column(col.getKey());</span>
+
+            // TODO: use more general method
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            if (col.getKey().startsWith(HugeType.PROPERTY.string()) ||</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                col.getKey().startsWith(HugeType.EDGE_OUT.string()) ||</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">                col.getKey().startsWith(HugeType.EDGE_IN.string())) {</span>
+<span class="nc" id="L213">                this.columns.remove(col.getKey());</span>
+<span class="nc" id="L214">                continue;</span>
+            }
+
+            // TODO: use more general method
+<span class="nc bnc" id="L218" title="All 2 branches missed.">            if (!col.getKey().endsWith(HugeKeys.ELEMENT_IDS.string())) {</span>
+<span class="nc" id="L219">                continue;</span>
+            }
+
+            // TODO: ensure the old value is a list and json format (for index)
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L224">            List&lt;Object&gt; oldValues = JsonUtil.fromJson(oldValue, List.class);</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L226">            List&lt;Object&gt; newValues = JsonUtil.fromJson(newValue, List.class);</span>
+<span class="nc" id="L227">            List&lt;Object&gt; values = new ArrayList&lt;&gt;(oldValues);</span>
+<span class="nc" id="L228">            values.removeAll(newValues);</span>
+            // Update the old value
+<span class="nc" id="L230">            this.column(col.getKey(), JsonUtil.toJson(values));</span>
+<span class="nc" id="L231">        }</span>
+<span class="nc" id="L232">    }</span>
+
+    @Override
+    public String toString() {
+<span class="nc" id="L236">        return String.format(&quot;%s: %s&quot;, this.id, this.columns.toString());</span>
+    }
+
+    @Override
+    public int columnsSize() {
+<span class="nc" id="L241">        return this.columns.size();</span>
+    }
+
+    @Override
+    public Collection&lt;BackendColumn&gt; columns() {
+<span class="nc" id="L246">        List&lt;BackendColumn&gt; list = new ArrayList&lt;&gt;(this.columns.size());</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        for (Entry&lt;String, String&gt; column : this.columns.entrySet()) {</span>
+<span class="nc" id="L248">            BackendColumn bytesColumn = new BackendColumn();</span>
+<span class="nc" id="L249">            bytesColumn.name = StringEncoding.encode(column.getKey());</span>
+<span class="nc" id="L250">            bytesColumn.value = StringEncoding.encode(column.getValue());</span>
+<span class="nc" id="L251">            list.add(bytesColumn);</span>
+<span class="nc" id="L252">        }</span>
+<span class="nc" id="L253">        return list;</span>
+    }
+
+    @Override
+    public void columns(Collection&lt;BackendColumn&gt; bytesColumns) {
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        for (BackendColumn column : bytesColumns) {</span>
+<span class="nc" id="L259">            this.columns.put(StringEncoding.decode(column.name),</span>
+<span class="nc" id="L260">                             StringEncoding.decode(column.value));</span>
+<span class="nc" id="L261">        }</span>
+<span class="nc" id="L262">    }</span>
+
+    @Override
+    public void columns(BackendColumn bytesColumn) {
+<span class="nc" id="L266">        this.columns.put(StringEncoding.decode(bytesColumn.name),</span>
+<span class="nc" id="L267">                         StringEncoding.decode(bytesColumn.value));</span>
+<span class="nc" id="L268">    }</span>
+
+    @Override
+    public void merge(BackendEntry other) {
+<span class="nc" id="L272">        TextBackendEntry text = (TextBackendEntry) other;</span>
+<span class="nc" id="L273">        this.columns.putAll(text.columns);</span>
+<span class="nc" id="L274">    }</span>
+
+    @Override
+    public boolean mergeable(BackendEntry other) {
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        if (!(other instanceof TextBackendEntry)) {</span>
+<span class="nc" id="L279">            return false;</span>
+        }
+<span class="nc bnc" id="L281" title="All 2 branches missed.">        if (!this.id().equals(other.id())) {</span>
+<span class="nc" id="L282">            return false;</span>
+        }
+<span class="nc" id="L284">        this.columns(other.columns());</span>
+<span class="nc" id="L285">        return true;</span>
+    }
+
+    @Override
+    public void clear() {
+<span class="nc" id="L290">        this.columns.clear();</span>
+<span class="nc" id="L291">    }</span>
+
+    private void resetColumns() {
+<span class="nc" id="L294">        this.columns = new ConcurrentSkipListMap&lt;&gt;();</span>
+<span class="nc" id="L295">    }</span>
+
+    public TextBackendEntry copy() {
+        try {
+<span class="nc" id="L299">            TextBackendEntry clone = (TextBackendEntry) this.clone();</span>
+<span class="nc" id="L300">            clone.columns = new ConcurrentSkipListMap&lt;&gt;(this.columns);</span>
+<span class="nc" id="L301">            return clone;</span>
+<span class="nc" id="L302">        } catch (CloneNotSupportedException e) {</span>
+<span class="nc" id="L303">            throw new BackendException(e);</span>
+        }
+    }
+
+    public TextBackendEntry copyLast(int count) {
+        TextBackendEntry clone;
+        try {
+<span class="nc" id="L310">            clone = (TextBackendEntry) this.clone();</span>
+<span class="nc" id="L311">        } catch (CloneNotSupportedException e) {</span>
+<span class="nc" id="L312">            throw new BackendException(e);</span>
+<span class="nc" id="L313">        }</span>
+<span class="nc" id="L314">        clone.resetColumns();</span>
+
+        // Copy the last count columns
+<span class="nc" id="L317">        Iterator&lt;Entry&lt;String, String&gt;&gt; it = this.columns.entrySet().iterator();</span>
+<span class="nc" id="L318">        final int skip = this.columns.size() - count;</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        for (int i = 0; it.hasNext(); i++) {</span>
+<span class="nc" id="L320">            Entry&lt;String, String&gt; entry = it.next();</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">            if (i &lt; skip) {</span>
+<span class="nc" id="L322">                continue;</span>
+            }
+<span class="nc" id="L324">            clone.columns.put(entry.getKey(), entry.getValue());</span>
+        }
+<span class="nc" id="L326">        return clone;</span>
+    }
+
+    public TextBackendEntry copyHead(int count) {
+        TextBackendEntry clone;
+        try {
+<span class="nc" id="L332">            clone = (TextBackendEntry) this.clone();</span>
+<span class="nc" id="L333">        } catch (CloneNotSupportedException e) {</span>
+<span class="nc" id="L334">            throw new BackendException(e);</span>
+<span class="nc" id="L335">        }</span>
+<span class="nc" id="L336">        clone.resetColumns();</span>
+
+        // Copy the head count columns
+<span class="nc" id="L339">        Iterator&lt;Entry&lt;String, String&gt;&gt; it = this.columns.entrySet().iterator();</span>
+<span class="nc bnc" id="L340" title="All 4 branches missed.">        for (int i = 0; it.hasNext() &amp;&amp; i &lt; count; i++) {</span>
+<span class="nc" id="L341">            Entry&lt;String, String&gt; entry = it.next();</span>
+<span class="nc" id="L342">            clone.columns.put(entry.getKey(), entry.getValue());</span>
+        }
+<span class="nc" id="L344">        return clone;</span>
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+<span class="nc bnc" id="L349" title="All 2 branches missed.">        if (!(obj instanceof TextBackendEntry)) {</span>
+<span class="nc" id="L350">            return false;</span>
+        }
+<span class="nc" id="L352">        TextBackendEntry other = (TextBackendEntry) obj;</span>
+<span class="nc bnc" id="L353" title="All 4 branches missed.">        if (this.id() != other.id() &amp;&amp; !this.id().equals(other.id())) {</span>
+<span class="nc" id="L354">            return false;</span>
+        }
+<span class="nc bnc" id="L356" title="All 2 branches missed.">        if (this.columns().size() != other.columns().size()) {</span>
+<span class="nc" id="L357">            return false;</span>
+        }
+
+<span class="nc bnc" id="L360" title="All 2 branches missed.">        for (Map.Entry&lt;String, String&gt; e : this.columns.entrySet()) {</span>
+<span class="nc" id="L361">            String key = e.getKey();</span>
+<span class="nc" id="L362">            String value = e.getValue();</span>
+<span class="nc" id="L363">            String otherValue = other.columns.get(key);</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">            if (otherValue == null) {</span>
+<span class="nc" id="L365">                return false;</span>
+            }
+<span class="nc bnc" id="L367" title="All 2 branches missed.">            if (!value.equals(otherValue)) {</span>
+<span class="nc" id="L368">                return false;</span>
+            }
+<span class="nc" id="L370">        }</span>
+<span class="nc" id="L371">        return true;</span>
+    }
+
+    public int hashCode() {
+<span class="nc" id="L375">        return this.id().hashCode() ^ this.columns().hashCode();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

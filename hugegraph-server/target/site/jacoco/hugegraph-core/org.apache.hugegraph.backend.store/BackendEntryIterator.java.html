@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BackendEntryIterator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">BackendEntryIterator.java</span></div><h1>BackendEntryIterator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import java.util.NoSuchElementException;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.page.PageInfo;
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.exception.LimitExceedException;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.iterator.CIter;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+public abstract class BackendEntryIterator implements CIter&lt;BackendEntry&gt; {
+
+<span class="nc" id="L35">    private static final Logger LOG = Log.logger(BackendEntryIterator.class);</span>
+    public static final long INLINE_BATCH_SIZE = Query.COMMIT_BATCH;
+
+    protected final Query query;
+
+    protected BackendEntry current;
+    private long count;
+
+<span class="nc" id="L43">    public BackendEntryIterator(Query query) {</span>
+<span class="nc" id="L44">        E.checkNotNull(query, &quot;query&quot;);</span>
+<span class="nc" id="L45">        this.query = query;</span>
+<span class="nc" id="L46">        this.count = 0L;</span>
+<span class="nc" id="L47">        this.current = null;</span>
+<span class="nc" id="L48">    }</span>
+
+    @Override
+    public boolean hasNext() {
+<span class="nc bnc" id="L52" title="All 2 branches missed.">        if (this.reachLimit()) {</span>
+<span class="nc" id="L53">            return false;</span>
+        }
+
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (this.current != null) {</span>
+<span class="nc" id="L57">            return true;</span>
+        }
+
+<span class="nc" id="L60">        return this.fetch();</span>
+    }
+
+    @Override
+    public BackendEntry next() {
+        // Stop if reach capacity
+<span class="nc" id="L66">        this.checkCapacity();</span>
+
+        // Stop if reach limit
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (this.reachLimit()) {</span>
+<span class="nc" id="L70">            throw new NoSuchElementException();</span>
+        }
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">        if (this.current == null) {</span>
+<span class="nc" id="L74">            this.fetch();</span>
+        }
+
+<span class="nc" id="L77">        BackendEntry current = this.current;</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        if (current == null) {</span>
+<span class="nc" id="L79">            throw new NoSuchElementException();</span>
+        }
+
+<span class="nc" id="L82">        this.current = null;</span>
+<span class="nc" id="L83">        this.count += this.sizeOf(current);</span>
+<span class="nc" id="L84">        return current;</span>
+    }
+
+    @Override
+    public Object metadata(String meta, Object... args) {
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        if (PageInfo.PAGE.equals(meta)) {</span>
+<span class="nc" id="L90">            return this.pageState();</span>
+        }
+<span class="nc" id="L92">        throw new NotSupportException(&quot;Invalid meta '%s'&quot;, meta);</span>
+    }
+
+    public static final void checkInterrupted() {
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        if (Thread.interrupted()) {</span>
+<span class="nc" id="L97">            throw new BackendException(&quot;Interrupted, maybe it is timed out&quot;,</span>
+                                       new InterruptedException());
+        }
+<span class="nc" id="L100">    }</span>
+
+    protected final void checkCapacity() throws LimitExceedException {
+        // Stop if reach capacity
+<span class="nc" id="L104">        this.query.checkCapacity(this.count());</span>
+<span class="nc" id="L105">    }</span>
+
+    protected final boolean reachLimit() {
+        /*
+         * TODO: if the query is separated with multi sub-queries(like query
+         * id in [id1, id2, ...]), then each BackendEntryIterator is only
+         * result(s) of one sub-query, so the query offset/limit is inaccurate.
+         */
+
+        // Stop if it has reached limit after the previous next()
+<span class="nc" id="L115">        return this.reachLimit(this.count);</span>
+    }
+
+    protected final boolean reachLimit(long count) {
+        try {
+<span class="nc" id="L120">            checkInterrupted();</span>
+<span class="nc" id="L121">        } catch (Throwable e) {</span>
+            try {
+<span class="nc" id="L123">                this.close();</span>
+<span class="nc" id="L124">            } catch (Throwable ex) {</span>
+<span class="nc" id="L125">                LOG.warn(&quot;Failed to close backend entry iterator for interrupted query&quot;, ex);</span>
+<span class="nc" id="L126">            }</span>
+<span class="nc" id="L127">            throw e;</span>
+<span class="nc" id="L128">        }</span>
+<span class="nc" id="L129">        return this.query.reachLimit(count);</span>
+    }
+
+    protected final long count() {
+<span class="nc" id="L133">        return this.count;</span>
+    }
+
+    protected final long fetched() {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        long ccount = this.current == null ? 0 : this.sizeOf(this.current);</span>
+<span class="nc" id="L138">        return this.count + ccount;</span>
+    }
+
+    protected final void skipPageOffset(String page) {
+<span class="nc" id="L142">        PageState pageState = PageState.fromString(page);</span>
+<span class="nc" id="L143">        int pageOffset = pageState.offset();</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (pageOffset &gt; 0) {</span>
+            /*
+             * Don't update this.count even if skipped page offset,
+             * because the skipped records belongs to the last page.
+             */
+<span class="nc" id="L149">            this.skipOffset(pageOffset);</span>
+        }
+<span class="nc" id="L151">    }</span>
+
+    protected void skipOffset() {
+<span class="nc" id="L154">        long offset = this.query.offset() - this.query.actualOffset();</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        if (offset &lt;= 0L) {</span>
+<span class="nc" id="L156">            return;</span>
+        }
+<span class="nc" id="L158">        long skipped = this.skipOffset(offset);</span>
+<span class="nc" id="L159">        this.count += skipped;</span>
+<span class="nc" id="L160">        this.query.goOffset(skipped);</span>
+<span class="nc" id="L161">    }</span>
+
+    protected long skipOffset(long offset) {
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        assert offset &gt;= 0L;</span>
+<span class="nc" id="L165">        long skipped = 0L;</span>
+        // Skip offset
+<span class="nc bnc" id="L167" title="All 4 branches missed.">        while (skipped &lt; offset &amp;&amp; this.fetch()) {</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">            assert this.current != null;</span>
+<span class="nc" id="L169">            final long size = this.sizeOf(this.current);</span>
+<span class="nc" id="L170">            skipped += size;</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">            if (skipped &gt; offset) {</span>
+                // Skip part of sub-items in an entry
+<span class="nc" id="L173">                final long skip = size - (skipped - offset);</span>
+<span class="nc" id="L174">                skipped -= this.skip(this.current, skip);</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">                assert skipped == offset;</span>
+<span class="nc" id="L176">            } else {</span>
+                // Skip entry
+<span class="nc" id="L178">                this.current = null;</span>
+            }
+<span class="nc" id="L180">        }</span>
+<span class="nc" id="L181">        return skipped;</span>
+    }
+
+    protected long sizeOf(BackendEntry entry) {
+<span class="nc" id="L185">        return 1;</span>
+    }
+
+    protected long skip(BackendEntry entry, long skip) {
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        assert this.sizeOf(entry) == 1;</span>
+        // Return the remained sub-items(items)
+<span class="nc" id="L191">        return this.sizeOf(entry);</span>
+    }
+
+    protected abstract boolean fetch();
+
+    protected abstract PageState pageState();
+
+    public static final class EmptyIterator extends BackendEntryIterator {
+
+        public EmptyIterator(Query query) {
+<span class="nc" id="L201">            super(query);</span>
+<span class="nc" id="L202">        }</span>
+
+        @Override
+        protected boolean fetch() {
+<span class="nc" id="L206">            return false;</span>
+        }
+
+        @Override
+        protected PageState pageState() {
+<span class="nc" id="L211">            return PageState.EMPTY;</span>
+        }
+
+        @Override
+        public void close() throws Exception {
+<span class="nc" id="L216">            return;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

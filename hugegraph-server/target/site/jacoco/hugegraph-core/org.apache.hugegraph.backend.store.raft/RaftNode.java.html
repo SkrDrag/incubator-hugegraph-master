@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RaftNode.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.raft</a> &gt; <span class="el_source">RaftNode.java</span></div><h1>RaftNode.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.raft;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
+import org.slf4j.Logger;
+
+import com.alipay.sofa.jraft.Node;
+import com.alipay.sofa.jraft.RaftGroupService;
+import com.alipay.sofa.jraft.Status;
+import com.alipay.sofa.jraft.closure.ReadIndexClosure;
+import com.alipay.sofa.jraft.core.Replicator.ReplicatorStateListener;
+import com.alipay.sofa.jraft.entity.PeerId;
+import com.alipay.sofa.jraft.entity.Task;
+import com.alipay.sofa.jraft.error.RaftError;
+import com.alipay.sofa.jraft.option.NodeOptions;
+import com.alipay.sofa.jraft.rpc.RpcServer;
+import com.alipay.sofa.jraft.util.BytesUtil;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.util.LZ4Util;
+import org.apache.hugegraph.util.Log;
+
+public final class RaftNode {
+
+<span class="nc" id="L46">    private static final Logger LOG = Log.logger(RaftNode.class);</span>
+
+    private final RaftContext context;
+    private RaftGroupService raftGroupService;
+    private final Node node;
+    private final StoreStateMachine stateMachine;
+    private final AtomicReference&lt;LeaderInfo&gt; leaderInfo;
+    private final AtomicBoolean started;
+    private final AtomicInteger busyCounter;
+
+<span class="nc" id="L56">    public RaftNode(RaftContext context) {</span>
+<span class="nc" id="L57">        this.context = context;</span>
+<span class="nc" id="L58">        this.stateMachine = new StoreStateMachine(context);</span>
+        try {
+            // Start raft node
+<span class="nc" id="L61">            this.node = this.initRaftNode();</span>
+<span class="nc" id="L62">            LOG.info(&quot;Start raft node: {}&quot;, this);</span>
+<span class="nc" id="L63">        } catch (IOException e) {</span>
+<span class="nc" id="L64">            throw new BackendException(&quot;Failed to init raft node&quot;, e);</span>
+<span class="nc" id="L65">        }</span>
+<span class="nc" id="L66">        this.node.addReplicatorStateListener(new RaftStateListener());</span>
+<span class="nc" id="L67">        this.leaderInfo = new AtomicReference&lt;&gt;(LeaderInfo.NO_LEADER);</span>
+<span class="nc" id="L68">        this.started = new AtomicBoolean(false);</span>
+<span class="nc" id="L69">        this.busyCounter = new AtomicInteger();</span>
+<span class="nc" id="L70">    }</span>
+
+    protected RaftContext context() {
+<span class="nc" id="L73">        return this.context;</span>
+    }
+
+    protected Node node() {
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        assert this.node != null;</span>
+<span class="nc" id="L78">        return this.node;</span>
+    }
+
+    public PeerId nodeId() {
+<span class="nc" id="L82">        return this.node.getNodeId().getPeerId();</span>
+    }
+
+    public PeerId leaderId() {
+<span class="nc" id="L86">        return this.leaderInfo.get().leaderId;</span>
+    }
+
+    public boolean selfIsLeader() {
+<span class="nc" id="L90">        return this.leaderInfo.get().selfIsLeader;</span>
+    }
+
+    public void onLeaderInfoChange(PeerId leaderId, boolean selfIsLeader) {
+<span class="nc bnc" id="L94" title="All 2 branches missed.">        leaderId = leaderId != null ? leaderId.copy() : null;</span>
+<span class="nc" id="L95">        this.leaderInfo.set(new LeaderInfo(leaderId, selfIsLeader));</span>
+<span class="nc" id="L96">    }</span>
+
+    public void shutdown() {
+<span class="nc" id="L99">        LOG.info(&quot;Shutdown raft node: {}&quot;, this);</span>
+<span class="nc" id="L100">        this.node.shutdown();</span>
+
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        if (this.raftGroupService != null) {</span>
+<span class="nc" id="L103">            this.raftGroupService.shutdown();</span>
+            try {
+<span class="nc" id="L105">                this.raftGroupService.join();</span>
+<span class="nc" id="L106">            } catch (final InterruptedException e) {</span>
+<span class="nc" id="L107">                throw new RaftException(</span>
+                          &quot;Interrupted while shutdown raftGroupService&quot;);
+<span class="nc" id="L109">            }</span>
+        }
+<span class="nc" id="L111">    }</span>
+
+    public RaftClosure&lt;?&gt; snapshot() {
+<span class="nc" id="L114">        RaftClosure&lt;?&gt; future = new RaftClosure&lt;&gt;();</span>
+        try {
+<span class="nc" id="L116">            this.node().snapshot(future);</span>
+<span class="nc" id="L117">            return future;</span>
+<span class="nc" id="L118">        } catch (Throwable e) {</span>
+<span class="nc" id="L119">            throw new BackendException(&quot;Failed to create snapshot&quot;, e);</span>
+        }
+    }
+
+    public void readIndex(byte[] reqCtx, ReadIndexClosure done) {
+<span class="nc" id="L124">        this.node.readIndex(reqCtx, done);</span>
+<span class="nc" id="L125">    }</span>
+
+    public &lt;T&gt; T submitAndWait(StoreCommand command, RaftStoreClosure future) {
+        // Submit command to raft node
+<span class="nc" id="L129">        this.submitCommand(command, future);</span>
+
+        try {
+            /*
+             * Here wait for the command to complete:
+             * 1.If on the leader, wait for the logs has been committed.
+             * 2.If on the follower, request command will be forwarded to the
+             *   leader, actually it has waited in forwardToLeader().
+             */
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L139">            T result = (T) future.waitFinished();</span>
+<span class="nc" id="L140">            return result;</span>
+<span class="nc" id="L141">        } catch (Throwable e) {</span>
+<span class="nc" id="L142">            throw new BackendException(&quot;Failed to wait store command %s&quot;,</span>
+                                       e, command);
+        }
+    }
+
+    private void submitCommand(StoreCommand command, RaftStoreClosure future) {
+        // Wait leader elected
+<span class="nc" id="L149">        LeaderInfo leaderInfo = this.waitLeaderElected(</span>
+                                RaftContext.WAIT_LEADER_TIMEOUT);
+        // If myself is not leader, forward to the leader
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (!leaderInfo.selfIsLeader) {</span>
+<span class="nc" id="L153">            this.context.rpcForwarder().forwardToLeader(leaderInfo.leaderId,</span>
+                                                        command, future);
+<span class="nc" id="L155">            return;</span>
+        }
+
+        // Sleep a while when raft node is busy
+<span class="nc" id="L159">        this.waitIfBusy();</span>
+
+<span class="nc" id="L161">        Task task = new Task();</span>
+        // Compress data, note compress() will return a BytesBuffer
+<span class="nc" id="L163">        ByteBuffer buffer = LZ4Util.compress(command.data(),</span>
+                                             RaftContext.BLOCK_SIZE)
+<span class="nc" id="L165">                                   .forReadWritten()</span>
+<span class="nc" id="L166">                                   .asByteBuffer();</span>
+<span class="nc" id="L167">        LOG.debug(&quot;Submit to raft node '{}', the compressed bytes of command &quot; +</span>
+<span class="nc" id="L168">                  &quot;{} is {}&quot;, this.node, command.action(), buffer.limit());</span>
+<span class="nc" id="L169">        task.setData(buffer);</span>
+<span class="nc" id="L170">        task.setDone(future);</span>
+<span class="nc" id="L171">        this.node.apply(task);</span>
+<span class="nc" id="L172">    }</span>
+
+    protected LeaderInfo waitLeaderElected(int timeout) {
+<span class="nc" id="L175">        String group = this.context.group();</span>
+<span class="nc" id="L176">        LeaderInfo leaderInfo = this.leaderInfo.get();</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        if (leaderInfo.leaderId != null) {</span>
+<span class="nc" id="L178">            return leaderInfo;</span>
+        }
+<span class="nc" id="L180">        LOG.info(&quot;Waiting for raft group '{}' leader elected&quot;, group);</span>
+<span class="nc" id="L181">        long beginTime = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        while (leaderInfo.leaderId == null) {</span>
+            try {
+<span class="nc" id="L184">                Thread.sleep(RaftContext.POLL_INTERVAL);</span>
+<span class="nc" id="L185">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L186">                throw new BackendException(&quot;Interrupted while waiting for &quot; +</span>
+                                           &quot;raft group '%s' election&quot;, group, e);
+<span class="nc" id="L188">            }</span>
+<span class="nc" id="L189">            long consumedTime = System.currentTimeMillis() - beginTime;</span>
+<span class="nc bnc" id="L190" title="All 4 branches missed.">            if (timeout &gt; 0 &amp;&amp; consumedTime &gt;= timeout) {</span>
+<span class="nc" id="L191">                throw new BackendException(</span>
+                          &quot;Waiting for raft group '%s' election timeout(%sms)&quot;,
+<span class="nc" id="L193">                          group, consumedTime);</span>
+            }
+<span class="nc" id="L195">            leaderInfo = this.leaderInfo.get();</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">            assert leaderInfo != null;</span>
+<span class="nc" id="L197">        }</span>
+<span class="nc" id="L198">        LOG.info(&quot;Waited for raft group '{}' leader elected successfully&quot;, group);</span>
+<span class="nc" id="L199">        return leaderInfo;</span>
+    }
+
+    protected void waitRaftLogSynced(int timeout) {
+<span class="nc" id="L203">        String group = this.context.group();</span>
+<span class="nc" id="L204">        LOG.info(&quot;Waiting for raft group '{}' log synced&quot;, group);</span>
+<span class="nc" id="L205">        long beginTime = System.currentTimeMillis();</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        while (!this.started.get()) {</span>
+<span class="nc" id="L207">            this.node.readIndex(BytesUtil.EMPTY_BYTES, new ReadIndexClosure() {</span>
+                @Override
+                public void run(Status status, long index, byte[] reqCtx) {
+<span class="nc" id="L210">                    RaftNode.this.started.set(status.isOk());</span>
+<span class="nc" id="L211">                }</span>
+            });
+            try {
+<span class="nc" id="L214">                Thread.sleep(RaftContext.POLL_INTERVAL);</span>
+<span class="nc" id="L215">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L216">                throw new BackendException(&quot;Interrupted while waiting for &quot; +</span>
+                                           &quot;raft group '%s' log synced&quot;, group, e);
+<span class="nc" id="L218">            }</span>
+<span class="nc" id="L219">            long consumedTime = System.currentTimeMillis() - beginTime;</span>
+<span class="nc bnc" id="L220" title="All 4 branches missed.">            if (timeout &gt; 0 &amp;&amp; consumedTime &gt;= timeout) {</span>
+<span class="nc" id="L221">                throw new BackendException(</span>
+                          &quot;Waiting for raft group '%s' log synced timeout(%sms)&quot;,
+<span class="nc" id="L223">                          group, consumedTime);</span>
+            }
+<span class="nc" id="L225">        }</span>
+<span class="nc" id="L226">        LOG.info(&quot;Waited for raft group '{}' log synced successfully&quot;, group);</span>
+<span class="nc" id="L227">    }</span>
+
+    private void waitIfBusy() {
+<span class="nc" id="L230">        int counter = this.busyCounter.get();</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        if (counter &lt;= 0) {</span>
+<span class="nc" id="L232">            return;</span>
+        }
+        // It may lead many thread sleep, but this is exactly what I want
+<span class="nc" id="L235">        int delta = RaftContext.BUSY_MAX_SLEEP_FACTOR -</span>
+                    RaftContext.BUSY_MIN_SLEEP_FACTOR;
+<span class="nc" id="L237">        Random random = new Random();</span>
+<span class="nc" id="L238">        int timeout = random.nextInt(delta) +</span>
+                      RaftContext.BUSY_MIN_SLEEP_FACTOR;
+<span class="nc" id="L240">        int time = counter * timeout;</span>
+        try {
+<span class="nc" id="L242">            Thread.sleep(time);</span>
+<span class="nc" id="L243">        } catch (InterruptedException e) {</span>
+            // Throw busy exception if the request is timeout
+<span class="nc" id="L245">            throw new BackendException(&quot;The raft backend store is busy&quot;, e);</span>
+        } finally {
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            if (this.busyCounter.get() &gt; 0) {</span>
+<span class="nc" id="L248">                synchronized (this) {</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">                    if (this.busyCounter.get() &gt; 0) {</span>
+<span class="nc" id="L250">                        counter = this.busyCounter.decrementAndGet();</span>
+<span class="nc" id="L251">                        LOG.info(&quot;Decrease busy counter: [{}]&quot;, counter);</span>
+                    }
+<span class="nc" id="L253">                }</span>
+            }
+        }
+<span class="nc" id="L256">    }</span>
+
+    private Node initRaftNode() throws IOException {
+<span class="nc" id="L259">        NodeOptions nodeOptions = this.context.nodeOptions();</span>
+<span class="nc" id="L260">        nodeOptions.setFsm(this.stateMachine);</span>
+        /*
+         * TODO: the groupId is same as graph name now, when support sharding,
+         *       groupId needs to be bound to shard Id
+         */
+<span class="nc" id="L265">        String groupId = this.context.group();</span>
+<span class="nc" id="L266">        PeerId endpoint = this.context.endpoint();</span>
+
+        /*
+         * Create RaftGroupService with shared rpc-server, then start raft node
+         * TODO: don't create + hold RaftGroupService and just share rpc-server
+         *       and create Node by RaftServiceFactory.createAndInitRaftNode()
+         */
+<span class="nc" id="L273">        RpcServer rpcServer = this.context.rpcServer();</span>
+<span class="nc" id="L274">        LOG.debug(&quot;Start raft node with endpoint '{}', initial conf [{}]&quot;,</span>
+<span class="nc" id="L275">                  endpoint, nodeOptions.getInitialConf());</span>
+<span class="nc" id="L276">        this.raftGroupService = new RaftGroupService(groupId, endpoint,</span>
+                                                     nodeOptions,
+                                                     rpcServer, true);
+<span class="nc" id="L279">        return this.raftGroupService.start(false);</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L284">        return String.format(&quot;[%s-%s]&quot;, this.context.group(), this.nodeId());</span>
+    }
+
+    protected final class RaftStateListener implements ReplicatorStateListener {
+
+        private volatile long lastPrintTime;
+
+<span class="nc" id="L291">        public RaftStateListener() {</span>
+<span class="nc" id="L292">            this.lastPrintTime = 0L;</span>
+<span class="nc" id="L293">        }</span>
+
+        @Override
+        public void onCreated(PeerId peer) {
+<span class="nc" id="L297">            LOG.info(&quot;The node {} replicator has created&quot;, peer);</span>
+<span class="nc" id="L298">        }</span>
+
+        @Override
+        public void onDestroyed(PeerId peer) {
+<span class="nc" id="L302">            LOG.warn(&quot;Replicator '{}' is ready to go offline&quot;, peer);</span>
+<span class="nc" id="L303">        }</span>
+
+        @Override
+        public void onError(PeerId peer, Status status) {
+<span class="nc" id="L307">            long now = System.currentTimeMillis();</span>
+<span class="nc" id="L308">            long interval = now - this.lastPrintTime;</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">            if (interval &gt;= RaftContext.LOG_WARN_INTERVAL) {</span>
+<span class="nc" id="L310">                LOG.warn(&quot;Replicator meet error: {}&quot;, status);</span>
+<span class="nc" id="L311">                this.lastPrintTime = now;</span>
+            }
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            if (this.isWriteBufferOverflow(status)) {</span>
+                // Increment busy counter
+<span class="nc" id="L315">                int count = RaftNode.this.busyCounter.incrementAndGet();</span>
+<span class="nc" id="L316">                LOG.info(&quot;Increase busy counter due to overflow: [{}]&quot;, count);</span>
+            }
+<span class="nc" id="L318">        }</span>
+
+        // NOTE: Jraft itself doesn't have this callback, it's added by us
+        public void onBusy(PeerId peer, Status status) {
+            /*
+             * If follower is busy then increase busy counter,
+             * it will lead to submit thread wait more time
+             */
+<span class="nc" id="L326">            int count = RaftNode.this.busyCounter.incrementAndGet();</span>
+<span class="nc" id="L327">            LOG.info(&quot;Increase busy counter: [{}]&quot;, count);</span>
+<span class="nc" id="L328">        }</span>
+
+        private boolean isWriteBufferOverflow(Status status) {
+<span class="nc" id="L331">            String expectMsg = &quot;maybe write overflow&quot;;</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">            return RaftError.EINTERNAL == status.getRaftError() &amp;&amp;</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">                   status.getErrorMsg() != null &amp;&amp;</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">                   status.getErrorMsg().contains(expectMsg);</span>
+        }
+
+        /**
+         * Maybe useful in the future
+         */
+        @SuppressWarnings(&quot;unused&quot;)
+        private boolean isRpcTimeout(Status status) {
+<span class="nc" id="L342">            String expectMsg = &quot;Invoke timeout&quot;;</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">            return RaftError.EINTERNAL == status.getRaftError() &amp;&amp;</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">                   status.getErrorMsg() != null &amp;&amp;</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">                   status.getErrorMsg().contains(expectMsg);</span>
+        }
+    }
+
+    /**
+     * Jraft Node.getLeaderId() and Node.isLeader() is not always consistent,
+     * We define this class to manage leader info by ourselves
+     */
+    private static class LeaderInfo {
+
+<span class="nc" id="L355">        private static final LeaderInfo NO_LEADER = new LeaderInfo(null, false);</span>
+
+        private final PeerId leaderId;
+        private final boolean selfIsLeader;
+
+<span class="nc" id="L360">        public LeaderInfo(PeerId leaderId, boolean selfIsLeader) {</span>
+<span class="nc" id="L361">            this.leaderId = leaderId;</span>
+<span class="nc" id="L362">            this.selfIsLeader = selfIsLeader;</span>
+<span class="nc" id="L363">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

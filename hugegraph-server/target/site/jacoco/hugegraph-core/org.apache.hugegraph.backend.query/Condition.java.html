@@ -1,0 +1,813 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Condition.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.query</a> &gt; <span class="el_source">Condition.java</span></div><h1>Condition.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.query;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
+
+import org.apache.commons.lang.ArrayUtils;
+
+import org.apache.hugegraph.backend.store.Shard;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.DateUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.NumericUtil;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L44">public abstract class Condition {</span>
+
+<span class="nc" id="L46">    public enum ConditionType {</span>
+<span class="nc" id="L47">        NONE,</span>
+<span class="nc" id="L48">        RELATION,</span>
+<span class="nc" id="L49">        AND,</span>
+<span class="nc" id="L50">        OR;</span>
+    }
+
+<span class="nc" id="L53">    public enum RelationType implements BiPredicate&lt;Object, Object&gt; {</span>
+
+<span class="nc" id="L55">        EQ(&quot;==&quot;, (v1, v2) -&gt; {</span>
+<span class="nc" id="L56">            return equals(v1, v2);</span>
+        }),
+
+<span class="nc" id="L59">        GT(&quot;&gt;&quot;, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">            return compare(v1, v2) &gt; 0;</span>
+        }),
+
+<span class="nc" id="L63">        GTE(&quot;&gt;=&quot;, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">            return compare(v1, v2) &gt;= 0;</span>
+        }),
+
+<span class="nc" id="L67">        LT(&quot;&lt;&quot;, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">            return compare(v1, v2) &lt; 0;</span>
+        }),
+
+<span class="nc" id="L71">        LTE(&quot;&lt;=&quot;, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            return compare(v1, v2) &lt;= 0;</span>
+        }),
+
+<span class="nc" id="L75">        NEQ(&quot;!=&quot;, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">            return compare(v1, v2) != 0;</span>
+        }),
+
+<span class="nc" id="L79">        IN(&quot;in&quot;, null, Collection.class, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">            assert v2 != null;</span>
+<span class="nc" id="L81">            return ((Collection&lt;?&gt;) v2).contains(v1);</span>
+        }),
+
+<span class="nc" id="L84">        NOT_IN(&quot;notin&quot;, null, Collection.class, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            assert v2 != null;</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">            return !((Collection&lt;?&gt;) v2).contains(v1);</span>
+        }),
+
+<span class="nc" id="L89">        PREFIX(&quot;prefix&quot;, Id.class, Id.class, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            assert v2 != null;</span>
+<span class="nc bnc" id="L91" title="All 4 branches missed.">            return v1 != null &amp;&amp; Bytes.prefixWith(((Id) v2).asBytes(),</span>
+<span class="nc" id="L92">                                                  ((Id) v1).asBytes());</span>
+        }),
+
+<span class="nc" id="L95">        TEXT_CONTAINS(&quot;textcontains&quot;, String.class, String.class, (v1, v2) -&gt; {</span>
+            // TODO: support collection-property textcontains
+<span class="nc bnc" id="L97" title="All 4 branches missed.">            return v1 != null &amp;&amp; ((String) v1).contains((String) v2);</span>
+        }),
+
+<span class="nc" id="L100">        TEXT_CONTAINS_ANY(&quot;textcontainsany&quot;, String.class, Collection.class, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            assert v2 != null;</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">            if (v1 == null) {</span>
+<span class="nc" id="L103">                return false;</span>
+            }
+
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L107">            Collection&lt;String&gt; words = (Collection&lt;String&gt;) v2;</span>
+
+<span class="nc bnc" id="L109" title="All 2 branches missed.">            for (String word : words) {</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">                if (((String) v1).contains(word)) {</span>
+<span class="nc" id="L111">                    return true;</span>
+                }
+<span class="nc" id="L113">            }</span>
+<span class="nc" id="L114">            return false;</span>
+        }),
+
+<span class="nc" id="L117">        CONTAINS(&quot;contains&quot;, Collection.class, null, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">            assert v2 != null;</span>
+<span class="nc bnc" id="L119" title="All 4 branches missed.">            return v1 != null &amp;&amp; ((Collection&lt;?&gt;) v1).contains(v2);</span>
+        }),
+
+<span class="nc" id="L122">        CONTAINS_VALUE(&quot;containsv&quot;, Map.class, null, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">            assert v2 != null;</span>
+<span class="nc bnc" id="L124" title="All 4 branches missed.">            return v1 != null &amp;&amp; ((Map&lt;?, ?&gt;) v1).containsValue(v2);</span>
+        }),
+
+<span class="nc" id="L127">        CONTAINS_KEY(&quot;containsk&quot;, Map.class, null, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">            assert v2 != null;</span>
+<span class="nc bnc" id="L129" title="All 4 branches missed.">            return v1 != null &amp;&amp; ((Map&lt;?, ?&gt;) v1).containsKey(v2);</span>
+        }),
+
+<span class="nc" id="L132">        SCAN(&quot;scan&quot;, (v1, v2) -&gt; {</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            assert v2 != null;</span>
+            /*
+             * TODO: we still have no way to determine accurately, since
+             *       some backends may scan with token(column) like cassandra.
+             */
+<span class="nc" id="L138">            return true;</span>
+        });
+
+        private final String operator;
+        private final BiFunction&lt;Object, Object, Boolean&gt; tester;
+        private final Class&lt;?&gt; v1Class;
+        private final Class&lt;?&gt; v2Class;
+
+        RelationType(String op,
+                             BiFunction&lt;Object, Object, Boolean&gt; tester) {
+<span class="nc" id="L148">            this(op, null, null, tester);</span>
+<span class="nc" id="L149">        }</span>
+
+        RelationType(String op, Class&lt;?&gt; v1Class, Class&lt;?&gt; v2Class,
+<span class="nc" id="L152">                             BiFunction&lt;Object, Object, Boolean&gt; tester) {</span>
+<span class="nc" id="L153">            this.operator = op;</span>
+<span class="nc" id="L154">            this.tester = tester;</span>
+<span class="nc" id="L155">            this.v1Class = v1Class;</span>
+<span class="nc" id="L156">            this.v2Class = v2Class;</span>
+<span class="nc" id="L157">        }</span>
+
+        public String string() {
+<span class="nc" id="L160">            return this.operator;</span>
+        }
+
+        /**
+         * Determine two values of any type equal
+         * @param first is actual value
+         * @param second is value in query condition
+         * @return true if equal, otherwise false
+         */
+        private static boolean equals(final Object first,
+                                      final Object second) {
+<span class="nc bnc" id="L171" title="All 2 branches missed.">            assert second != null;</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">            if (first instanceof Id) {</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">                if (second instanceof String) {</span>
+<span class="nc" id="L174">                    return second.equals(((Id) first).asString());</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">                } else if (second instanceof Long) {</span>
+<span class="nc" id="L176">                    return second.equals(((Id) first).asLong());</span>
+                }
+<span class="nc bnc" id="L178" title="All 2 branches missed.">            } else if (second instanceof Number) {</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">                return compare(first, second) == 0;</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            } else if (second.getClass().isArray()) {</span>
+<span class="nc" id="L181">                return ArrayUtils.isEquals(first, second);</span>
+            }
+
+<span class="nc" id="L184">            return Objects.equals(first, second);</span>
+        }
+
+        /**
+         * Determine two numbers equal
+         * @param first is actual value, might be Number/Date or String, It is
+         *              probably that the `first` is serialized to String.
+         * @param second is value in query condition, must be Number/Date
+         * @return the value 0 if first is numerically equal to second;
+         *         a value less than 0 if first is numerically less than
+         *         second; and a value greater than 0 if first is
+         *         numerically greater than second.
+         */
+        private static int compare(final Object first, final Object second) {
+<span class="nc bnc" id="L198" title="All 2 branches missed.">            assert second != null;</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">            if (second instanceof Number) {</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">                return NumericUtil.compareNumber(first == null ? 0 : first,</span>
+                                                 (Number) second);
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            } else if (second instanceof Date) {</span>
+<span class="nc" id="L203">                return compareDate(first, (Date) second);</span>
+            }
+
+<span class="nc" id="L206">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;Can't compare between %s(%s) and %s(%s)&quot;, first,
+<span class="nc bnc" id="L208" title="All 2 branches missed.">                      first == null ? null : first.getClass().getSimpleName(),</span>
+<span class="nc" id="L209">                      second, second.getClass().getSimpleName()));</span>
+        }
+
+        private static int compareDate(Object first, Date second) {
+<span class="nc bnc" id="L213" title="All 2 branches missed.">            if (first == null) {</span>
+<span class="nc" id="L214">                first = DateUtil.DATE_ZERO;</span>
+            }
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            if (first instanceof Date) {</span>
+<span class="nc" id="L217">                return ((Date) first).compareTo(second);</span>
+            }
+
+<span class="nc" id="L220">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;Can't compare between %s(%s) and %s(%s)&quot;,
+<span class="nc" id="L222">                      first, first.getClass().getSimpleName(),</span>
+<span class="nc" id="L223">                      second, second.getClass().getSimpleName()));</span>
+        }
+
+        private void checkBaseType(Object value, Class&lt;?&gt; clazz) {
+<span class="nc bnc" id="L227" title="All 2 branches missed.">            if (!clazz.isInstance(value)) {</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">                String valueClass = value == null ? &quot;null&quot; :</span>
+<span class="nc" id="L229">                                    value.getClass().getSimpleName();</span>
+<span class="nc" id="L230">                E.checkArgument(false,</span>
+                                &quot;Can't execute `%s` on type %s, expect %s&quot;,
+                                this.operator, valueClass,
+<span class="nc" id="L233">                                clazz.getSimpleName());</span>
+            }
+<span class="nc" id="L235">        }</span>
+
+        private void checkValueType(Object value, Class&lt;?&gt; clazz) {
+<span class="nc bnc" id="L238" title="All 2 branches missed.">            if (!clazz.isInstance(value)) {</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">                String valueClass = value == null ? &quot;null&quot; :</span>
+<span class="nc" id="L240">                                    value.getClass().getSimpleName();</span>
+<span class="nc" id="L241">                E.checkArgument(false,</span>
+                                &quot;Can't test '%s'(%s) for `%s`, expect %s&quot;,
+                                value, valueClass, this.operator,
+<span class="nc" id="L244">                                clazz.getSimpleName());</span>
+            }
+<span class="nc" id="L246">        }</span>
+
+        @Override
+        public boolean test(Object first, Object second) {
+<span class="nc bnc" id="L250" title="All 2 branches missed.">            E.checkState(this.tester != null, &quot;Can't test %s&quot;, this.name());</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">            E.checkArgument(second != null,</span>
+                            &quot;Can't test null value for `%s`&quot;, this.operator);
+<span class="nc bnc" id="L253" title="All 2 branches missed.">            if (this.v1Class != null) {</span>
+<span class="nc" id="L254">                this.checkBaseType(first, this.v1Class);</span>
+            }
+<span class="nc bnc" id="L256" title="All 2 branches missed.">            if (this.v2Class != null) {</span>
+<span class="nc" id="L257">                this.checkValueType(second, this.v2Class);</span>
+            }
+<span class="nc" id="L259">            return this.tester.apply(first, second);</span>
+        }
+
+        public boolean isRangeType() {
+<span class="nc" id="L263">            return ImmutableSet.of(GT, GTE, LT, LTE).contains(this);</span>
+        }
+
+        public boolean isSearchType() {
+<span class="nc bnc" id="L267" title="All 4 branches missed.">            return this == TEXT_CONTAINS || this == TEXT_CONTAINS_ANY;</span>
+        }
+
+        public boolean isSecondaryType() {
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            return this == EQ;</span>
+        }
+    }
+
+    public abstract ConditionType type();
+
+    public abstract boolean isSysprop();
+
+    public abstract List&lt;? extends Relation&gt; relations();
+
+    public abstract boolean test(Object value);
+
+    public abstract boolean test(HugeElement element);
+
+    public abstract Condition copy();
+
+    public abstract Condition replace(Relation from, Relation to);
+
+    public Condition and(Condition other) {
+<span class="nc" id="L290">        return new And(this, other);</span>
+    }
+
+    public Condition or(Condition other) {
+<span class="nc" id="L294">        return new Or(this, other);</span>
+    }
+
+    public boolean isRelation() {
+<span class="nc bnc" id="L298" title="All 2 branches missed.">        return this.type() == ConditionType.RELATION;</span>
+    }
+
+    public boolean isLogic() {
+<span class="nc bnc" id="L302" title="All 2 branches missed.">        return this.type() == ConditionType.AND ||</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">               this.type() == ConditionType.OR;</span>
+    }
+
+    public boolean isFlattened() {
+<span class="nc" id="L307">        return this.isRelation();</span>
+    }
+
+    public static Condition and(Condition left, Condition right) {
+<span class="nc" id="L311">        return new And(left, right);</span>
+    }
+
+    public static Condition or(Condition left, Condition right) {
+<span class="nc" id="L315">        return new Or(left, right);</span>
+    }
+
+    public static Relation eq(HugeKeys key, Object value) {
+<span class="nc" id="L319">        return new SyspropRelation(key, RelationType.EQ, value);</span>
+    }
+
+    public static Relation gt(HugeKeys key, Object value) {
+<span class="nc" id="L323">        return new SyspropRelation(key, RelationType.GT, value);</span>
+    }
+
+    public static Relation gte(HugeKeys key, Object value) {
+<span class="nc" id="L327">        return new SyspropRelation(key, RelationType.GTE, value);</span>
+    }
+
+    public static Relation lt(HugeKeys key, Object value) {
+<span class="nc" id="L331">        return new SyspropRelation(key, RelationType.LT, value);</span>
+    }
+
+    public static Relation lte(HugeKeys key, Object value) {
+<span class="nc" id="L335">        return new SyspropRelation(key, RelationType.LTE, value);</span>
+    }
+
+    public static Relation neq(HugeKeys key, Object value) {
+<span class="nc" id="L339">        return new SyspropRelation(key, RelationType.NEQ, value);</span>
+    }
+
+    public static Condition in(HugeKeys key, List&lt;?&gt; value) {
+<span class="nc" id="L343">        return new SyspropRelation(key, RelationType.IN, value);</span>
+    }
+
+    public static Condition nin(HugeKeys key, List&lt;?&gt; value) {
+<span class="nc" id="L347">        return new SyspropRelation(key, RelationType.NOT_IN, value);</span>
+    }
+
+    public static Condition prefix(HugeKeys key, Id value) {
+<span class="nc" id="L351">        return new SyspropRelation(key, RelationType.PREFIX, value);</span>
+    }
+
+    public static Condition containsValue(HugeKeys key, Object value) {
+<span class="nc" id="L355">        return new SyspropRelation(key, RelationType.CONTAINS_VALUE, value);</span>
+    }
+
+    public static Condition containsKey(HugeKeys key, Object value) {
+<span class="nc" id="L359">        return new SyspropRelation(key, RelationType.CONTAINS_KEY, value);</span>
+    }
+
+    public static Condition contains(HugeKeys key, Object value) {
+<span class="nc" id="L363">        return new SyspropRelation(key, RelationType.CONTAINS, value);</span>
+    }
+
+    public static Condition scan(String start, String end) {
+<span class="nc" id="L367">        Shard value = new Shard(start, end, 0);</span>
+<span class="nc" id="L368">        return new SyspropRelation(HugeKeys.ID, RelationType.SCAN, value);</span>
+    }
+
+    public static Relation eq(Id key, Object value) {
+<span class="nc" id="L372">        return new UserpropRelation(key, RelationType.EQ, value);</span>
+    }
+
+    public static Relation gt(Id key, Object value) {
+<span class="nc" id="L376">        return new UserpropRelation(key, RelationType.GT, value);</span>
+    }
+
+    public static Relation gte(Id key, Object value) {
+<span class="nc" id="L380">        return new UserpropRelation(key, RelationType.GTE, value);</span>
+    }
+
+    public static Relation lt(Id key, Object value) {
+<span class="nc" id="L384">        return new UserpropRelation(key, RelationType.LT, value);</span>
+    }
+
+    public static Relation lte(Id key, Object value) {
+<span class="nc" id="L388">        return new UserpropRelation(key, RelationType.LTE, value);</span>
+    }
+
+    public static Relation neq(Id key, Object value) {
+<span class="nc" id="L392">        return new UserpropRelation(key, RelationType.NEQ, value);</span>
+    }
+
+    public static Relation in(Id key, List&lt;?&gt; value) {
+<span class="nc" id="L396">        return new UserpropRelation(key, RelationType.IN, value);</span>
+    }
+
+    public static Relation nin(Id key, List&lt;?&gt; value) {
+<span class="nc" id="L400">        return new UserpropRelation(key, RelationType.NOT_IN, value);</span>
+    }
+
+    public static Relation textContains(Id key, String word) {
+<span class="nc" id="L404">        return new UserpropRelation(key, RelationType.TEXT_CONTAINS, word);</span>
+    }
+
+    public static Relation textContainsAny(Id key, Set&lt;String&gt; words) {
+<span class="nc" id="L408">        return new UserpropRelation(key, RelationType.TEXT_CONTAINS_ANY, words);</span>
+    }
+
+    public static Condition contains(Id key, Object value) {
+<span class="nc" id="L412">        return new UserpropRelation(key, RelationType.CONTAINS, value);</span>
+    }
+
+    /**
+     * Condition defines
+     */
+    public abstract static class BinCondition extends Condition {
+
+        private Condition left;
+        private Condition right;
+
+<span class="nc" id="L423">        public BinCondition(Condition left, Condition right) {</span>
+<span class="nc" id="L424">            E.checkNotNull(left, &quot;left condition&quot;);</span>
+<span class="nc" id="L425">            E.checkNotNull(right, &quot;right condition&quot;);</span>
+<span class="nc" id="L426">            this.left = left;</span>
+<span class="nc" id="L427">            this.right = right;</span>
+<span class="nc" id="L428">        }</span>
+
+        public Condition left() {
+<span class="nc" id="L431">            return this.left;</span>
+        }
+
+        public Condition right() {
+<span class="nc" id="L435">            return this.right;</span>
+        }
+
+        @Override
+        public boolean isSysprop() {
+<span class="nc bnc" id="L440" title="All 4 branches missed.">            return this.left.isSysprop() &amp;&amp; this.right.isSysprop();</span>
+        }
+
+        @Override
+        public List&lt;? extends Relation&gt; relations() {
+<span class="nc" id="L445">            List&lt;Relation&gt; list = new ArrayList&lt;&gt;(this.left.relations());</span>
+<span class="nc" id="L446">            list.addAll(this.right.relations());</span>
+<span class="nc" id="L447">            return list;</span>
+        }
+
+        @Override
+        public Condition replace(Relation from, Relation to) {
+<span class="nc" id="L452">            this.left = this.left.replace(from, to);</span>
+<span class="nc" id="L453">            this.right = this.right.replace(from, to);</span>
+<span class="nc" id="L454">            return this;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L459">            StringBuilder sb = new StringBuilder(64);</span>
+<span class="nc" id="L460">            sb.append(this.left).append(' ');</span>
+<span class="nc" id="L461">            sb.append(this.type().name()).append(' ');</span>
+<span class="nc" id="L462">            sb.append(this.right);</span>
+<span class="nc" id="L463">            return sb.toString();</span>
+        }
+
+        @Override
+        public boolean equals(Object object) {
+<span class="nc bnc" id="L468" title="All 2 branches missed.">            if (!(object instanceof BinCondition)) {</span>
+<span class="nc" id="L469">                return false;</span>
+            }
+<span class="nc" id="L471">            BinCondition other = (BinCondition) object;</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">            return this.type().equals(other.type()) &amp;&amp;</span>
+<span class="nc bnc" id="L473" title="All 2 branches missed.">                   this.left().equals(other.left()) &amp;&amp;</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">                   this.right().equals(other.right());</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L479">            return this.type().hashCode() ^</span>
+<span class="nc" id="L480">                   this.left().hashCode() ^</span>
+<span class="nc" id="L481">                   this.right().hashCode();</span>
+        }
+    }
+
+    public static class And extends BinCondition {
+
+        public And(Condition left, Condition right) {
+<span class="nc" id="L488">            super(left, right);</span>
+<span class="nc" id="L489">        }</span>
+
+        @Override
+        public ConditionType type() {
+<span class="nc" id="L493">            return ConditionType.AND;</span>
+        }
+
+        @Override
+        public boolean test(Object value) {
+<span class="nc bnc" id="L498" title="All 4 branches missed.">            return this.left().test(value) &amp;&amp; this.right().test(value);</span>
+        }
+
+        @Override
+        public boolean test(HugeElement element) {
+<span class="nc bnc" id="L503" title="All 4 branches missed.">            return this.left().test(element) &amp;&amp; this.right().test(element);</span>
+        }
+
+        @Override
+        public Condition copy() {
+<span class="nc" id="L508">            return new And(this.left().copy(), this.right().copy());</span>
+        }
+    }
+
+    public static class Or extends BinCondition {
+
+        public Or(Condition left, Condition right) {
+<span class="nc" id="L515">            super(left, right);</span>
+<span class="nc" id="L516">        }</span>
+
+        @Override
+        public ConditionType type() {
+<span class="nc" id="L520">            return ConditionType.OR;</span>
+        }
+
+        @Override
+        public boolean test(Object value) {
+<span class="nc bnc" id="L525" title="All 4 branches missed.">            return this.left().test(value) || this.right().test(value);</span>
+        }
+
+        @Override
+        public boolean test(HugeElement element) {
+<span class="nc bnc" id="L530" title="All 4 branches missed.">            return this.left().test(element) || this.right().test(element);</span>
+        }
+
+        @Override
+        public Condition copy() {
+<span class="nc" id="L535">            return new Or(this.left().copy(), this.right().copy());</span>
+        }
+    }
+
+<span class="nc" id="L539">    public abstract static class Relation extends Condition {</span>
+
+        // Relational operator (like: =, &gt;, &lt;, in, ...)
+        protected RelationType relation;
+        // Single-type value or a list of single-type value
+        protected Object value;
+
+        // The key serialized(code/string) by backend store.
+        protected Object serialKey;
+        // The value serialized(code/string) by backend store.
+        protected Object serialValue;
+
+<span class="nc" id="L551">        protected static final Set&lt;RelationType&gt; UNFLATTEN_RELATION_TYPES =</span>
+<span class="nc" id="L552">                  ImmutableSet.of(RelationType.IN, RelationType.NOT_IN,</span>
+                                  RelationType.TEXT_CONTAINS_ANY);
+
+        @Override
+        public ConditionType type() {
+<span class="nc" id="L557">            return ConditionType.RELATION;</span>
+        }
+
+        public RelationType relation() {
+<span class="nc" id="L561">            return this.relation;</span>
+        }
+
+        public Object value() {
+<span class="nc" id="L565">            return this.value;</span>
+        }
+
+        public void serialKey(Object key) {
+<span class="nc" id="L569">            this.serialKey = key;</span>
+<span class="nc" id="L570">        }</span>
+
+        public Object serialKey() {
+<span class="nc bnc" id="L573" title="All 2 branches missed.">            return this.serialKey != null ? this.serialKey : this.key();</span>
+        }
+
+        public void serialValue(Object value) {
+<span class="nc" id="L577">            this.serialValue = value;</span>
+<span class="nc" id="L578">        }</span>
+
+        public Object serialValue() {
+<span class="nc bnc" id="L581" title="All 2 branches missed.">            return this.serialValue != null ? this.serialValue : this.value();</span>
+        }
+
+        @Override
+        public boolean test(Object value) {
+<span class="nc" id="L586">            return this.relation.test(value, this.value());</span>
+        }
+
+        @Override
+        public boolean isFlattened() {
+<span class="nc bnc" id="L591" title="All 2 branches missed.">            return !UNFLATTEN_RELATION_TYPES.contains(this.relation);</span>
+        }
+
+        @Override
+        public List&lt;? extends Relation&gt; relations() {
+<span class="nc" id="L596">            return ImmutableList.of(this);</span>
+        }
+
+        @Override
+        public Condition replace(Relation from, Relation to) {
+<span class="nc bnc" id="L601" title="All 2 branches missed.">            if (this == from) {</span>
+<span class="nc" id="L602">                return to;</span>
+            } else {
+<span class="nc" id="L604">                return this;</span>
+            }
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L610">            StringBuilder sb = new StringBuilder(64);</span>
+<span class="nc" id="L611">            sb.append(this.key()).append(' ');</span>
+<span class="nc" id="L612">            sb.append(this.relation.string()).append(' ');</span>
+<span class="nc" id="L613">            sb.append(this.value);</span>
+<span class="nc" id="L614">            return sb.toString();</span>
+        }
+
+        @Override
+        public boolean equals(Object object) {
+<span class="nc bnc" id="L619" title="All 2 branches missed.">            if (!(object instanceof Relation)) {</span>
+<span class="nc" id="L620">                return false;</span>
+            }
+<span class="nc" id="L622">            Relation other = (Relation) object;</span>
+<span class="nc bnc" id="L623" title="All 2 branches missed.">            return this.relation().equals(other.relation()) &amp;&amp;</span>
+<span class="nc bnc" id="L624" title="All 2 branches missed.">                   this.key().equals(other.key()) &amp;&amp;</span>
+<span class="nc bnc" id="L625" title="All 2 branches missed.">                   this.value().equals(other.value());</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L630">            return this.type().hashCode() ^</span>
+<span class="nc" id="L631">                   this.relation().hashCode() ^</span>
+<span class="nc" id="L632">                   this.key().hashCode() ^</span>
+<span class="nc" id="L633">                   this.value().hashCode();</span>
+        }
+
+        @Override
+        public abstract boolean isSysprop();
+
+        public abstract Object key();
+
+        @Override
+        public abstract Relation copy();
+    }
+
+    public static class SyspropRelation extends Relation {
+
+        private final HugeKeys key;
+
+        public SyspropRelation(HugeKeys key, Object value) {
+<span class="nc" id="L650">            this(key, RelationType.EQ, value);</span>
+<span class="nc" id="L651">        }</span>
+
+<span class="nc" id="L653">        public SyspropRelation(HugeKeys key, RelationType op, Object value) {</span>
+<span class="nc" id="L654">            E.checkNotNull(op, &quot;relation type&quot;);</span>
+<span class="nc" id="L655">            this.key = key;</span>
+<span class="nc" id="L656">            this.relation = op;</span>
+<span class="nc" id="L657">            this.value = value;</span>
+<span class="nc" id="L658">        }</span>
+
+        @Override
+        public HugeKeys key() {
+<span class="nc" id="L662">            return this.key;</span>
+        }
+
+        @Override
+        public boolean isSysprop() {
+<span class="nc" id="L667">            return true;</span>
+        }
+
+        @Override
+        public boolean test(HugeElement element) {
+<span class="nc" id="L672">            E.checkNotNull(element, &quot;element&quot;);</span>
+<span class="nc" id="L673">            Object value = element.sysprop(this.key);</span>
+<span class="nc" id="L674">            return this.relation.test(value, this.value());</span>
+        }
+
+        @Override
+        public Relation copy() {
+<span class="nc" id="L679">            Relation clone = new SyspropRelation(this.key, this.relation(),</span>
+                                                 this.value);
+<span class="nc" id="L681">            clone.serialKey(this.serialKey);</span>
+<span class="nc" id="L682">            clone.serialValue(this.serialValue);</span>
+<span class="nc" id="L683">            return clone;</span>
+        }
+    }
+
+    public static class FlattenSyspropRelation extends SyspropRelation {
+
+        public FlattenSyspropRelation(SyspropRelation relation) {
+<span class="nc" id="L690">            super(relation.key(), relation.relation(), relation.value());</span>
+<span class="nc" id="L691">        }</span>
+
+        @Override
+        public boolean isFlattened() {
+<span class="nc" id="L695">            return true;</span>
+        }
+    }
+
+    public static class UserpropRelation extends Relation {
+
+        // Id of property key
+        private final Id key;
+
+        public UserpropRelation(Id key, Object value) {
+<span class="nc" id="L705">            this(key, RelationType.EQ, value);</span>
+<span class="nc" id="L706">        }</span>
+
+<span class="nc" id="L708">        public UserpropRelation(Id key, RelationType op, Object value) {</span>
+<span class="nc" id="L709">            E.checkNotNull(op, &quot;relation type&quot;);</span>
+<span class="nc" id="L710">            this.key = key;</span>
+<span class="nc" id="L711">            this.relation = op;</span>
+<span class="nc" id="L712">            this.value = value;</span>
+<span class="nc" id="L713">        }</span>
+
+        @Override
+        public Id key() {
+<span class="nc" id="L717">            return this.key;</span>
+        }
+
+        @Override
+        public boolean isSysprop() {
+<span class="nc" id="L722">            return false;</span>
+        }
+
+        @Override
+        public boolean test(HugeElement element) {
+<span class="nc" id="L727">            HugeProperty&lt;?&gt; prop = element.getProperty(this.key);</span>
+<span class="nc bnc" id="L728" title="All 2 branches missed.">            Object value = prop != null ? prop.value() : null;</span>
+<span class="nc bnc" id="L729" title="All 2 branches missed.">            if (value == null) {</span>
+                /*
+                 * Fix #611
+                 * TODO: It's possible some scenes can't be returned false
+                 * directly, such as: EQ with p1 == null, it should be returned
+                 * true, but the query has(p, null) is not allowed by
+                 * TraversalUtil.validPredicateValue().
+                 */
+<span class="nc" id="L737">                return false;</span>
+            }
+<span class="nc" id="L739">            return this.relation.test(value, this.value());</span>
+        }
+
+        @Override
+        public Relation copy() {
+<span class="nc" id="L744">            Relation clone = new UserpropRelation(this.key, this.relation(),</span>
+                                                  this.value);
+<span class="nc" id="L746">            clone.serialKey(this.serialKey);</span>
+<span class="nc" id="L747">            clone.serialValue(this.serialValue);</span>
+<span class="nc" id="L748">            return clone;</span>
+        }
+    }
+
+    public static class RangeConditions {
+
+<span class="nc" id="L754">        private Object keyEq = null;</span>
+<span class="nc" id="L755">        private Object keyMin = null;</span>
+<span class="nc" id="L756">        private boolean keyMinEq = false;</span>
+<span class="nc" id="L757">        private Object keyMax = null;</span>
+<span class="nc" id="L758">        private boolean keyMaxEq = false;</span>
+
+<span class="nc" id="L760">        public RangeConditions(List&lt;? extends Condition&gt; conditions) {</span>
+<span class="nc bnc" id="L761" title="All 2 branches missed.">            for (Condition c : conditions) {</span>
+<span class="nc" id="L762">                Relation r = (Relation) c;</span>
+<span class="nc bnc" id="L763" title="All 6 branches missed.">                switch (r.relation()) {</span>
+                    case EQ:
+<span class="nc" id="L765">                        this.keyEq = r.value();</span>
+<span class="nc" id="L766">                        break;</span>
+                    case GTE:
+<span class="nc" id="L768">                        this.keyMinEq = true;</span>
+<span class="nc" id="L769">                        this.keyMin = r.value();</span>
+<span class="nc" id="L770">                        break;</span>
+                    case GT:
+<span class="nc" id="L772">                        this.keyMin = r.value();</span>
+<span class="nc" id="L773">                        break;</span>
+                    case LTE:
+<span class="nc" id="L775">                        this.keyMaxEq = true;</span>
+<span class="nc" id="L776">                        this.keyMax = r.value();</span>
+<span class="nc" id="L777">                        break;</span>
+                    case LT:
+<span class="nc" id="L779">                        this.keyMax = r.value();</span>
+<span class="nc" id="L780">                        break;</span>
+                    default:
+<span class="nc" id="L782">                        E.checkArgument(false, &quot;Unsupported relation '%s'&quot;,</span>
+<span class="nc" id="L783">                                        r.relation());</span>
+                }
+<span class="nc" id="L785">            }</span>
+<span class="nc" id="L786">        }</span>
+
+        public Object keyEq() {
+<span class="nc" id="L789">            return this.keyEq;</span>
+        }
+
+        public Object keyMin() {
+<span class="nc" id="L793">            return this.keyMin;</span>
+        }
+
+        public Object keyMax() {
+<span class="nc" id="L797">            return this.keyMax;</span>
+        }
+
+        public boolean keyMinEq() {
+<span class="nc" id="L801">            return this.keyMinEq;</span>
+        }
+
+        public boolean keyMaxEq() {
+<span class="nc" id="L805">            return this.keyMaxEq;</span>
+        }
+
+        public boolean hasRange() {
+<span class="nc bnc" id="L809" title="All 4 branches missed.">            return this.keyMin != null || this.keyMax != null;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

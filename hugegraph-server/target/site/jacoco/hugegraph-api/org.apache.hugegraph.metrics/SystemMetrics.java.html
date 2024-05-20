@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SystemMetrics.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.metrics</a> &gt; <span class="el_source">SystemMetrics.java</span></div><h1>SystemMetrics.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.metrics;
+
+import java.lang.management.ClassLoadingMXBean;
+import java.lang.management.GarbageCollectorMXBean;
+import java.lang.management.ManagementFactory;
+import java.lang.management.MemoryUsage;
+import java.lang.management.ThreadMXBean;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.StringUtils;
+
+import org.apache.hugegraph.util.Bytes;
+
+<span class="nc" id="L33">public class SystemMetrics {</span>
+
+    private static final long MB = Bytes.MB;
+
+    public Map&lt;String, Map&lt;String, Object&gt;&gt; metrics() {
+<span class="nc" id="L38">        Map&lt;String, Map&lt;String, Object&gt;&gt; metrics = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L39">        metrics.put(&quot;basic&quot;, this.getBasicMetrics());</span>
+<span class="nc" id="L40">        metrics.put(&quot;heap&quot;, this.getHeapMetrics());</span>
+<span class="nc" id="L41">        metrics.put(&quot;nonheap&quot;, this.getNonHeapMetrics());</span>
+<span class="nc" id="L42">        metrics.put(&quot;thread&quot;, this.getThreadMetrics());</span>
+<span class="nc" id="L43">        metrics.put(&quot;class_loading&quot;, this.getClassLoadingMetrics());</span>
+<span class="nc" id="L44">        metrics.put(&quot;garbage_collector&quot;, this.getGarbageCollectionMetrics());</span>
+<span class="nc" id="L45">        return metrics;</span>
+    }
+
+    private Map&lt;String, Object&gt; getBasicMetrics() {
+<span class="nc" id="L49">        Map&lt;String, Object&gt; metrics = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L50">        Runtime runtime = Runtime.getRuntime();</span>
+        // Heap allocated memory (measured in bytes)
+<span class="nc" id="L52">        long total = runtime.totalMemory();</span>
+        // Heap free memory
+<span class="nc" id="L54">        long free = runtime.freeMemory();</span>
+<span class="nc" id="L55">        long used = total - free;</span>
+
+<span class="nc" id="L57">        metrics.put(&quot;mem&quot;, (total + totalNonHeapMemory()) / MB);</span>
+<span class="nc" id="L58">        metrics.put(&quot;mem_total&quot;, total / MB);</span>
+<span class="nc" id="L59">        metrics.put(&quot;mem_used&quot;, used / MB);</span>
+<span class="nc" id="L60">        metrics.put(&quot;mem_free&quot;, free / MB);</span>
+<span class="nc" id="L61">        metrics.put(&quot;mem_unit&quot;, &quot;MB&quot;);</span>
+<span class="nc" id="L62">        metrics.put(&quot;processors&quot;, runtime.availableProcessors());</span>
+<span class="nc" id="L63">        metrics.put(&quot;uptime&quot;, ManagementFactory.getRuntimeMXBean().getUptime());</span>
+<span class="nc" id="L64">        metrics.put(&quot;systemload_average&quot;,</span>
+<span class="nc" id="L65">                    ManagementFactory.getOperatingSystemMXBean()</span>
+<span class="nc" id="L66">                                     .getSystemLoadAverage());</span>
+<span class="nc" id="L67">        return metrics;</span>
+    }
+
+    private static long totalNonHeapMemory() {
+        try {
+<span class="nc" id="L72">            return ManagementFactory.getMemoryMXBean()</span>
+<span class="nc" id="L73">                                    .getNonHeapMemoryUsage()</span>
+<span class="nc" id="L74">                                    .getCommitted();</span>
+<span class="nc" id="L75">        } catch (Throwable ignored) {</span>
+<span class="nc" id="L76">            return 0;</span>
+        }
+    }
+
+    private Map&lt;String, Object&gt; getHeapMetrics() {
+<span class="nc" id="L81">        Map&lt;String, Object&gt; metrics = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L82">        MemoryUsage memoryUsage = ManagementFactory.getMemoryMXBean()</span>
+<span class="nc" id="L83">                                                   .getHeapMemoryUsage();</span>
+<span class="nc" id="L84">        metrics.put(&quot;committed&quot;, memoryUsage.getCommitted() / MB);</span>
+<span class="nc" id="L85">        metrics.put(&quot;init&quot;, memoryUsage.getInit() / MB);</span>
+<span class="nc" id="L86">        metrics.put(&quot;used&quot;, memoryUsage.getUsed() / MB);</span>
+<span class="nc" id="L87">        metrics.put(&quot;max&quot;, memoryUsage.getMax() / MB);</span>
+<span class="nc" id="L88">        return metrics;</span>
+    }
+
+    private Map&lt;String, Object&gt; getNonHeapMetrics() {
+<span class="nc" id="L92">        Map&lt;String, Object&gt; metrics = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L93">        MemoryUsage memoryUsage = ManagementFactory.getMemoryMXBean()</span>
+<span class="nc" id="L94">                                                   .getNonHeapMemoryUsage();</span>
+<span class="nc" id="L95">        metrics.put(&quot;committed&quot;, memoryUsage.getCommitted() / MB);</span>
+<span class="nc" id="L96">        metrics.put(&quot;init&quot;, memoryUsage.getInit() / MB);</span>
+<span class="nc" id="L97">        metrics.put(&quot;used&quot;, memoryUsage.getUsed() / MB);</span>
+<span class="nc" id="L98">        metrics.put(&quot;max&quot;, memoryUsage.getMax() / MB);</span>
+<span class="nc" id="L99">        return metrics;</span>
+    }
+
+    private Map&lt;String, Object&gt; getThreadMetrics() {
+<span class="nc" id="L103">        Map&lt;String, Object&gt; metrics = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L104">        ThreadMXBean threadMxBean = ManagementFactory.getThreadMXBean();</span>
+<span class="nc" id="L105">        metrics.put(&quot;peak&quot;, threadMxBean.getPeakThreadCount());</span>
+<span class="nc" id="L106">        metrics.put(&quot;daemon&quot;, threadMxBean.getDaemonThreadCount());</span>
+<span class="nc" id="L107">        metrics.put(&quot;total_started&quot;, threadMxBean.getTotalStartedThreadCount());</span>
+<span class="nc" id="L108">        metrics.put(&quot;count&quot;, threadMxBean.getThreadCount());</span>
+<span class="nc" id="L109">        return metrics;</span>
+    }
+
+    private Map&lt;String, Object&gt; getClassLoadingMetrics() {
+<span class="nc" id="L113">        Map&lt;String, Object&gt; metrics = new LinkedHashMap&lt;&gt;();</span>
+        ClassLoadingMXBean classLoadingMxBean = ManagementFactory
+<span class="nc" id="L115">                                                .getClassLoadingMXBean();</span>
+<span class="nc" id="L116">        metrics.put(&quot;count&quot;, classLoadingMxBean.getLoadedClassCount());</span>
+<span class="nc" id="L117">        metrics.put(&quot;loaded&quot;, classLoadingMxBean.getTotalLoadedClassCount());</span>
+<span class="nc" id="L118">        metrics.put(&quot;unloaded&quot;, classLoadingMxBean.getUnloadedClassCount());</span>
+<span class="nc" id="L119">        return metrics;</span>
+    }
+
+    private Map&lt;String, Object&gt; getGarbageCollectionMetrics() {
+<span class="nc" id="L123">        Map&lt;String, Object&gt; metrics = new LinkedHashMap&lt;&gt;();</span>
+        List&lt;GarbageCollectorMXBean&gt; gcMxBeans = ManagementFactory
+<span class="nc" id="L125">                                                 .getGarbageCollectorMXBeans();</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        for (GarbageCollectorMXBean gcMxBean : gcMxBeans) {</span>
+<span class="nc" id="L127">            String name = formatName(gcMxBean.getName());</span>
+<span class="nc" id="L128">            metrics.put(name + &quot;_count&quot;, gcMxBean.getCollectionCount());</span>
+<span class="nc" id="L129">            metrics.put(name + &quot;_time&quot;, gcMxBean.getCollectionTime());</span>
+<span class="nc" id="L130">        }</span>
+<span class="nc" id="L131">        metrics.put(&quot;time_unit&quot;, &quot;ms&quot;);</span>
+<span class="nc" id="L132">        return metrics;</span>
+    }
+
+    private static String formatName(String name) {
+<span class="nc" id="L136">        return StringUtils.replace(name, &quot; &quot;, &quot;_&quot;).toLowerCase();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

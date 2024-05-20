@@ -1,0 +1,318 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CassandraShard.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-cassandra</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.cassandra</a> &gt; <span class="el_source">CassandraShard.java</span></div><h1>CassandraShard.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.cassandra;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+
+import org.apache.cassandra.schema.SchemaConstants;
+import org.apache.cassandra.db.SystemKeyspace;
+import org.apache.cassandra.dht.ByteOrderedPartitioner;
+import org.apache.cassandra.dht.IPartitioner;
+import org.apache.cassandra.dht.Murmur3Partitioner;
+import org.apache.cassandra.dht.OrderPreservingPartitioner;
+import org.apache.cassandra.dht.Range;
+import org.apache.cassandra.dht.Token;
+import org.apache.cassandra.dht.Token.TokenFactory;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.Shard;
+import org.apache.hugegraph.util.Bytes;
+import com.datastax.driver.core.Host;
+import com.datastax.driver.core.Metadata;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.Row;
+import com.datastax.driver.core.TokenRange;
+import com.google.common.collect.ImmutableMap;
+
+/**
+ * CassandraShard is used for cassandra scanning operations.
+ * Each shard represents a range of tokens for a node.
+ * Reading data from a given shard does not cross multiple nodes.
+ * &lt;p&gt;
+ * Refer to AbstractColumnFamilyInputFormat from:
+ * &lt;a href=&quot;https://github.com/2013Commons/hive-cassandra/&quot;&gt;...&lt;/a&gt;
+ */
+<span class="nc" id="L63">public class CassandraShard {</span>
+
+    /** The minimal shard size should &gt;= 1M to prevent too many number of shards */
+    private static final int MIN_SHARD_SIZE = (int) Bytes.MB;
+
+    private CassandraSessionPool.Session session;
+    private String keyspace;
+    private String table;
+
+    private IPartitioner partitioner;
+
+    public CassandraShard(CassandraSessionPool.Session session,
+<span class="nc" id="L75">                          String keyspace, String table) {</span>
+<span class="nc" id="L76">        this.session = session;</span>
+<span class="nc" id="L77">        this.keyspace = keyspace;</span>
+<span class="nc" id="L78">        this.table = table;</span>
+
+<span class="nc" id="L80">        this.partitioner = new Murmur3Partitioner();</span>
+<span class="nc" id="L81">    }</span>
+
+    /**
+     * Get splits of a table
+     * @param splitPartitions: expected partitions count per split
+     * @param splitSize: expected size(bytes) per split,
+     *        splitPartitions will be ignored if splitSize is passed
+     * @return a list of Shard
+     */
+    public List&lt;Shard&gt; getSplits(long splitPartitions, long splitSize) {
+        // Canonical ranges, split into pieces, fetch the splits in parallel
+<span class="nc" id="L92">        ExecutorService executor = new ThreadPoolExecutor(0, 128, 60L, TimeUnit.SECONDS,</span>
+                                                          new LinkedBlockingQueue&lt;&gt;());
+
+<span class="nc" id="L95">        List&lt;Shard&gt; splits = new ArrayList&lt;&gt;();</span>
+        try {
+<span class="nc" id="L97">            List&lt;Future&lt;List&lt;Shard&gt;&gt;&gt; futures = new ArrayList&lt;&gt;();</span>
+
+            // Canonical ranges and nodes holding replicas
+<span class="nc" id="L100">            Map&lt;TokenRange, Set&lt;Host&gt;&gt; masterRangeNodes = getRangeMap();</span>
+
+<span class="nc bnc" id="L102" title="All 2 branches missed.">            for (TokenRange range : masterRangeNodes.keySet()) {</span>
+                /*
+                 * For each token range, pick a live owner and ask it to
+                 * compute bite-sized splits.
+                 */
+<span class="nc" id="L107">                futures.add(executor.submit(new SplitCallable(</span>
+                            range, splitPartitions, splitSize)));
+<span class="nc" id="L109">            }</span>
+
+            // Wait until we have all the results back
+<span class="nc bnc" id="L112" title="All 2 branches missed.">            for (Future&lt;List&lt;Shard&gt;&gt; future : futures) {</span>
+                try {
+<span class="nc" id="L114">                    splits.addAll(future.get());</span>
+<span class="nc" id="L115">                } catch (Exception e) {</span>
+<span class="nc" id="L116">                    throw new BackendException(&quot;Can't get cassandra shards&quot;, e);</span>
+<span class="nc" id="L117">                }</span>
+<span class="nc" id="L118">            }</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            assert splits.size() &gt; masterRangeNodes.size();</span>
+        } finally {
+<span class="nc" id="L121">            executor.shutdownNow();</span>
+        }
+
+<span class="nc" id="L124">        Collections.shuffle(splits, new Random(System.nanoTime()));</span>
+<span class="nc" id="L125">        return splits;</span>
+    }
+
+    /**
+     * Get splits of a table in specified range
+     * NOTE: maybe we don't need this method
+     * @param start: the start of range
+     * @param end: the end of range
+     * @param splitPartitions: expected partitions count per split
+     * @param splitSize: expected size(bytes) per split,
+     *        splitPartitions will be ignored if splitSize is passed
+     * @return a list of Shard
+     */
+    public List&lt;Shard&gt; getSplits(String start, String end,
+                                 int splitPartitions, int splitSize) {
+
+<span class="nc" id="L141">        ExecutorService executor = new ThreadPoolExecutor(0, 128, 60L, TimeUnit.SECONDS,</span>
+                                                          new LinkedBlockingQueue&lt;&gt;());
+
+<span class="nc" id="L144">        List&lt;Shard&gt; splits = new ArrayList&lt;&gt;();</span>
+        try {
+<span class="nc" id="L146">            List&lt;Future&lt;List&lt;Shard&gt;&gt;&gt; futures = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L147">            TokenFactory tokenFactory = this.partitioner.getTokenFactory();</span>
+<span class="nc" id="L148">            TokenRange tokenRange = rangeToTokenRange(new Range&lt;&gt;(</span>
+<span class="nc" id="L149">                                    tokenFactory.fromString(start),</span>
+<span class="nc" id="L150">                                    tokenFactory.fromString(end)));</span>
+
+            // Canonical ranges and nodes holding replicas
+<span class="nc" id="L153">            Map&lt;TokenRange, Set&lt;Host&gt;&gt; masterRangeNodes = getRangeMap();</span>
+
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            for (TokenRange range : masterRangeNodes.keySet()) {</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">                for (TokenRange r : range.intersectWith(tokenRange)) {</span>
+                    // For each tokenRange, pick a live owner and ask it
+                    // to compute bite-sized splits
+<span class="nc" id="L159">                    futures.add(executor.submit(new SplitCallable(</span>
+                                r, splitPartitions, splitSize)));
+<span class="nc" id="L161">                }</span>
+<span class="nc" id="L162">            }</span>
+
+            // Wait until we have all the results back
+<span class="nc bnc" id="L165" title="All 2 branches missed.">            for (Future&lt;List&lt;Shard&gt;&gt; future : futures) {</span>
+                try {
+<span class="nc" id="L167">                    splits.addAll(future.get());</span>
+<span class="nc" id="L168">                } catch (Exception e) {</span>
+<span class="nc" id="L169">                    throw new BackendException(&quot;Can't get cassandra shards&quot;, e);</span>
+<span class="nc" id="L170">                }</span>
+<span class="nc" id="L171">            }</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">            assert splits.size() &gt;= masterRangeNodes.size();</span>
+        } finally {
+<span class="nc" id="L174">            executor.shutdownNow();</span>
+        }
+
+<span class="nc" id="L177">        Collections.shuffle(splits, new Random(System.nanoTime()));</span>
+<span class="nc" id="L178">        return splits;</span>
+    }
+
+    private boolean isPartitionerOpp() {
+<span class="nc bnc" id="L182" title="All 4 branches missed.">        return this.partitioner instanceof OrderPreservingPartitioner ||</span>
+               this.partitioner instanceof ByteOrderedPartitioner;
+    }
+
+    private TokenRange rangeToTokenRange(Range&lt;Token&gt; range) {
+<span class="nc" id="L187">        TokenFactory tokenFactory = this.partitioner.getTokenFactory();</span>
+<span class="nc" id="L188">        Metadata metadata = this.session.metadata();</span>
+<span class="nc" id="L189">        return metadata.newTokenRange(</span>
+<span class="nc" id="L190">                        metadata.newToken(tokenFactory.toString(range.left)),</span>
+<span class="nc" id="L191">                        metadata.newToken(tokenFactory.toString(range.right)));</span>
+    }
+
+    private Map&lt;TokenRange, Long&gt; getSubSplits(TokenRange tokenRange,
+                                               long splitPartitions,
+                                               long splitSize) {
+        try {
+<span class="nc" id="L198">            return describeSplits(this.session, this.keyspace, this.table,</span>
+                                  splitPartitions, splitSize, tokenRange);
+<span class="nc" id="L200">        } catch (Exception e) {</span>
+<span class="nc" id="L201">            throw new RuntimeException(e);</span>
+        }
+    }
+
+    private Map&lt;TokenRange, Set&lt;Host&gt;&gt; getRangeMap() {
+<span class="nc" id="L206">        Metadata metadata = this.session.metadata();</span>
+<span class="nc" id="L207">        return metadata.getTokenRanges().stream().collect(Collectors.toMap(</span>
+<span class="nc" id="L208">            p -&gt; p,</span>
+<span class="nc" id="L209">            p -&gt; metadata.getReplicas('&quot;' + this.keyspace + '&quot;', p)));</span>
+    }
+
+    private static Map&lt;TokenRange, Long&gt; describeSplits(
+            CassandraSessionPool.Session session,
+            String keyspace,
+            String table,
+            long splitPartitions,
+            long splitSize,
+            TokenRange tokenRange) {
+
+<span class="nc" id="L220">        String query = String.format(</span>
+                &quot;SELECT mean_partition_size, partitions_count FROM %s.%s &quot; +
+                &quot;WHERE keyspace_name = ? AND table_name = ? AND &quot; +
+                &quot;range_start = ? AND range_end = ?&quot;,
+                SchemaConstants.SYSTEM_KEYSPACE_NAME,
+                SystemKeyspace.LEGACY_SIZE_ESTIMATES);
+
+<span class="nc" id="L227">        ResultSet resultSet = session.execute(query, keyspace, table,</span>
+<span class="nc" id="L228">                                              tokenRange.getStart().toString(),</span>
+<span class="nc" id="L229">                                              tokenRange.getEnd().toString());</span>
+<span class="nc" id="L230">        Row row = resultSet.one();</span>
+
+        long meanPartitionSize;
+<span class="nc" id="L233">        long partitionsCount = 0L;</span>
+<span class="nc" id="L234">        long splitCount = 0L;</span>
+
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if (row != null) {</span>
+<span class="nc" id="L237">            meanPartitionSize = row.getLong(&quot;mean_partition_size&quot;);</span>
+<span class="nc" id="L238">            partitionsCount = row.getLong(&quot;partitions_count&quot;);</span>
+<span class="nc bnc" id="L239" title="All 4 branches missed.">            assert splitSize &lt;= 0 || splitSize &gt;= MIN_SHARD_SIZE;</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">            splitCount = splitSize &gt; 0 ?</span>
+<span class="nc" id="L241">                         (meanPartitionSize * partitionsCount / splitSize) :</span>
+<span class="nc" id="L242">                         (partitionsCount / splitPartitions);</span>
+        }
+
+        /*
+         * If we have no data on this split or the size estimate is 0,
+         * return the full split i.e., do not sub-split
+         * Assume the smallest granularity of partition count available from CASSANDRA-7688.
+         */
+<span class="nc bnc" id="L250" title="All 2 branches missed.">        if (splitCount == 0) {</span>
+<span class="nc" id="L251">            return ImmutableMap.of(tokenRange, (long) 128);</span>
+        }
+
+<span class="nc" id="L254">        List&lt;TokenRange&gt; ranges = tokenRange.splitEvenly((int) splitCount);</span>
+<span class="nc" id="L255">        Map&lt;TokenRange, Long&gt; rangesWithLength = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        for (TokenRange range : ranges) {</span>
+            // Add a sub-range (with its partitions count per sub-range)
+<span class="nc" id="L258">            rangesWithLength.put(range, partitionsCount / splitCount);</span>
+<span class="nc" id="L259">        }</span>
+<span class="nc" id="L260">        return rangesWithLength;</span>
+    }
+
+    /**
+     * Gets a token tokenRange and splits it up according to the suggested size
+     * into input splits that Hugegraph can use.
+     */
+    class SplitCallable implements Callable&lt;List&lt;Shard&gt;&gt; {
+
+        private final TokenRange tokenRange;
+        private final long splitPartitions;
+        private final long splitSize;
+
+        public SplitCallable(TokenRange tokenRange,
+<span class="nc" id="L274">                             long splitPartitions, long splitSize) {</span>
+<span class="nc bnc" id="L275" title="All 4 branches missed.">            if (splitSize &lt;= 0 &amp;&amp; splitPartitions &lt;= 0) {</span>
+<span class="nc" id="L276">                throw new IllegalArgumentException(String.format(</span>
+                          &quot;The split-partitions must be &gt; 0, but got %s&quot;,
+<span class="nc" id="L278">                          splitPartitions));</span>
+            }
+
+<span class="nc bnc" id="L281" title="All 4 branches missed.">            if (splitSize &gt; 0 &amp;&amp; splitSize &lt; MIN_SHARD_SIZE) {</span>
+                // splitSize should be at least 1M if passed
+<span class="nc" id="L283">                throw new IllegalArgumentException(String.format(</span>
+                          &quot;The split-size must be &gt;= %s bytes, but got %s&quot;,
+<span class="nc" id="L285">                          MIN_SHARD_SIZE, splitSize));</span>
+            }
+
+<span class="nc" id="L288">            this.tokenRange = tokenRange;</span>
+<span class="nc" id="L289">            this.splitPartitions = splitPartitions;</span>
+<span class="nc" id="L290">            this.splitSize = splitSize;</span>
+<span class="nc" id="L291">        }</span>
+
+        @Override
+        public List&lt;Shard&gt; call() throws Exception {
+<span class="nc" id="L295">            ArrayList&lt;Shard&gt; splits = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L297">            Map&lt;TokenRange, Long&gt; subSplits = getSubSplits(</span>
+                    this.tokenRange,
+                    this.splitPartitions,
+                    this.splitSize);
+<span class="nc bnc" id="L301" title="All 2 branches missed.">            for (Map.Entry&lt;TokenRange, Long&gt; entry : subSplits.entrySet()) {</span>
+<span class="nc" id="L302">                List&lt;TokenRange&gt; ranges = entry.getKey().unwrap();</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">                for (TokenRange subrange : ranges) {</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">                    String start = !isPartitionerOpp() ?</span>
+<span class="nc" id="L305">                                   subrange.getStart().toString() :</span>
+<span class="nc" id="L306">                                   subrange.getStart().toString().substring(2);</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">                    String end = !isPartitionerOpp() ?</span>
+<span class="nc" id="L308">                                 subrange.getEnd().toString() :</span>
+<span class="nc" id="L309">                                 subrange.getEnd().toString().substring(2);</span>
+<span class="nc" id="L310">                    long length = entry.getValue();</span>
+<span class="nc" id="L311">                    splits.add(new Shard(start, end, length));</span>
+<span class="nc" id="L312">                }</span>
+<span class="nc" id="L313">            }</span>
+<span class="nc" id="L314">            return splits;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

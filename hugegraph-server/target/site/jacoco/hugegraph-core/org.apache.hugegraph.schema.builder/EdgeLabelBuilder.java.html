@@ -1,0 +1,626 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EdgeLabelBuilder.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.schema.builder</a> &gt; <span class="el_source">EdgeLabelBuilder.java</span></div><h1>EdgeLabelBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.schema.builder;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.collections.CollectionUtils;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.Userdata;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.exception.ExistedException;
+import org.apache.hugegraph.exception.NotAllowException;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Action;
+import org.apache.hugegraph.type.define.Frequency;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.E;
+import com.google.common.collect.ImmutableList;
+
+<span class="nc" id="L48">public class EdgeLabelBuilder extends AbstractBuilder</span>
+                              implements EdgeLabel.Builder {
+
+    private Id id;
+    private String name;
+    private String sourceLabel;
+    private String targetLabel;
+    private Frequency frequency;
+    private Set&lt;String&gt; properties;
+    private List&lt;String&gt; sortKeys;
+    private Set&lt;String&gt; nullableKeys;
+    private long ttl;
+    private String ttlStartTime;
+    private Boolean enableLabelIndex;
+    private Userdata userdata;
+    private boolean checkExist;
+
+    public EdgeLabelBuilder(SchemaTransaction transaction,
+                            HugeGraph graph, String name) {
+<span class="nc" id="L67">        super(transaction, graph);</span>
+<span class="nc" id="L68">        E.checkNotNull(name, &quot;name&quot;);</span>
+<span class="nc" id="L69">        this.id = null;</span>
+<span class="nc" id="L70">        this.name = name;</span>
+<span class="nc" id="L71">        this.sourceLabel = null;</span>
+<span class="nc" id="L72">        this.targetLabel = null;</span>
+<span class="nc" id="L73">        this.frequency = Frequency.DEFAULT;</span>
+<span class="nc" id="L74">        this.properties = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L75">        this.sortKeys = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L76">        this.nullableKeys = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L77">        this.ttl = 0L;</span>
+<span class="nc" id="L78">        this.ttlStartTime = null;</span>
+<span class="nc" id="L79">        this.enableLabelIndex = null;</span>
+<span class="nc" id="L80">        this.userdata = new Userdata();</span>
+<span class="nc" id="L81">        this.checkExist = true;</span>
+<span class="nc" id="L82">    }</span>
+
+    public EdgeLabelBuilder(SchemaTransaction transaction,
+                            HugeGraph graph, EdgeLabel copy) {
+<span class="nc" id="L86">        super(transaction, graph);</span>
+<span class="nc" id="L87">        E.checkNotNull(copy, &quot;copy&quot;);</span>
+<span class="nc" id="L88">        HugeGraph origin = copy.graph();</span>
+<span class="nc" id="L89">        this.id = null;</span>
+<span class="nc" id="L90">        this.name = copy.name();</span>
+<span class="nc" id="L91">        this.sourceLabel = copy.sourceLabelName();</span>
+<span class="nc" id="L92">        this.targetLabel = copy.targetLabelName();</span>
+<span class="nc" id="L93">        this.frequency = copy.frequency();</span>
+<span class="nc" id="L94">        this.properties = mapPkId2Name(origin, copy.properties());</span>
+<span class="nc" id="L95">        this.sortKeys = mapPkId2Name(origin, copy.sortKeys());</span>
+<span class="nc" id="L96">        this.nullableKeys = mapPkId2Name(origin, copy.nullableKeys());</span>
+<span class="nc" id="L97">        this.ttl = copy.ttl();</span>
+<span class="nc" id="L98">        this.ttlStartTime = copy.ttlStartTimeName();</span>
+<span class="nc" id="L99">        this.enableLabelIndex = copy.enableLabelIndex();</span>
+<span class="nc" id="L100">        this.userdata = new Userdata(copy.userdata());</span>
+<span class="nc" id="L101">        this.checkExist = false;</span>
+<span class="nc" id="L102">    }</span>
+
+    @Override
+    public EdgeLabel build() {
+<span class="nc" id="L106">        Id id = this.validOrGenerateId(HugeType.EDGE_LABEL,</span>
+                                       this.id, this.name);
+<span class="nc" id="L108">        HugeGraph graph = this.graph();</span>
+<span class="nc" id="L109">        EdgeLabel edgeLabel = new EdgeLabel(graph, id, this.name);</span>
+<span class="nc" id="L110">        edgeLabel.sourceLabel(graph.vertexLabel(this.sourceLabel).id());</span>
+<span class="nc" id="L111">        edgeLabel.targetLabel(graph.vertexLabel(this.targetLabel).id());</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        edgeLabel.frequency(this.frequency == Frequency.DEFAULT ?</span>
+<span class="nc" id="L113">                            Frequency.SINGLE : this.frequency);</span>
+<span class="nc" id="L114">        edgeLabel.ttl(this.ttl);</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        if (this.ttlStartTime != null) {</span>
+<span class="nc" id="L116">            edgeLabel.ttlStartTime(this.graph().propertyKey(</span>
+<span class="nc" id="L117">                                   this.ttlStartTime).id());</span>
+        }
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        edgeLabel.enableLabelIndex(this.enableLabelIndex == null ||</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">                                   this.enableLabelIndex);</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        for (String key : this.properties) {</span>
+<span class="nc" id="L122">            PropertyKey propertyKey = graph.propertyKey(key);</span>
+<span class="nc" id="L123">            edgeLabel.property(propertyKey.id());</span>
+<span class="nc" id="L124">        }</span>
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        for (String key : this.sortKeys) {</span>
+<span class="nc" id="L126">            PropertyKey propertyKey = graph.propertyKey(key);</span>
+<span class="nc" id="L127">            edgeLabel.sortKey(propertyKey.id());</span>
+<span class="nc" id="L128">        }</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        for (String key : this.nullableKeys) {</span>
+<span class="nc" id="L130">            PropertyKey propertyKey = graph.propertyKey(key);</span>
+<span class="nc" id="L131">            edgeLabel.nullableKey(propertyKey.id());</span>
+<span class="nc" id="L132">        }</span>
+<span class="nc" id="L133">        edgeLabel.userdata(this.userdata);</span>
+<span class="nc" id="L134">        return edgeLabel;</span>
+    }
+
+    @Override
+    public EdgeLabel create() {
+<span class="nc" id="L139">        HugeType type = HugeType.EDGE_LABEL;</span>
+<span class="nc" id="L140">        this.checkSchemaName(this.name);</span>
+
+<span class="nc" id="L142">        return this.lockCheckAndCreateSchema(type, this.name, name -&gt; {</span>
+<span class="nc" id="L143">            EdgeLabel edgeLabel = this.edgeLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">            if (edgeLabel != null) {</span>
+<span class="nc bnc" id="L145" title="All 4 branches missed.">                if (this.checkExist || !hasSameProperties(edgeLabel)) {</span>
+<span class="nc" id="L146">                    throw new ExistedException(type, this.name);</span>
+                }
+<span class="nc" id="L148">                return edgeLabel;</span>
+            }
+<span class="nc" id="L150">            this.checkSchemaIdIfRestoringMode(type, this.id);</span>
+
+            // These methods will check params and fill to member variables
+<span class="nc" id="L153">            this.checkRelation();</span>
+<span class="nc" id="L154">            this.checkProperties(Action.INSERT);</span>
+<span class="nc" id="L155">            this.checkSortKeys();</span>
+<span class="nc" id="L156">            this.checkNullableKeys(Action.INSERT);</span>
+<span class="nc" id="L157">            Userdata.check(this.userdata, Action.INSERT);</span>
+<span class="nc" id="L158">            this.checkTtl();</span>
+<span class="nc" id="L159">            this.checkUserdata(Action.INSERT);</span>
+
+<span class="nc" id="L161">            edgeLabel = this.build();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">            assert edgeLabel.name().equals(name);</span>
+<span class="nc" id="L163">            this.graph().addEdgeLabel(edgeLabel);</span>
+<span class="nc" id="L164">            return edgeLabel;</span>
+        });
+    }
+
+    /**
+     * Check whether this has same properties with existedEdgeLabel.
+     * Only sourceId, targetId, frequency, enableLabelIndex, properties, sortKeys,
+     * nullableKeys are checked.
+     * The id, ttl, ttlStartTime, userdata are not checked.
+     * @param existedEdgeLabel to be compared with
+     * @return true if this has same properties with existedVertexLabel
+     */
+    private boolean hasSameProperties(EdgeLabel existedEdgeLabel) {
+<span class="nc" id="L177">        HugeGraph graph = this.graph();</span>
+<span class="nc" id="L178">        Id sourceId = graph.vertexLabel(this.sourceLabel).id();</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">        if (!existedEdgeLabel.sourceLabel().equals(sourceId)) {</span>
+<span class="nc" id="L180">            return false;</span>
+        }
+
+<span class="nc" id="L183">        Id targetId = graph.vertexLabel(this.targetLabel).id();</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (!existedEdgeLabel.targetLabel().equals(targetId)) {</span>
+<span class="nc" id="L185">            return false;</span>
+        }
+
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if ((this.frequency == Frequency.DEFAULT &amp;&amp;</span>
+<span class="nc bnc" id="L189" title="All 4 branches missed.">             existedEdgeLabel.frequency() != Frequency.SINGLE) ||</span>
+            (this.frequency != Frequency.DEFAULT &amp;&amp;
+<span class="nc bnc" id="L191" title="All 2 branches missed.">             this.frequency != existedEdgeLabel.frequency())) {</span>
+<span class="nc" id="L192">            return false;</span>
+        }
+
+        // this.enableLabelIndex == null, it means true.
+<span class="nc bnc" id="L196" title="All 4 branches missed.">        if (this.enableLabelIndex == null || this.enableLabelIndex) {</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">            if (!existedEdgeLabel.enableLabelIndex()) {</span>
+<span class="nc" id="L198">                return false;</span>
+            }
+        } else { // this false
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            if (existedEdgeLabel.enableLabelIndex()) {</span>
+<span class="nc" id="L202">                return false;</span>
+            }
+        }
+
+<span class="nc" id="L206">        Set&lt;Id&gt; existedProperties = existedEdgeLabel.properties();</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        if (this.properties.size() != existedProperties.size()) {</span>
+<span class="nc" id="L208">            return false;</span>
+        }
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        for (String key : this.properties) {</span>
+<span class="nc" id="L211">            PropertyKey propertyKey = graph.propertyKey(key);</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            if (!existedProperties.contains(propertyKey.id())) {</span>
+<span class="nc" id="L213">                return false;</span>
+            }
+<span class="nc" id="L215">        }</span>
+
+<span class="nc" id="L217">        List&lt;Id&gt; existedSortKeys = existedEdgeLabel.sortKeys();</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        if (this.sortKeys.size() != existedSortKeys.size()) {</span>
+<span class="nc" id="L219">            return false;</span>
+        }
+<span class="nc bnc" id="L221" title="All 2 branches missed.">        for (String key : this.sortKeys) {</span>
+<span class="nc" id="L222">            PropertyKey propertyKey = graph.propertyKey(key);</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">            if (!existedSortKeys.contains(propertyKey.id())) {</span>
+<span class="nc" id="L224">                return false;</span>
+            }
+<span class="nc" id="L226">        }</span>
+
+<span class="nc" id="L228">        Set&lt;Id&gt; existedNullableKeys = existedEdgeLabel.nullableKeys();</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (this.nullableKeys.size() != existedNullableKeys.size()) {</span>
+<span class="nc" id="L230">            return false;</span>
+        }
+<span class="nc bnc" id="L232" title="All 2 branches missed.">        for (String nullableKeyName : this.nullableKeys) {</span>
+<span class="nc" id="L233">            PropertyKey nullableKey = graph.propertyKey(nullableKeyName);</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">            if (!existedNullableKeys.contains(nullableKey.id())) {</span>
+<span class="nc" id="L235">                return false;</span>
+            }
+<span class="nc" id="L237">        }</span>
+<span class="nc" id="L238">        return true;</span>
+    }
+
+    @Override
+    public EdgeLabel append() {
+<span class="nc" id="L243">        EdgeLabel edgeLabel = this.edgeLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        if (edgeLabel == null) {</span>
+<span class="nc" id="L245">            throw new NotFoundException(&quot;Can't update edge label '%s' &quot; +</span>
+                                        &quot;since it doesn't exist&quot;, this.name);
+        }
+        // These methods will check params and fill to member variables
+<span class="nc" id="L249">        this.checkStableVars();</span>
+<span class="nc" id="L250">        this.checkProperties(Action.APPEND);</span>
+<span class="nc" id="L251">        this.checkNullableKeys(Action.APPEND);</span>
+<span class="nc" id="L252">        Userdata.check(this.userdata, Action.APPEND);</span>
+
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        for (String key : this.properties) {</span>
+<span class="nc" id="L255">            PropertyKey propertyKey = this.graph().propertyKey(key);</span>
+<span class="nc" id="L256">            edgeLabel.property(propertyKey.id());</span>
+<span class="nc" id="L257">        }</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        for (String key : this.nullableKeys) {</span>
+<span class="nc" id="L259">            PropertyKey propertyKey = this.graph().propertyKey(key);</span>
+<span class="nc" id="L260">            edgeLabel.nullableKey(propertyKey.id());</span>
+<span class="nc" id="L261">        }</span>
+<span class="nc" id="L262">        edgeLabel.userdata(this.userdata);</span>
+<span class="nc" id="L263">        this.graph().updateEdgeLabel(edgeLabel);</span>
+<span class="nc" id="L264">        return edgeLabel;</span>
+    }
+
+    @Override
+    public EdgeLabel eliminate() {
+<span class="nc" id="L269">        EdgeLabel edgeLabel = this.edgeLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">        if (edgeLabel == null) {</span>
+<span class="nc" id="L271">            throw new NotFoundException(&quot;Can't update edge label '%s' &quot; +</span>
+                                        &quot;since it doesn't exist&quot;, this.name);
+        }
+        // Only allowed to eliminate user data
+<span class="nc" id="L275">        this.checkStableVars();</span>
+<span class="nc" id="L276">        this.checkProperties(Action.ELIMINATE);</span>
+<span class="nc" id="L277">        this.checkNullableKeys(Action.ELIMINATE);</span>
+<span class="nc" id="L278">        Userdata.check(this.userdata, Action.ELIMINATE);</span>
+
+<span class="nc" id="L280">        edgeLabel.removeUserdata(this.userdata);</span>
+<span class="nc" id="L281">        this.graph().updateEdgeLabel(edgeLabel);</span>
+<span class="nc" id="L282">        return edgeLabel;</span>
+    }
+
+    @Override
+    public Id remove() {
+<span class="nc" id="L287">        EdgeLabel edgeLabel = this.edgeLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        if (edgeLabel == null) {</span>
+<span class="nc" id="L289">            return null;</span>
+        }
+<span class="nc" id="L291">        return this.graph().removeEdgeLabel(edgeLabel.id());</span>
+    }
+
+    @Override
+    public Id rebuildIndex() {
+<span class="nc" id="L296">        EdgeLabel edgeLabel = this.edgeLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">        if (edgeLabel == null) {</span>
+<span class="nc" id="L298">            return null;</span>
+        }
+<span class="nc" id="L300">        return this.graph().rebuildIndex(edgeLabel);</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder id(long id) {
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        E.checkArgument(id != 0L, &quot;Not allowed to assign 0 as edge label id&quot;);</span>
+<span class="nc" id="L306">        this.id = IdGenerator.of(id);</span>
+<span class="nc" id="L307">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder properties(String... properties) {
+<span class="nc" id="L312">        this.properties.addAll(Arrays.asList(properties));</span>
+<span class="nc" id="L313">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder nullableKeys(String... keys) {
+<span class="nc" id="L318">        this.nullableKeys.addAll(Arrays.asList(keys));</span>
+<span class="nc" id="L319">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder sortKeys(String... keys) {
+<span class="nc bnc" id="L324" title="All 2 branches missed.">        if (keys.length == 0) {</span>
+<span class="nc" id="L325">            return this;</span>
+        }
+
+<span class="nc" id="L328">        E.checkArgument(this.sortKeys.isEmpty(),</span>
+                        &quot;Not allowed to assign sort keys multitimes&quot;);
+
+<span class="nc" id="L331">        List&lt;String&gt; sortKeys = Arrays.asList(keys);</span>
+<span class="nc" id="L332">        E.checkArgument(CollectionUtil.allUnique(sortKeys),</span>
+                        &quot;Invalid sort keys %s, which contains some &quot; +
+                        &quot;duplicate properties&quot;, sortKeys);
+<span class="nc" id="L335">        this.sortKeys.addAll(sortKeys);</span>
+<span class="nc" id="L336">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder link(String sourceLabel, String targetLabel) {
+<span class="nc" id="L341">        this.sourceLabel(sourceLabel);</span>
+<span class="nc" id="L342">        this.targetLabel(targetLabel);</span>
+<span class="nc" id="L343">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder sourceLabel(String label) {
+<span class="nc" id="L348">        this.sourceLabel = label;</span>
+<span class="nc" id="L349">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder targetLabel(String label) {
+<span class="nc" id="L354">        this.targetLabel = label;</span>
+<span class="nc" id="L355">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder singleTime() {
+<span class="nc" id="L360">        this.frequency = Frequency.SINGLE;</span>
+<span class="nc" id="L361">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder multiTimes() {
+<span class="nc" id="L366">        this.frequency = Frequency.MULTIPLE;</span>
+<span class="nc" id="L367">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder ifNotExist() {
+<span class="nc" id="L372">        this.checkExist = false;</span>
+<span class="nc" id="L373">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder frequency(Frequency frequency) {
+<span class="nc" id="L378">        this.frequency = frequency;</span>
+<span class="nc" id="L379">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabel.Builder ttl(long ttl) {
+<span class="nc" id="L384">        this.ttl = ttl;</span>
+<span class="nc" id="L385">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabel.Builder ttlStartTime(String ttlStartTime) {
+<span class="nc" id="L390">        this.ttlStartTime = ttlStartTime;</span>
+<span class="nc" id="L391">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder enableLabelIndex(boolean enable) {
+<span class="nc" id="L396">        this.enableLabelIndex = enable;</span>
+<span class="nc" id="L397">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder userdata(String key, Object value) {
+<span class="nc" id="L402">        this.userdata.put(key, value);</span>
+<span class="nc" id="L403">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder userdata(Map&lt;String, Object&gt; userdata) {
+<span class="nc" id="L408">        this.userdata.putAll(userdata);</span>
+<span class="nc" id="L409">        return this;</span>
+    }
+
+    @Override
+    public EdgeLabelBuilder checkExist(boolean checkExist) {
+<span class="nc" id="L414">        this.checkExist = checkExist;</span>
+<span class="nc" id="L415">        return this;</span>
+    }
+
+    private void checkProperties(Action action) {
+<span class="nc bnc" id="L419" title="All 4 branches missed.">        switch (action) {</span>
+            case INSERT:
+            case APPEND:
+<span class="nc bnc" id="L422" title="All 2 branches missed.">                for (String key : this.properties) {</span>
+<span class="nc" id="L423">                    this.graph().propertyKey(key);</span>
+<span class="nc" id="L424">                }</span>
+<span class="nc" id="L425">                break;</span>
+            case ELIMINATE:
+<span class="nc bnc" id="L427" title="All 2 branches missed.">                if (!this.properties.isEmpty()) {</span>
+<span class="nc" id="L428">                    throw new NotAllowException(</span>
+                              &quot;Not support to eliminate properties &quot; +
+                              &quot;for edge label currently&quot;);
+                }
+                break;
+            case DELETE:
+<span class="nc" id="L434">                break;</span>
+            default:
+<span class="nc" id="L436">                throw new AssertionError(String.format(</span>
+                          &quot;Unknown schema action '%s'&quot;, action));
+        }
+<span class="nc" id="L439">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private void checkNullableKeys(Action action) {
+        // Not using switch-case to avoid indent too much
+<span class="nc bnc" id="L444" title="All 2 branches missed.">        if (action == Action.ELIMINATE) {</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">            if (!this.nullableKeys.isEmpty()) {</span>
+<span class="nc" id="L446">                throw new NotAllowException(</span>
+                          &quot;Not support to eliminate nullableKeys &quot; +
+                          &quot;for edge label currently&quot;);
+            }
+<span class="nc" id="L450">            return;</span>
+        }
+
+<span class="nc" id="L453">        EdgeLabel edgeLabel = this.edgeLabelOrNull(this.name);</span>
+        // The originProps is empty when firstly create edge label
+<span class="nc bnc" id="L455" title="All 2 branches missed.">        List&lt;String&gt; originProps = edgeLabel == null ?</span>
+<span class="nc" id="L456">                                   ImmutableList.of() :</span>
+<span class="nc" id="L457">                                   this.graph()</span>
+<span class="nc" id="L458">                                       .mapPkId2Name(edgeLabel.properties());</span>
+<span class="nc" id="L459">        Set&lt;String&gt; appendProps = this.properties;</span>
+
+<span class="nc" id="L461">        E.checkArgument(CollectionUtil.union(originProps, appendProps)</span>
+<span class="nc" id="L462">                        .containsAll(this.nullableKeys),</span>
+                        &quot;The nullableKeys: %s to be created or appended &quot; +
+                        &quot;must belong to the origin/new properties: %s/%s &quot;,
+                        this.nullableKeys, originProps, appendProps);
+
+<span class="nc bnc" id="L467" title="All 2 branches missed.">        List&lt;String&gt; sortKeys = edgeLabel == null ?</span>
+<span class="nc" id="L468">                                this.sortKeys :</span>
+<span class="nc" id="L469">                                this.graph()</span>
+<span class="nc" id="L470">                                    .mapPkId2Name(edgeLabel.sortKeys());</span>
+<span class="nc bnc" id="L471" title="All 2 branches missed.">        E.checkArgument(!CollectionUtil.hasIntersection(sortKeys,</span>
+                                                        this.nullableKeys),
+                        &quot;The nullableKeys: %s are not allowed to &quot; +
+                        &quot;belong to sortKeys: %s of edge label '%s'&quot;,
+                        this.nullableKeys, sortKeys, this.name);
+
+<span class="nc bnc" id="L477" title="All 2 branches missed.">        if (action == Action.APPEND) {</span>
+<span class="nc" id="L478">            Collection&lt;String&gt; newAddedProps = CollectionUtils.subtract(</span>
+                                               appendProps, originProps);
+<span class="nc" id="L480">            E.checkArgument(this.nullableKeys.containsAll(newAddedProps),</span>
+                            &quot;The new added properties: %s must be nullable&quot;,
+                            newAddedProps);
+        }
+<span class="nc" id="L484">    }</span>
+
+    private void checkSortKeys() {
+<span class="nc bnc" id="L487" title="All 4 branches missed.">        if (this.frequency == Frequency.SINGLE ||</span>
+            this.frequency == Frequency.DEFAULT) {
+<span class="nc" id="L489">            E.checkArgument(this.sortKeys.isEmpty(),</span>
+                            &quot;EdgeLabel can't contain sortKeys &quot; +
+                            &quot;when the cardinality property is single&quot;);
+        } else {
+<span class="nc bnc" id="L493" title="All 2 branches missed.">            E.checkState(this.sortKeys != null,</span>
+                         &quot;The sortKeys can't be null when the &quot; +
+                         &quot;cardinality property is multiple&quot;);
+<span class="nc bnc" id="L496" title="All 2 branches missed.">            E.checkArgument(!this.sortKeys.isEmpty(),</span>
+                            &quot;EdgeLabel must contain sortKeys &quot; +
+                            &quot;when the cardinality property is multiple&quot;);
+        }
+
+<span class="nc bnc" id="L501" title="All 2 branches missed.">        if (this.sortKeys.isEmpty()) {</span>
+<span class="nc" id="L502">            return;</span>
+        }
+
+        // Check whether the properties contains the specified keys
+<span class="nc bnc" id="L506" title="All 2 branches missed.">        E.checkArgument(!this.properties.isEmpty(),</span>
+                        &quot;The properties can't be empty when exist &quot; +
+                        &quot;sort keys for edge label '%s'&quot;, this.name);
+
+<span class="nc bnc" id="L510" title="All 2 branches missed.">        for (String key : this.sortKeys) {</span>
+<span class="nc" id="L511">            E.checkArgument(this.properties.contains(key),</span>
+                            &quot;The sort key '%s' must be contained in &quot; +
+                            &quot;properties '%s' for edge label '%s'&quot;,
+                            key, this.name, this.properties);
+<span class="nc" id="L515">        }</span>
+<span class="nc" id="L516">    }</span>
+
+    private void checkRelation() {
+<span class="nc" id="L519">        String srcLabel = this.sourceLabel;</span>
+<span class="nc" id="L520">        String tgtLabel = this.targetLabel;</span>
+
+<span class="nc bnc" id="L522" title="All 4 branches missed.">        E.checkArgument(srcLabel != null &amp;&amp; tgtLabel != null,</span>
+                        &quot;Must set source and target label &quot; +
+                        &quot;for edge label '%s'&quot;, this.name);
+
+<span class="nc" id="L526">        E.checkArgumentNotNull(this.vertexLabelOrNull(srcLabel),</span>
+                               &quot;Undefined source vertex label '%s' &quot; +
+                               &quot;in edge label '%s'&quot;, srcLabel, this.name);
+<span class="nc" id="L529">        E.checkArgumentNotNull(this.vertexLabelOrNull(tgtLabel),</span>
+                               &quot;Undefined target vertex label '%s' &quot; +
+                               &quot;in edge label '%s'&quot;, tgtLabel, this.name);
+<span class="nc" id="L532">    }</span>
+
+    private void checkStableVars() {
+<span class="nc bnc" id="L535" title="All 2 branches missed.">        if (this.sourceLabel != null) {</span>
+<span class="nc" id="L536">            throw new NotAllowException(</span>
+                      &quot;Not allowed to update source label &quot; +
+                      &quot;for edge label '%s', it must be null&quot;, this.name);
+        }
+<span class="nc bnc" id="L540" title="All 2 branches missed.">        if (this.targetLabel != null) {</span>
+<span class="nc" id="L541">            throw new NotAllowException(</span>
+                      &quot;Not allowed to update target label &quot; +
+                      &quot;for edge label '%s', it must be null&quot;, this.name);
+        }
+<span class="nc bnc" id="L545" title="All 2 branches missed.">        if (this.frequency != Frequency.DEFAULT) {</span>
+<span class="nc" id="L546">            throw new NotAllowException(</span>
+                      &quot;Not allowed to update frequency &quot; +
+                      &quot;for edge label '%s'&quot;, this.name);
+        }
+<span class="nc bnc" id="L550" title="All 2 branches missed.">        if (!this.sortKeys.isEmpty()) {</span>
+<span class="nc" id="L551">            throw new NotAllowException(</span>
+                      &quot;Not allowed to update sort keys &quot; +
+                      &quot;for edge label '%s'&quot;, this.name);
+        }
+<span class="nc bnc" id="L555" title="All 2 branches missed.">        if (this.enableLabelIndex != null) {</span>
+<span class="nc" id="L556">            throw new NotAllowException(</span>
+                      &quot;Not allowed to update enable_label_index &quot; +
+                      &quot;for edge label '%s'&quot;, this.name);
+        }
+<span class="nc" id="L560">    }</span>
+
+    private void checkTtl() {
+<span class="nc bnc" id="L563" title="All 2 branches missed.">        E.checkArgument(this.ttl &gt;= 0,</span>
+<span class="nc" id="L564">                        &quot;The ttl must be &gt;= 0, but got: %s&quot;, this.ttl);</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">        if (this.ttl == 0L) {</span>
+<span class="nc bnc" id="L566" title="All 2 branches missed.">            E.checkArgument(this.ttlStartTime == null,</span>
+                            &quot;Can't set ttl start time if ttl is not set&quot;);
+<span class="nc" id="L568">            return;</span>
+        }
+<span class="nc" id="L570">        VertexLabel source = this.graph().vertexLabel(this.sourceLabel);</span>
+<span class="nc" id="L571">        VertexLabel target = this.graph().vertexLabel(this.targetLabel);</span>
+<span class="nc bnc" id="L572" title="All 4 branches missed.">        E.checkArgument((source.ttl() == 0L || this.ttl &lt;= source.ttl()) &amp;&amp;</span>
+<span class="nc bnc" id="L573" title="All 4 branches missed.">                        (target.ttl() == 0L || this.ttl &lt;= target.ttl()),</span>
+                        &quot;The ttl(%s) of edge label '%s' should less than &quot; +
+                        &quot;ttl(%s) of source label '%s' and ttl(%s) of target &quot; +
+<span class="nc" id="L576">                        &quot;label '%s'&quot;, this.ttl, this.name,</span>
+<span class="nc" id="L577">                        source.ttl(), this.sourceLabel,</span>
+<span class="nc" id="L578">                        target.ttl(), this.targetLabel);</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">        if (this.ttlStartTime == null) {</span>
+<span class="nc" id="L580">            return;</span>
+        }
+        // Check whether the properties contains the specified keys
+<span class="nc bnc" id="L583" title="All 2 branches missed.">        E.checkArgument(!this.properties.isEmpty(),</span>
+                        &quot;The properties can't be empty when exist &quot; +
+                        &quot;ttl start time for edge label '%s'&quot;, this.name);
+<span class="nc" id="L586">        E.checkArgument(this.properties.contains(this.ttlStartTime),</span>
+                        &quot;The ttl start time '%s' must be contained in &quot; +
+                        &quot;properties '%s' for edge label '%s'&quot;,
+                        this.ttlStartTime, this.name, this.properties);
+<span class="nc" id="L590">        PropertyKey pkey = this.graph().propertyKey(this.ttlStartTime);</span>
+<span class="nc" id="L591">        E.checkArgument(pkey.dataType().isDate(),</span>
+                        &quot;The ttl start time property must be date type,&quot; +
+<span class="nc" id="L593">                        &quot;but got '%s(%s)'&quot;, this.ttlStartTime, pkey.dataType());</span>
+<span class="nc" id="L594">    }</span>
+
+    private void checkUserdata(Action action) {
+<span class="nc bnc" id="L597" title="All 3 branches missed.">        switch (action) {</span>
+            case INSERT:
+            case APPEND:
+<span class="nc bnc" id="L600" title="All 2 branches missed.">                for (Map.Entry&lt;String, Object&gt; e : this.userdata.entrySet()) {</span>
+<span class="nc bnc" id="L601" title="All 2 branches missed.">                    if (e.getValue() == null) {</span>
+<span class="nc" id="L602">                        throw new NotAllowException(</span>
+                                  &quot;Not allowed pass null userdata value when &quot; +
+                                  &quot;create or append edge label&quot;);
+                    }
+<span class="nc" id="L606">                }</span>
+<span class="nc" id="L607">                break;</span>
+            case ELIMINATE:
+            case DELETE:
+                // pass
+<span class="nc" id="L611">                break;</span>
+            default:
+<span class="nc" id="L613">                throw new AssertionError(String.format(</span>
+                          &quot;Unknown schema action '%s'&quot;, action));
+        }
+<span class="nc" id="L616">    }</span>
+
+    private static Set&lt;String&gt; mapPkId2Name(HugeGraph graph, Set&lt;Id&gt; ids) {
+<span class="nc" id="L619">        return new HashSet&lt;&gt;(graph.mapPkId2Name(ids));</span>
+    }
+
+    private static List&lt;String&gt; mapPkId2Name(HugeGraph graph, List&lt;Id&gt; ids) {
+<span class="nc" id="L623">        return graph.mapPkId2Name(ids);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

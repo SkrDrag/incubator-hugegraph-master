@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BackendProviderFactory.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">BackendProviderFactory.java</span></div><h1>BackendProviderFactory.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.memory.InMemoryDBStoreProvider;
+import org.apache.hugegraph.backend.store.raft.RaftBackendStoreProvider;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.util.Log;
+
+<span class="nc" id="L33">public class BackendProviderFactory {</span>
+
+<span class="nc" id="L35">    private static final Logger LOG = Log.logger(BackendProviderFactory.class);</span>
+
+    private static Map&lt;String, Class&lt;? extends BackendStoreProvider&gt;&gt; providers;
+
+    static {
+<span class="nc" id="L40">        providers = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L41">    }</span>
+
+    public static BackendStoreProvider open(HugeGraphParams params) {
+<span class="nc" id="L44">        HugeConfig config = params.configuration();</span>
+<span class="nc" id="L45">        String backend = config.get(CoreOptions.BACKEND).toLowerCase();</span>
+<span class="nc" id="L46">        String graph = config.get(CoreOptions.STORE);</span>
+<span class="nc" id="L47">        boolean raftMode = config.get(CoreOptions.RAFT_MODE);</span>
+
+<span class="nc" id="L49">        BackendStoreProvider provider = newProvider(config);</span>
+<span class="nc bnc" id="L50" title="All 2 branches missed.">        if (raftMode) {</span>
+<span class="nc" id="L51">            LOG.info(&quot;Opening backend store '{}' in raft mode for graph '{}'&quot;,</span>
+                     backend, graph);
+<span class="nc" id="L53">            provider = new RaftBackendStoreProvider(params, provider);</span>
+        }
+<span class="nc" id="L55">        provider.open(graph);</span>
+<span class="nc" id="L56">        return provider;</span>
+    }
+
+    private static BackendStoreProvider newProvider(HugeConfig config) {
+<span class="nc" id="L60">        String backend = config.get(CoreOptions.BACKEND).toLowerCase();</span>
+<span class="nc" id="L61">        String graph = config.get(CoreOptions.STORE);</span>
+
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        if (InMemoryDBStoreProvider.matchType(backend)) {</span>
+<span class="nc" id="L64">            return InMemoryDBStoreProvider.instance(graph);</span>
+        }
+
+<span class="nc" id="L67">        Class&lt;? extends BackendStoreProvider&gt; clazz = providers.get(backend);</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">        BackendException.check(clazz != null,</span>
+                               &quot;Not exists BackendStoreProvider: %s&quot;, backend);
+
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        assert BackendStoreProvider.class.isAssignableFrom(clazz);</span>
+<span class="nc" id="L72">        BackendStoreProvider instance = null;</span>
+        try {
+<span class="nc" id="L74">            instance = clazz.newInstance();</span>
+<span class="nc" id="L75">        } catch (Exception e) {</span>
+<span class="nc" id="L76">            throw new BackendException(e);</span>
+<span class="nc" id="L77">        }</span>
+
+<span class="nc" id="L79">        BackendException.check(backend.equals(instance.type()),</span>
+                               &quot;BackendStoreProvider with type '%s' &quot; +
+                               &quot;can't be opened by key '%s'&quot;,
+<span class="nc" id="L82">                               instance.type(), backend);</span>
+<span class="nc" id="L83">        return instance;</span>
+    }
+
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+    public static void register(String name, String classPath) {
+<span class="nc" id="L88">        ClassLoader classLoader = BackendProviderFactory.class.getClassLoader();</span>
+<span class="nc" id="L89">        Class&lt;?&gt; clazz = null;</span>
+        try {
+<span class="nc" id="L91">            clazz = classLoader.loadClass(classPath);</span>
+<span class="nc" id="L92">        } catch (Exception e) {</span>
+<span class="nc" id="L93">            throw new BackendException(e);</span>
+<span class="nc" id="L94">        }</span>
+
+        // Check subclass
+<span class="nc" id="L97">        boolean subclass = BackendStoreProvider.class.isAssignableFrom(clazz);</span>
+<span class="nc" id="L98">        BackendException.check(subclass, &quot;Class '%s' is not a subclass of &quot; +</span>
+                               &quot;class BackendStoreProvider&quot;, classPath);
+
+        // Check exists
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        BackendException.check(!providers.containsKey(name),</span>
+                               &quot;Exists BackendStoreProvider: %s (%s)&quot;,
+<span class="nc" id="L104">                               name, providers.get(name));</span>
+
+        // Register class
+<span class="nc" id="L107">        providers.put(name, (Class) clazz);</span>
+<span class="nc" id="L108">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

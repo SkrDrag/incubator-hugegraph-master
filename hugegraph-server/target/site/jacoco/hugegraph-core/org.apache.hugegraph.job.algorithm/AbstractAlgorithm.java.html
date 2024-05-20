@@ -1,0 +1,646 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractAlgorithm.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm</a> &gt; <span class="el_source">AbstractAlgorithm.java</span></div><h1>AbstractAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm;
+
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.NoSuchElementException;
+import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.function.Consumer;
+
+import org.apache.commons.lang3.StringEscapeUtils;
+import org.apache.commons.lang3.mutable.MutableLong;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Element;
+import org.apache.tinkerpop.gremlin.structure.Property;
+import org.apache.tinkerpop.gremlin.structure.Transaction;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.iterator.FilterIterator;
+import org.apache.hugegraph.iterator.FlatMapperIterator;
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.job.algorithm.Consumers.StopExecution;
+import org.apache.hugegraph.testutil.Whitebox;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.ParameterUtil;
+import com.google.common.base.Objects;
+
+@SuppressWarnings(&quot;deprecation&quot;) // StringEscapeUtils
+<span class="nc" id="L61">public abstract class AbstractAlgorithm implements Algorithm {</span>
+
+    public static final long MAX_RESULT_SIZE = 100L * Bytes.MB;
+    public static final long MAX_QUERY_LIMIT = 100000000L; // about 100GB
+    public static final long MAX_CAPACITY = MAX_QUERY_LIMIT;
+    public static final int BATCH = 500;
+
+<span class="nc" id="L68">    public static final String USER_DIR = System.getProperty(&quot;user.dir&quot;);</span>
+<span class="nc" id="L69">    public static final String EXPORT_PATH = USER_DIR + &quot;/export&quot;;</span>
+
+    public static final String CATEGORY_AGGR = &quot;aggregate&quot;;
+    public static final String CATEGORY_PATH = &quot;path&quot;;
+    public static final String CATEGORY_RANK = &quot;rank&quot;;
+    public static final String CATEGORY_SIMI = &quot;similarity&quot;;
+    public static final String CATEGORY_COMM = &quot;community&quot;;
+    public static final String CATEGORY_CENT = &quot;centrality&quot;;
+
+    public static final String KEY_DIRECTION = &quot;direction&quot;;
+    public static final String KEY_LABEL = &quot;label&quot;;
+    public static final String KEY_DEPTH = &quot;depth&quot;;
+    public static final String KEY_DEGREE = &quot;degree&quot;;
+    public static final String KEY_SAMPLE = &quot;sample&quot;;
+    public static final String KEY_SOURCE_SAMPLE = &quot;source_sample&quot;;
+    public static final String KEY_SOURCE_LABEL = &quot;source_label&quot;;
+    public static final String KEY_SOURCE_CLABEL = &quot;source_clabel&quot;;
+    public static final String KEY_TOP = &quot;top&quot;;
+    public static final String KEY_TIMES = &quot;times&quot;;
+    public static final String KEY_STABLE_TIMES = &quot;stable_times&quot;;
+    public static final String KEY_PRECISION = &quot;precision&quot;;
+    public static final String KEY_SHOW_MOD= &quot;show_modularity&quot;;
+    public static final String KEY_SHOW_COMM = &quot;show_community&quot;;
+    public static final String KEY_EXPORT_COMM = &quot;export_community&quot;;
+    public static final String KEY_SKIP_ISOLATED = &quot;skip_isolated&quot;;
+    public static final String KEY_CLEAR = &quot;clear&quot;;
+    public static final String KEY_CAPACITY = &quot;capacity&quot;;
+    public static final String KEY_LIMIT = &quot;limit&quot;;
+    public static final String KEY_EACH_LIMIT = &quot;each_limit&quot;;
+    public static final String KEY_ALPHA = &quot;alpha&quot;;
+    public static final String KEY_WORKERS = &quot;workers&quot;;
+
+    public static final long DEFAULT_CAPACITY = 10000000L;
+    public static final long DEFAULT_LIMIT = 100L;
+    public static final long DEFAULT_EACH_LIMIT = 1L;
+    public static final long DEFAULT_DEGREE = 100L;
+    public static final long DEFAULT_SAMPLE = 1L;
+    public static final long DEFAULT_TIMES = 20L;
+    public static final long DEFAULT_STABLE_TIMES= 3L;
+    public static final double DEFAULT_PRECISION = 1.0 / 1000;
+    public static final double DEFAULT_ALPHA = 0.5D;
+
+    public static final String C_LABEL = &quot;c_label&quot;;
+    public static final String R_RANK = &quot;r_rank&quot;;
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L116">        E.checkArgument(parameters.isEmpty(),</span>
+                        &quot;Unnecessary parameters: %s&quot;, parameters);
+<span class="nc" id="L118">    }</span>
+
+    protected static int depth(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L121">        int depth = ParameterUtil.parameterInt(parameters, KEY_DEPTH);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        E.checkArgument(depth &gt; 0,</span>
+                        &quot;The value of %s must be &gt; 0, but got %s&quot;,
+<span class="nc" id="L124">                        KEY_DEPTH, depth);</span>
+<span class="nc" id="L125">        return depth;</span>
+    }
+
+    protected static String edgeLabel(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_LABEL)) {</span>
+<span class="nc" id="L130">            return null;</span>
+        }
+<span class="nc" id="L132">        return ParameterUtil.parameterString(parameters, KEY_LABEL);</span>
+    }
+
+    protected static Directions direction(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_DIRECTION)) {</span>
+<span class="nc" id="L137">            return Directions.BOTH;</span>
+        }
+<span class="nc" id="L139">        Object direction = ParameterUtil.parameter(parameters, KEY_DIRECTION);</span>
+<span class="nc" id="L140">        return parseDirection(direction);</span>
+    }
+
+    protected static Directions direction4Out(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_DIRECTION)) {</span>
+<span class="nc" id="L145">            return Directions.OUT;</span>
+        }
+<span class="nc" id="L147">        Object direction = ParameterUtil.parameter(parameters, KEY_DIRECTION);</span>
+<span class="nc" id="L148">        return parseDirection(direction);</span>
+    }
+
+    protected static Directions directionOutIn(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_DIRECTION)) {</span>
+<span class="nc" id="L153">            return Directions.OUT;</span>
+        }
+<span class="nc" id="L155">        Object direction = ParameterUtil.parameter(parameters, KEY_DIRECTION);</span>
+<span class="nc" id="L156">        Directions dir = parseDirection(direction);</span>
+<span class="nc bnc" id="L157" title="All 4 branches missed.">        E.checkArgument(dir == Directions.OUT || dir == Directions.IN,</span>
+                        &quot;The value of %s must be either OUT or IN, but got: %s&quot;,
+                        KEY_DIRECTION, dir);
+<span class="nc" id="L160">        return dir;</span>
+    }
+
+    protected static double alpha(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_ALPHA)) {</span>
+<span class="nc" id="L165">            return DEFAULT_ALPHA;</span>
+        }
+<span class="nc" id="L167">        double alpha = ParameterUtil.parameterDouble(parameters, KEY_ALPHA);</span>
+<span class="nc bnc" id="L168" title="All 4 branches missed.">        E.checkArgument(alpha &gt; 0.0 &amp;&amp; alpha &lt;= 1.0,</span>
+                        &quot;The value of %s must be in range (0, 1], but got %s&quot;,
+<span class="nc" id="L170">                        KEY_ALPHA, alpha);</span>
+<span class="nc" id="L171">        return alpha;</span>
+    }
+
+    protected static long top(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_TOP)) {</span>
+<span class="nc" id="L176">            return 0L;</span>
+        }
+<span class="nc" id="L178">        long top = ParameterUtil.parameterLong(parameters, KEY_TOP);</span>
+<span class="nc" id="L179">        HugeTraverser.checkNonNegativeOrNoLimit(top, KEY_TOP);</span>
+<span class="nc" id="L180">        return top;</span>
+    }
+
+    protected static long degree(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_DEGREE)) {</span>
+<span class="nc" id="L185">            return DEFAULT_DEGREE;</span>
+        }
+<span class="nc" id="L187">        long degree = ParameterUtil.parameterLong(parameters, KEY_DEGREE);</span>
+<span class="nc" id="L188">        HugeTraverser.checkDegree(degree);</span>
+<span class="nc" id="L189">        return degree;</span>
+    }
+
+    protected static long capacity(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_CAPACITY)) {</span>
+<span class="nc" id="L194">            return DEFAULT_CAPACITY;</span>
+        }
+<span class="nc" id="L196">        long capacity = ParameterUtil.parameterLong(parameters, KEY_CAPACITY);</span>
+<span class="nc" id="L197">        HugeTraverser.checkCapacity(capacity);</span>
+<span class="nc" id="L198">        return capacity;</span>
+    }
+
+    protected static long limit(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_LIMIT)) {</span>
+<span class="nc" id="L203">            return DEFAULT_LIMIT;</span>
+        }
+<span class="nc" id="L205">        long limit = ParameterUtil.parameterLong(parameters, KEY_LIMIT);</span>
+<span class="nc" id="L206">        HugeTraverser.checkLimit(limit);</span>
+<span class="nc" id="L207">        return limit;</span>
+    }
+
+    protected static long eachLimit(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_EACH_LIMIT)) {</span>
+<span class="nc" id="L212">            return DEFAULT_EACH_LIMIT;</span>
+        }
+<span class="nc" id="L214">        long limit = ParameterUtil.parameterLong(parameters, KEY_EACH_LIMIT);</span>
+<span class="nc" id="L215">        HugeTraverser.checkPositiveOrNoLimit(limit, KEY_EACH_LIMIT);</span>
+<span class="nc" id="L216">        return limit;</span>
+    }
+
+    protected static long sample(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L220" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_SAMPLE)) {</span>
+<span class="nc" id="L221">            return DEFAULT_SAMPLE;</span>
+        }
+<span class="nc" id="L223">        long sample = ParameterUtil.parameterLong(parameters, KEY_SAMPLE);</span>
+<span class="nc" id="L224">        HugeTraverser.checkPositiveOrNoLimit(sample, KEY_SAMPLE);</span>
+<span class="nc" id="L225">        return sample;</span>
+    }
+
+    protected static long sourceSample(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_SOURCE_SAMPLE)) {</span>
+<span class="nc" id="L230">            return HugeTraverser.NO_LIMIT;</span>
+        }
+<span class="nc" id="L232">        long sample = ParameterUtil.parameterLong(parameters,</span>
+                                                  KEY_SOURCE_SAMPLE);
+<span class="nc" id="L234">        HugeTraverser.checkPositiveOrNoLimit(sample, KEY_SOURCE_SAMPLE);</span>
+<span class="nc" id="L235">        return sample;</span>
+    }
+
+    protected static String sourceLabel(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_SOURCE_LABEL)) {</span>
+<span class="nc" id="L240">            return null;</span>
+        }
+<span class="nc" id="L242">        return ParameterUtil.parameterString(parameters, KEY_SOURCE_LABEL);</span>
+    }
+
+    protected static String sourceCLabel(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L246" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_SOURCE_CLABEL)) {</span>
+<span class="nc" id="L247">            return null;</span>
+        }
+<span class="nc" id="L249">        return ParameterUtil.parameterString(parameters, KEY_SOURCE_CLABEL);</span>
+    }
+
+    protected static int workers(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_WORKERS)) {</span>
+<span class="nc" id="L254">            return -1;</span>
+        }
+<span class="nc" id="L256">        int workers = ParameterUtil.parameterInt(parameters, KEY_WORKERS);</span>
+<span class="nc" id="L257">        HugeTraverser.checkNonNegativeOrNoLimit(workers, KEY_WORKERS);</span>
+<span class="nc" id="L258">        return workers;</span>
+    }
+
+    protected static Directions parseDirection(Object direction) {
+<span class="nc bnc" id="L262" title="All 2 branches missed.">        if (direction.equals(Directions.BOTH.toString())) {</span>
+<span class="nc" id="L263">            return Directions.BOTH;</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">        } else if (direction.equals(Directions.OUT.toString())) {</span>
+<span class="nc" id="L265">            return Directions.OUT;</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">        } else if (direction.equals(Directions.IN.toString())) {</span>
+<span class="nc" id="L267">            return Directions.IN;</span>
+        } else {
+<span class="nc" id="L269">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;The value of direction must be in [OUT, IN, BOTH], &quot; +
+                      &quot;but got '%s'&quot;, direction));
+        }
+    }
+
+    public static class AlgoTraverser extends HugeTraverser
+                                      implements AutoCloseable {
+
+        private final UserJob&lt;Object&gt; job;
+        protected final ExecutorService executor;
+        protected long progress;
+
+        public AlgoTraverser(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L283">            super(job.graph());</span>
+<span class="nc" id="L284">            this.job = job;</span>
+<span class="nc" id="L285">            this.executor = null;</span>
+<span class="nc" id="L286">        }</span>
+
+        protected AlgoTraverser(UserJob&lt;Object&gt; job, String name, int workers) {
+<span class="nc" id="L289">            super(job.graph());</span>
+<span class="nc" id="L290">            this.job = job;</span>
+<span class="nc" id="L291">            String prefix = name + &quot;-&quot; + this.jobId();</span>
+<span class="nc" id="L292">            this.executor = Consumers.newThreadPool(prefix, workers);</span>
+<span class="nc" id="L293">        }</span>
+
+        public void updateProgress(long progress) {
+<span class="nc" id="L296">            this.job.updateProgress((int) progress);</span>
+<span class="nc" id="L297">        }</span>
+
+        public Id jobId() {
+<span class="nc" id="L300">            return this.job.task().id();</span>
+        }
+
+        @Override
+        public void close() {
+<span class="nc bnc" id="L305" title="All 2 branches missed.">            if (this.executor != null) {</span>
+<span class="nc" id="L306">                this.executor.shutdown();</span>
+            }
+<span class="nc" id="L308">        }</span>
+
+        protected long traverse(String sourceLabel, String sourceCLabel,
+                                Consumer&lt;Vertex&gt; consumer) {
+<span class="nc" id="L312">            return this.traverse(sourceLabel, sourceCLabel, consumer, null);</span>
+        }
+
+        protected long traverse(String sourceLabel, String sourceCLabel,
+                                Consumer&lt;Vertex&gt; consumer, Runnable done) {
+<span class="nc" id="L317">            return this.traverse(sourceLabel, sourceCLabel, consumer, done,</span>
+                                 NO_LIMIT);
+        }
+
+        protected long traverse(String sourceLabel, String sourceCLabel,
+                                Consumer&lt;Vertex&gt; consumer, Runnable done,
+                                long limit) {
+<span class="nc bnc" id="L324" title="All 2 branches missed.">            long actualLimit = limit == NO_LIMIT ? Query.NO_LIMIT : limit;</span>
+<span class="nc" id="L325">            Iterator&lt;Vertex&gt; vertices = this.vertices(sourceLabel, sourceCLabel,</span>
+                                                      actualLimit);
+
+<span class="nc" id="L328">            Consumers&lt;Vertex&gt; consumers = new Consumers&lt;&gt;(this.executor,</span>
+                                                          consumer, done);
+<span class="nc" id="L330">            consumers.start(&quot;task-&quot; + this.job.task().id());</span>
+<span class="nc" id="L331">            long total = 0L;</span>
+            try {
+<span class="nc bnc" id="L333" title="All 2 branches missed.">                while (vertices.hasNext()) {</span>
+<span class="nc" id="L334">                    this.updateProgress(++this.progress);</span>
+<span class="nc" id="L335">                    total++;</span>
+<span class="nc" id="L336">                    Vertex v = vertices.next();</span>
+<span class="nc" id="L337">                    consumers.provide(v);</span>
+<span class="nc" id="L338">                }</span>
+<span class="nc" id="L339">            } catch (StopExecution e) {</span>
+                // pass
+<span class="nc" id="L341">            } catch (Throwable e) {</span>
+<span class="nc" id="L342">                throw Consumers.wrapException(e);</span>
+            } finally {
+<span class="nc" id="L344">                consumers.await();</span>
+<span class="nc" id="L345">                CloseableIterator.closeIterator(vertices);</span>
+            }
+<span class="nc" id="L347">            return total;</span>
+        }
+
+        protected Iterator&lt;Vertex&gt; vertices() {
+<span class="nc" id="L351">            return this.vertices(Query.NO_LIMIT);</span>
+        }
+
+        protected Iterator&lt;Vertex&gt; vertices(long limit) {
+<span class="nc" id="L355">            Query query = new Query(HugeType.VERTEX);</span>
+<span class="nc" id="L356">            query.capacity(Query.NO_CAPACITY);</span>
+<span class="nc" id="L357">            query.limit(limit);</span>
+<span class="nc" id="L358">            return this.graph().vertices(query);</span>
+        }
+
+        protected Iterator&lt;Vertex&gt; vertices(Object label, Object clabel,
+                                            long limit) {
+<span class="nc" id="L363">            return vertices(label, C_LABEL, clabel, limit);</span>
+        }
+
+        protected Iterator&lt;Vertex&gt; vertices(Object label, String key,
+                                            Object value, long limit) {
+<span class="nc" id="L368">            Iterator&lt;Vertex&gt; vertices = this.vertices(label, limit);</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">            if (value != null) {</span>
+<span class="nc" id="L370">                vertices = filter(vertices, key, value);</span>
+            }
+<span class="nc" id="L372">           return vertices;</span>
+        }
+
+        protected Iterator&lt;Vertex&gt; vertices(Object label, long limit) {
+<span class="nc bnc" id="L376" title="All 2 branches missed.">            if (label == null) {</span>
+<span class="nc" id="L377">                return this.vertices(limit);</span>
+            }
+<span class="nc" id="L379">            ConditionQuery query = new ConditionQuery(HugeType.VERTEX);</span>
+<span class="nc" id="L380">            query.capacity(Query.NO_CAPACITY);</span>
+<span class="nc" id="L381">            query.limit(limit);</span>
+<span class="nc" id="L382">            query.eq(HugeKeys.LABEL, this.getVertexLabelId(label));</span>
+<span class="nc" id="L383">            return this.graph().vertices(query);</span>
+        }
+
+        protected Iterator&lt;Vertex&gt; vertices(Iterator&lt;Object&gt; ids) {
+<span class="nc" id="L387">            return new FlatMapperIterator&lt;&gt;(ids, id -&gt; {</span>
+<span class="nc" id="L388">                return this.graph().vertices(id);</span>
+            });
+        }
+
+        protected Vertex vertex(Object id) {
+<span class="nc" id="L393">            Iterator&lt;Vertex&gt; iter = this.graph().vertices(id);</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">            if (!iter.hasNext()) {</span>
+<span class="nc" id="L395">                return null;</span>
+            }
+<span class="nc" id="L397">            return iter.next();</span>
+        }
+
+        protected Iterator&lt;Vertex&gt; filter(Iterator&lt;Vertex&gt; vertices,
+                                          String key, Object value) {
+<span class="nc" id="L402">            return new FilterIterator&lt;&gt;(vertices, vertex -&gt; {</span>
+<span class="nc" id="L403">                boolean matched = match(vertex, key, value);</span>
+<span class="nc bnc" id="L404" title="All 2 branches missed.">                if (!matched) {</span>
+<span class="nc" id="L405">                    this.updateProgress(++this.progress);</span>
+                }
+<span class="nc" id="L407">                return matched;</span>
+            });
+        }
+
+        protected boolean match(Element elem, Object clabel) {
+<span class="nc" id="L412">            return match(elem, C_LABEL, clabel);</span>
+        }
+
+        protected boolean match(Element elem, String key, Object value) {
+            // check property key exists
+<span class="nc" id="L417">            this.graph().propertyKey(key);</span>
+            // return true if property value exists &amp; equals to specified value
+<span class="nc" id="L419">            Property&lt;Object&gt; p = elem.property(key);</span>
+<span class="nc bnc" id="L420" title="All 4 branches missed.">            return p.isPresent() &amp;&amp; Objects.equal(p.value(), value);</span>
+        }
+
+        protected Iterator&lt;Edge&gt; edges(Directions dir) {
+<span class="nc bnc" id="L424" title="All 2 branches missed.">            HugeType type = dir == null ? HugeType.EDGE : dir.type();</span>
+<span class="nc" id="L425">            Query query = new Query(type);</span>
+<span class="nc" id="L426">            query.capacity(Query.NO_CAPACITY);</span>
+<span class="nc" id="L427">            query.limit(Query.NO_LIMIT);</span>
+<span class="nc" id="L428">            return this.graph().edges(query);</span>
+        }
+
+        protected void drop(GraphTraversal&lt;?, ? extends Element&gt; traversal) {
+<span class="nc" id="L432">            this.execute(traversal, () -&gt; {</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">                while (traversal.hasNext()) {</span>
+<span class="nc" id="L434">                    this.updateProgress(++this.progress);</span>
+<span class="nc" id="L435">                    traversal.next().remove();</span>
+<span class="nc" id="L436">                    this.commitIfNeeded();</span>
+                }
+<span class="nc" id="L438">                return null;</span>
+            });
+<span class="nc" id="L440">            this.graph().tx().commit();</span>
+<span class="nc" id="L441">        }</span>
+
+        protected &lt;V&gt; V execute(GraphTraversal&lt;?, ?&gt; traversal,
+                                Callable&lt;V&gt; callback) {
+<span class="nc" id="L445">            long capacity = Query.defaultCapacity(MAX_QUERY_LIMIT);</span>
+            try {
+<span class="nc" id="L447">                return callback.call();</span>
+<span class="nc" id="L448">            } catch (Exception e) {</span>
+<span class="nc" id="L449">                throw new HugeException(&quot;Failed to execute algorithm: %s&quot;,</span>
+<span class="nc" id="L450">                                        e, e.getMessage());</span>
+            } finally {
+<span class="nc" id="L452">                Query.defaultCapacity(capacity);</span>
+                try {
+<span class="nc" id="L454">                    traversal.close();</span>
+<span class="nc" id="L455">                } catch (Exception e) {</span>
+<span class="nc" id="L456">                    throw new HugeException(&quot;Can't close traversal&quot;, e);</span>
+<span class="nc" id="L457">                }</span>
+            }
+        }
+
+        protected &lt;V extends Number&gt; Number tryNext(GraphTraversal&lt;?, V&gt; iter) {
+<span class="nc" id="L462">            return this.execute(iter, () -&gt; {</span>
+                try {
+<span class="nc" id="L464">                    return iter.next();</span>
+<span class="nc" id="L465">                } catch (NoSuchElementException e) {</span>
+<span class="nc" id="L466">                    return 0;</span>
+                }
+            });
+        }
+
+        protected void commitIfNeeded() {
+            // commit if needed
+<span class="nc" id="L473">            Transaction tx = this.graph().tx();</span>
+<span class="nc" id="L474">            Whitebox.invoke(tx.getClass(), &quot;commitIfGtSize&quot;, tx, BATCH);</span>
+<span class="nc" id="L475">        }</span>
+    }
+
+<span class="nc" id="L478">    public static final class TopMap&lt;K&gt; {</span>
+
+        private final long topN;
+        private Map&lt;K, MutableLong&gt; tops;
+
+<span class="nc" id="L483">        public TopMap(long topN) {</span>
+<span class="nc" id="L484">            this.topN = topN;</span>
+<span class="nc" id="L485">            this.tops = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L486">        }</span>
+
+        public int size() {
+<span class="nc" id="L489">            return this.tops.size();</span>
+        }
+
+        public MutableLong get(K key) {
+<span class="nc" id="L493">            return this.tops.get(key);</span>
+        }
+
+        public void add(K key, long value) {
+<span class="nc" id="L497">            MutableLong mlong = this.tops.get(key);</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">            if (mlong == null) {</span>
+<span class="nc" id="L499">                mlong = new MutableLong(value);</span>
+<span class="nc" id="L500">                this.tops.put(key, mlong);</span>
+            }
+<span class="nc" id="L502">            mlong.add(value);</span>
+<span class="nc" id="L503">        }</span>
+
+        public void put(K key, long value) {
+<span class="nc bnc" id="L506" title="All 2 branches missed.">            assert this.topN != 0L;</span>
+<span class="nc" id="L507">            this.tops.put(key, new MutableLong(value));</span>
+            // keep 2x buffer
+<span class="nc bnc" id="L509" title="All 4 branches missed.">            if (this.tops.size() &gt; this.topN * 2 &amp;&amp;</span>
+                this.topN != HugeTraverser.NO_LIMIT) {
+<span class="nc" id="L511">                this.shrinkIfNeeded(this.topN);</span>
+            }
+<span class="nc" id="L513">        }</span>
+
+        public Set&lt;Map.Entry&lt;K, MutableLong&gt;&gt; entrySet() {
+<span class="nc bnc" id="L516" title="All 2 branches missed.">            if (this.tops.size() &lt;= this.topN) {</span>
+<span class="nc" id="L517">                this.tops = CollectionUtil.sortByValue(this.tops, false);</span>
+            } else {
+<span class="nc" id="L519">                this.shrinkIfNeeded(this.topN);</span>
+            }
+<span class="nc" id="L521">            return this.tops.entrySet();</span>
+        }
+
+        private void shrinkIfNeeded(long limit) {
+<span class="nc bnc" id="L525" title="All 2 branches missed.">            assert limit != 0L;</span>
+<span class="nc bnc" id="L526" title="All 6 branches missed.">            if (this.tops.size() &gt;= limit &amp;&amp;</span>
+                (limit &gt; 0L || limit == HugeTraverser.NO_LIMIT)) {
+                // Just do sort if limit=NO_LIMIT, else do sort and shrink
+<span class="nc" id="L529">                this.tops = HugeTraverser.topN(this.tops, true, limit);</span>
+            }
+<span class="nc" id="L531">        }</span>
+    }
+
+    public static final class JsonMap {
+
+        private final StringBuilder json;
+
+        public JsonMap() {
+<span class="nc" id="L539">            this(4 * (int) Bytes.KB);</span>
+<span class="nc" id="L540">        }</span>
+
+<span class="nc" id="L542">        public JsonMap(int initCapacity) {</span>
+<span class="nc" id="L543">            this.json = new StringBuilder(initCapacity);</span>
+<span class="nc" id="L544">        }</span>
+
+        public void startObject() {
+<span class="nc" id="L547">            this.json.append('{');</span>
+<span class="nc" id="L548">        }</span>
+
+        public void endObject() {
+<span class="nc" id="L551">            this.deleteLastComma();</span>
+<span class="nc" id="L552">            this.json.append('}');</span>
+<span class="nc" id="L553">        }</span>
+
+        public void startList() {
+<span class="nc" id="L556">            this.json.append('[');</span>
+<span class="nc" id="L557">        }</span>
+
+        public void endList() {
+<span class="nc" id="L560">            this.deleteLastComma();</span>
+<span class="nc" id="L561">            this.json.append(']');</span>
+<span class="nc" id="L562">        }</span>
+
+        public void deleteLastComma() {
+<span class="nc" id="L565">            int last = this.json.length() - 1;</span>
+<span class="nc bnc" id="L566" title="All 4 branches missed.">            if (last &gt;= 0 &amp;&amp; this.json.charAt(last) == ',') {</span>
+<span class="nc" id="L567">                this.json.deleteCharAt(last);</span>
+            }
+<span class="nc" id="L569">        }</span>
+
+        public void appendKey(String key) {
+<span class="nc" id="L572">            this.appendString(key).append(':');</span>
+<span class="nc" id="L573">        }</span>
+
+        public void append(long value) {
+<span class="nc" id="L576">            this.json.append(value).append(',');</span>
+<span class="nc" id="L577">            this.checkSizeLimit();</span>
+<span class="nc" id="L578">        }</span>
+
+        public void append(String value) {
+<span class="nc" id="L581">            this.appendString(value).append(',');</span>
+<span class="nc" id="L582">            this.checkSizeLimit();</span>
+<span class="nc" id="L583">        }</span>
+
+        public void append(Object key, long value) {
+<span class="nc" id="L586">            this.append(key.toString(), value);</span>
+<span class="nc" id="L587">        }</span>
+
+        public void append(String key, long value) {
+<span class="nc" id="L590">            this.appendString(key).append(':');</span>
+<span class="nc" id="L591">            this.json.append(value).append(',');</span>
+<span class="nc" id="L592">            this.checkSizeLimit();</span>
+<span class="nc" id="L593">        }</span>
+
+        public void append(Object key, Number value) {
+<span class="nc" id="L596">            this.append(key.toString(), value);</span>
+<span class="nc" id="L597">        }</span>
+
+        public void append(String key, Number value) {
+<span class="nc" id="L600">            this.appendString(key).append(':');</span>
+<span class="nc" id="L601">            this.json.append(value).append(',');</span>
+<span class="nc" id="L602">            this.checkSizeLimit();</span>
+<span class="nc" id="L603">        }</span>
+
+        public void append(String key, String value) {
+<span class="nc" id="L606">            this.appendString(key).append(':');</span>
+<span class="nc" id="L607">            this.appendString(value).append(',');</span>
+<span class="nc" id="L608">            this.checkSizeLimit();</span>
+<span class="nc" id="L609">        }</span>
+
+        public void appendRaw(String key, String rawJson) {
+<span class="nc" id="L612">            this.appendString(key).append(':');</span>
+<span class="nc" id="L613">            this.json.append(rawJson).append(',');</span>
+<span class="nc" id="L614">            this.checkSizeLimit();</span>
+<span class="nc" id="L615">        }</span>
+
+        public void appendRaw(String rawJson) {
+<span class="nc" id="L618">            this.json.append(rawJson).append(',');</span>
+<span class="nc" id="L619">            this.checkSizeLimit();</span>
+<span class="nc" id="L620">        }</span>
+
+        public void append(Set&lt;Entry&lt;Id, MutableLong&gt;&gt; kvs) {
+<span class="nc bnc" id="L623" title="All 2 branches missed.">            for (Map.Entry&lt;Id, MutableLong&gt; top : kvs) {</span>
+<span class="nc" id="L624">                this.append(top.getKey(), top.getValue());</span>
+<span class="nc" id="L625">            }</span>
+<span class="nc" id="L626">        }</span>
+
+        private StringBuilder appendString(String str) {
+<span class="nc bnc" id="L629" title="All 2 branches missed.">            if (str.indexOf('&quot;') &gt;= 0) {</span>
+<span class="nc" id="L630">                str = StringEscapeUtils.escapeJson(str);</span>
+            }
+<span class="nc" id="L632">            return this.json.append('&quot;').append(str).append('&quot;');</span>
+        }
+
+        public void checkSizeLimit() {
+<span class="nc bnc" id="L636" title="All 2 branches missed.">            E.checkArgument(this.json.length() &lt; MAX_RESULT_SIZE,</span>
+                            &quot;The result size exceeds limit %s&quot;,
+<span class="nc" id="L638">                            MAX_RESULT_SIZE);</span>
+<span class="nc" id="L639">        }</span>
+
+        public Object asJson() {
+<span class="nc" id="L642">            return JsonUtil.asJson(this.json.toString());</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

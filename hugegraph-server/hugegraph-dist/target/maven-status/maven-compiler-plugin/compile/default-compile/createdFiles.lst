@@ -1,0 +1,8 @@
+org\apache\hugegraph\cmd\InitStore.class
+org\apache\hugegraph\dist\HugeRestServer.class
+org\apache\hugegraph\cmd\ConfDumper.class
+org\apache\hugegraph\cmd\StoreDumper.class
+org\apache\hugegraph\dist\RegisterUtil.class
+org\apache\hugegraph\dist\HugeGremlinServer.class
+org\apache\hugegraph\dist\HugeGraphServer.class
+org\apache\hugegraph\dist\DistOptions.class

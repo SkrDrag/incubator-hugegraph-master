@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WsAndHttpBasicAuthHandler.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">WsAndHttpBasicAuthHandler.java</span></div><h1>WsAndHttpBasicAuthHandler.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import static io.netty.handler.codec.http.HttpHeaderNames.CONNECTION;
+import static io.netty.handler.codec.http.HttpHeaderNames.UPGRADE;
+import static io.netty.handler.codec.http.HttpResponseStatus.UNAUTHORIZED;
+import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
+import static org.apache.tinkerpop.gremlin.groovy.jsr223.dsl.credential.CredentialGraphTokens.PROPERTY_PASSWORD;
+import static org.apache.tinkerpop.gremlin.groovy.jsr223.dsl.credential.CredentialGraphTokens.PROPERTY_USERNAME;
+
+import java.nio.charset.Charset;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.tinkerpop.gremlin.server.Settings;
+import org.apache.tinkerpop.gremlin.server.auth.AuthenticationException;
+import org.apache.tinkerpop.gremlin.server.auth.Authenticator;
+import org.apache.tinkerpop.gremlin.server.handler.AbstractAuthenticationHandler;
+import org.apache.tinkerpop.gremlin.server.handler.SaslAuthenticationHandler;
+
+import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelPipeline;
+import io.netty.handler.codec.http.DefaultFullHttpResponse;
+import io.netty.handler.codec.http.FullHttpMessage;
+import io.netty.handler.codec.http.HttpMessage;
+import io.netty.util.ReferenceCountUtil;
+
+/**
+ * An Authentication Handler for doing WebSocket and Http Basic auth
+ * TODO: remove this class after fixed TINKERPOP-2374
+ */
+@ChannelHandler.Sharable
+public class WsAndHttpBasicAuthHandler extends SaslAuthenticationHandler {
+
+    private static final String AUTHENTICATOR = &quot;authenticator&quot;;
+    private static final String HTTP_AUTH = &quot;http-authentication&quot;;
+
+    public WsAndHttpBasicAuthHandler(Authenticator authenticator,
+                                     Settings settings) {
+<span class="nc" id="L59">        super(authenticator, settings);</span>
+<span class="nc" id="L60">    }</span>
+
+    @Override
+    public void channelRead(final ChannelHandlerContext ctx, final Object obj)
+                            throws Exception {
+<span class="nc bnc" id="L65" title="All 4 branches missed.">        if (obj instanceof HttpMessage &amp;&amp; !isWebSocket((HttpMessage) obj)) {</span>
+<span class="nc" id="L66">            ChannelPipeline pipeline = ctx.pipeline();</span>
+<span class="nc" id="L67">            ChannelHandler authHandler = pipeline.get(HTTP_AUTH);</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">            if (authHandler != null) {</span>
+<span class="nc" id="L69">                authHandler = pipeline.remove(HTTP_AUTH);</span>
+            } else {
+<span class="nc" id="L71">                authHandler = new HttpBasicAuthHandler(this.authenticator);</span>
+            }
+<span class="nc" id="L73">            pipeline.addAfter(AUTHENTICATOR, HTTP_AUTH, authHandler);</span>
+<span class="nc" id="L74">            ctx.fireChannelRead(obj);</span>
+<span class="nc" id="L75">        } else {</span>
+<span class="nc" id="L76">            super.channelRead(ctx, obj);</span>
+        }
+<span class="nc" id="L78">    }</span>
+
+    public static boolean isWebSocket(final HttpMessage msg) {
+<span class="nc" id="L81">        final String connectionHeader = msg.headers().get(CONNECTION);</span>
+<span class="nc" id="L82">        final String upgradeHeader = msg.headers().get(UPGRADE);</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        return &quot;Upgrade&quot;.equalsIgnoreCase(connectionHeader) ||</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">               &quot;WebSocket&quot;.equalsIgnoreCase(upgradeHeader);</span>
+    }
+
+    @ChannelHandler.Sharable
+    private static class HttpBasicAuthHandler
+                   extends AbstractAuthenticationHandler {
+
+<span class="nc" id="L91">        private final Base64.Decoder decoder = Base64.getUrlDecoder();</span>
+
+        public HttpBasicAuthHandler(Authenticator authenticator) {
+<span class="nc" id="L94">            super(authenticator);</span>
+<span class="nc" id="L95">        }</span>
+
+        @Override
+        public void channelRead(ChannelHandlerContext ctx, Object msg) {
+<span class="nc bnc" id="L99" title="All 2 branches missed.">            if (msg instanceof FullHttpMessage) {</span>
+<span class="nc" id="L100">                final FullHttpMessage request = (FullHttpMessage) msg;</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">                if (!request.headers().contains(&quot;Authorization&quot;)) {</span>
+<span class="nc" id="L102">                    sendError(ctx, msg);</span>
+<span class="nc" id="L103">                    return;</span>
+                }
+
+                // strip off &quot;Basic &quot; from the Authorization header (RFC 2617)
+<span class="nc" id="L107">                final String basic = &quot;Basic &quot;;</span>
+<span class="nc" id="L108">                final String header = request.headers().get(&quot;Authorization&quot;);</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">                if (!header.startsWith(basic)) {</span>
+<span class="nc" id="L110">                    sendError(ctx, msg);</span>
+<span class="nc" id="L111">                    return;</span>
+                }
+<span class="nc" id="L113">                byte[] userPass = null;</span>
+                try {
+<span class="nc" id="L115">                    final String encoded = header.substring(basic.length());</span>
+<span class="nc" id="L116">                    userPass = this.decoder.decode(encoded);</span>
+<span class="nc" id="L117">                } catch (IndexOutOfBoundsException iae) {</span>
+<span class="nc" id="L118">                    sendError(ctx, msg);</span>
+<span class="nc" id="L119">                    return;</span>
+<span class="nc" id="L120">                } catch (IllegalArgumentException iae) {</span>
+<span class="nc" id="L121">                    sendError(ctx, msg);</span>
+<span class="nc" id="L122">                    return;</span>
+<span class="nc" id="L123">                }</span>
+<span class="nc" id="L124">                String authorization = new String(userPass,</span>
+<span class="nc" id="L125">                                                  Charset.forName(&quot;UTF-8&quot;));</span>
+<span class="nc" id="L126">                String[] split = authorization.split(&quot;:&quot;);</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">                if (split.length != 2) {</span>
+<span class="nc" id="L128">                    sendError(ctx, msg);</span>
+<span class="nc" id="L129">                    return;</span>
+                }
+
+<span class="nc" id="L132">                String address = ctx.channel().remoteAddress().toString();</span>
+<span class="nc bnc" id="L133" title="All 4 branches missed.">                if (address.startsWith(&quot;/&quot;) &amp;&amp; address.length() &gt; 1) {</span>
+<span class="nc" id="L134">                    address = address.substring(1);</span>
+                }
+
+<span class="nc" id="L137">                final Map&lt;String,String&gt; credentials = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L138">                credentials.put(PROPERTY_USERNAME, split[0]);</span>
+<span class="nc" id="L139">                credentials.put(PROPERTY_PASSWORD, split[1]);</span>
+<span class="nc" id="L140">                credentials.put(HugeAuthenticator.KEY_ADDRESS, address);</span>
+
+                try {
+<span class="nc" id="L143">                    this.authenticator.authenticate(credentials);</span>
+<span class="nc" id="L144">                    ctx.fireChannelRead(request);</span>
+<span class="nc" id="L145">                } catch (AuthenticationException ae) {</span>
+<span class="nc" id="L146">                    sendError(ctx, msg);</span>
+<span class="nc" id="L147">                }</span>
+            }
+<span class="nc" id="L149">        }</span>
+
+        private void sendError(ChannelHandlerContext context, Object msg) {
+            // Close the connection as soon as the error message is sent.
+<span class="nc" id="L153">            context.writeAndFlush(new DefaultFullHttpResponse(HTTP_1_1, UNAUTHORIZED))</span>
+<span class="nc" id="L154">                   .addListener(ChannelFutureListener.CLOSE);</span>
+<span class="nc" id="L155">            ReferenceCountUtil.release(msg);</span>
+<span class="nc" id="L156">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

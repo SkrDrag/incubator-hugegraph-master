@@ -1,0 +1,874 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ConditionQuery.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.query</a> &gt; <span class="el_source">ConditionQuery.java</span></div><h1>ConditionQuery.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.query;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.SplicingIdGenerator;
+import org.apache.hugegraph.backend.query.Condition.Relation;
+import org.apache.hugegraph.backend.query.Condition.RelationType;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.LongEncoding;
+import org.apache.hugegraph.util.NumericUtil;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Sets;
+
+public class ConditionQuery extends IdQuery {
+
+    public static final char INDEX_SYM_MIN = '\u0000';
+    public static final String INDEX_SYM_ENDING = &quot;\u0000&quot;;
+    public static final String INDEX_SYM_NULL = &quot;\u0001&quot;;
+    public static final String INDEX_SYM_EMPTY = &quot;\u0002&quot;;
+    public static final char INDEX_SYM_MAX = '\u0003';
+
+    // Note: here we use &quot;new String&quot; to distinguish normal string code
+<span class="nc" id="L60">    public static final String INDEX_VALUE_NULL = new String(&quot;&lt;null&gt;&quot;);</span>
+<span class="nc" id="L61">    public static final String INDEX_VALUE_EMPTY = new String(&quot;&lt;empty&gt;&quot;);</span>
+
+    public static final Set&lt;String&gt; IGNORE_SYM_SET;
+    static {
+<span class="nc" id="L65">        List&lt;String&gt; list = new ArrayList&lt;&gt;(INDEX_SYM_MAX - INDEX_SYM_MIN);</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        for (char ch = INDEX_SYM_MIN; ch &lt;= INDEX_SYM_MAX; ch++) {</span>
+<span class="nc" id="L67">            list.add(String.valueOf(ch));</span>
+        }
+<span class="nc" id="L69">        IGNORE_SYM_SET = ImmutableSet.copyOf(list);</span>
+    }
+
+<span class="nc" id="L72">    private static final List&lt;Condition&gt; EMPTY_CONDITIONS = ImmutableList.of();</span>
+
+    // Conditions will be contacted with `and` by default
+<span class="nc" id="L75">    private List&lt;Condition&gt; conditions = EMPTY_CONDITIONS;</span>
+
+<span class="nc" id="L77">    private OptimizedType optimizedType = OptimizedType.NONE;</span>
+<span class="nc" id="L78">    private ResultsFilter resultsFilter = null;</span>
+<span class="nc" id="L79">    private Element2IndexValueMap element2IndexValueMap = null;</span>
+
+    public ConditionQuery(HugeType resultType) {
+<span class="nc" id="L82">        super(resultType);</span>
+<span class="nc" id="L83">    }</span>
+
+    public ConditionQuery(HugeType resultType, Query originQuery) {
+<span class="nc" id="L86">        super(resultType, originQuery);</span>
+<span class="nc" id="L87">    }</span>
+
+    public ConditionQuery query(Condition condition) {
+        // Query by id (HugeGraph-259)
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (condition instanceof Relation) {</span>
+<span class="nc" id="L92">            Relation relation = (Relation) condition;</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">            if (relation.key().equals(HugeKeys.ID) &amp;&amp;</span>
+<span class="nc bnc" id="L94" title="All 2 branches missed.">                relation.relation() == RelationType.EQ) {</span>
+<span class="nc" id="L95">                E.checkArgument(relation.value() instanceof Id,</span>
+<span class="nc" id="L96">                                &quot;Invalid id value '%s'&quot;, relation.value());</span>
+<span class="nc" id="L97">                super.query((Id) relation.value());</span>
+<span class="nc" id="L98">                return this;</span>
+            }
+        }
+
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        if (this.conditions == EMPTY_CONDITIONS) {</span>
+<span class="nc" id="L103">            this.conditions = InsertionOrderUtil.newList();</span>
+        }
+<span class="nc" id="L105">        this.conditions.add(condition);</span>
+<span class="nc" id="L106">        return this;</span>
+    }
+
+    public ConditionQuery query(List&lt;Condition&gt; conditions) {
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        for (Condition condition : conditions) {</span>
+<span class="nc" id="L111">            this.query(condition);</span>
+<span class="nc" id="L112">        }</span>
+<span class="nc" id="L113">        return this;</span>
+    }
+
+    public ConditionQuery eq(HugeKeys key, Object value) {
+        // Filter value by key
+<span class="nc" id="L118">        return this.query(Condition.eq(key, value));</span>
+    }
+
+    public ConditionQuery gt(HugeKeys key, Object value) {
+<span class="nc" id="L122">        return this.query(Condition.gt(key, value));</span>
+    }
+
+    public ConditionQuery gte(HugeKeys key, Object value) {
+<span class="nc" id="L126">        return this.query(Condition.gte(key, value));</span>
+    }
+
+    public ConditionQuery lt(HugeKeys key, Object value) {
+<span class="nc" id="L130">        return this.query(Condition.lt(key, value));</span>
+    }
+
+    public ConditionQuery lte(HugeKeys key, Object value) {
+<span class="nc" id="L134">        return this.query(Condition.lte(key, value));</span>
+    }
+
+    public ConditionQuery neq(HugeKeys key, Object value) {
+<span class="nc" id="L138">        return this.query(Condition.neq(key, value));</span>
+    }
+
+    public ConditionQuery prefix(HugeKeys key, Id value) {
+<span class="nc" id="L142">        return this.query(Condition.prefix(key, value));</span>
+    }
+
+    public ConditionQuery key(HugeKeys key, Object value) {
+<span class="nc" id="L146">        return this.query(Condition.containsKey(key, value));</span>
+    }
+
+    public ConditionQuery scan(String start, String end) {
+<span class="nc" id="L150">        return this.query(Condition.scan(start, end));</span>
+    }
+
+    @Override
+    public int conditionsSize() {
+<span class="nc" id="L155">        return this.conditions.size();</span>
+    }
+
+    @Override
+    public Collection&lt;Condition&gt; conditions() {
+<span class="nc" id="L160">        return Collections.unmodifiableList(this.conditions);</span>
+    }
+
+    public void resetConditions(List&lt;Condition&gt; conditions) {
+<span class="nc" id="L164">        this.conditions = conditions;</span>
+<span class="nc" id="L165">    }</span>
+
+    public void resetConditions() {
+<span class="nc" id="L168">        this.conditions = EMPTY_CONDITIONS;</span>
+<span class="nc" id="L169">    }</span>
+
+    public void recordIndexValue(Id propertyId, Id id, Object indexValue) {
+<span class="nc" id="L172">        this.element2IndexValueMap().addIndexValue(propertyId, id, indexValue);</span>
+<span class="nc" id="L173">    }</span>
+
+    public void selectedIndexField(Id indexField) {
+<span class="nc" id="L176">        this.element2IndexValueMap().selectedIndexField(indexField);</span>
+<span class="nc" id="L177">    }</span>
+
+    public void removeElementLeftIndex(Id elementId) {
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        if (this.element2IndexValueMap == null) {</span>
+<span class="nc" id="L181">            return;</span>
+        }
+<span class="nc" id="L183">        this.element2IndexValueMap.removeElementLeftIndex(elementId);</span>
+<span class="nc" id="L184">    }</span>
+
+    public boolean existLeftIndex(Id elementId) {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        return this.getLeftIndexOfElement(elementId) != null;</span>
+    }
+
+    public Set&lt;LeftIndex&gt; getLeftIndexOfElement(Id elementId) {
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        if (this.element2IndexValueMap == null) {</span>
+<span class="nc" id="L192">            return null;</span>
+        }
+<span class="nc" id="L194">        return this.element2IndexValueMap.getLeftIndex(elementId);</span>
+    }
+
+    private Element2IndexValueMap element2IndexValueMap() {
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        if (this.element2IndexValueMap == null) {</span>
+<span class="nc" id="L199">            this.element2IndexValueMap = new Element2IndexValueMap();</span>
+        }
+<span class="nc" id="L201">        return this.element2IndexValueMap;</span>
+    }
+
+    public List&lt;Condition.Relation&gt; relations() {
+<span class="nc" id="L205">        List&lt;Condition.Relation&gt; relations = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        for (Condition c : this.conditions) {</span>
+<span class="nc" id="L207">            relations.addAll(c.relations());</span>
+<span class="nc" id="L208">        }</span>
+<span class="nc" id="L209">        return relations;</span>
+    }
+
+    public Relation relation(Id key) {
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        for (Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">            if (r.key().equals(key)) {</span>
+<span class="nc" id="L215">                return r;</span>
+            }
+<span class="nc" id="L217">        }</span>
+<span class="nc" id="L218">        return null;</span>
+    }
+
+    @Watched
+    public &lt;T&gt; T condition(Object key) {
+<span class="nc" id="L223">        List&lt;Object&gt; valuesEQ = InsertionOrderUtil.newList();</span>
+<span class="nc" id="L224">        List&lt;Object&gt; valuesIN = InsertionOrderUtil.newList();</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        for (Condition c : this.conditions) {</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            if (c.isRelation()) {</span>
+<span class="nc" id="L227">                Condition.Relation r = (Condition.Relation) c;</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">                if (r.key().equals(key)) {</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">                    if (r.relation() == RelationType.EQ) {</span>
+<span class="nc" id="L230">                        valuesEQ.add(r.value());</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">                    } else if (r.relation() == RelationType.IN) {</span>
+<span class="nc" id="L232">                        Object value = r.value();</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">                        assert value instanceof List;</span>
+<span class="nc" id="L234">                        valuesIN.add(value);</span>
+                    }
+                }
+            }
+<span class="nc" id="L238">        }</span>
+<span class="nc bnc" id="L239" title="All 4 branches missed.">        if (valuesEQ.isEmpty() &amp;&amp; valuesIN.isEmpty()) {</span>
+<span class="nc" id="L240">            return null;</span>
+        }
+<span class="nc bnc" id="L242" title="All 4 branches missed.">        if (valuesEQ.size() == 1 &amp;&amp; valuesIN.size() == 0) {</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L244">            T value = (T) valuesEQ.get(0);</span>
+<span class="nc" id="L245">            return value;</span>
+        }
+<span class="nc bnc" id="L247" title="All 4 branches missed.">        if (valuesEQ.size() == 0 &amp;&amp; valuesIN.size() == 1) {</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L249">            T value = (T) valuesIN.get(0);</span>
+<span class="nc" id="L250">            return value;</span>
+        }
+
+<span class="nc" id="L253">        Set&lt;Object&gt; intersectValues = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        for (Object value : valuesEQ) {</span>
+<span class="nc" id="L255">            List&lt;Object&gt; valueAsList = ImmutableList.of(value);</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">            if (intersectValues.isEmpty()) {</span>
+<span class="nc" id="L257">                intersectValues.addAll(valueAsList);</span>
+            } else {
+<span class="nc" id="L259">                CollectionUtil.intersectWithModify(intersectValues,</span>
+                                                   valueAsList);
+            }
+<span class="nc" id="L262">        }</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        for (Object value : valuesIN) {</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L265">            List&lt;Object&gt; valueAsList = (List&lt;Object&gt;) value;</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">            if (intersectValues.isEmpty()) {</span>
+<span class="nc" id="L267">                intersectValues.addAll(valueAsList);</span>
+            } else {
+<span class="nc" id="L269">                CollectionUtil.intersectWithModify(intersectValues,</span>
+                                                   valueAsList);
+            }
+<span class="nc" id="L272">        }</span>
+
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        if (intersectValues.size() == 0) {</span>
+<span class="nc" id="L275">            return null;</span>
+        }
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        E.checkState(intersectValues.size() == 1,</span>
+                     &quot;Illegal key '%s' with more than one value: %s&quot;,
+                     key, intersectValues);
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L281">        T value = (T) intersectValues.iterator().next();</span>
+<span class="nc" id="L282">        return value;</span>
+    }
+
+    public void unsetCondition(Object key) {
+<span class="nc bnc" id="L286" title="All 4 branches missed.">        this.conditions.removeIf(c -&gt; c.isRelation() &amp;&amp; ((Relation) c).key().equals(key));</span>
+<span class="nc" id="L287">    }</span>
+
+    public boolean containsCondition(HugeKeys key) {
+<span class="nc bnc" id="L290" title="All 2 branches missed.">        for (Condition c : this.conditions) {</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">            if (c.isRelation()) {</span>
+<span class="nc" id="L292">                Condition.Relation r = (Condition.Relation) c;</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">                if (r.key().equals(key)) {</span>
+<span class="nc" id="L294">                    return true;</span>
+                }
+            }
+<span class="nc" id="L297">        }</span>
+<span class="nc" id="L298">        return false;</span>
+    }
+
+    public boolean containsRelation(HugeKeys key, Condition.RelationType type) {
+<span class="nc bnc" id="L302" title="All 2 branches missed.">        for (Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L303" title="All 4 branches missed.">            if (r.key().equals(key) &amp;&amp; r.relation().equals(type)) {</span>
+<span class="nc" id="L304">                return true;</span>
+            }
+<span class="nc" id="L306">        }</span>
+<span class="nc" id="L307">        return false;</span>
+    }
+
+    public boolean containsRelation(Condition.RelationType type) {
+<span class="nc bnc" id="L311" title="All 2 branches missed.">        for (Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">            if (r.relation().equals(type)) {</span>
+<span class="nc" id="L313">                return true;</span>
+            }
+<span class="nc" id="L315">        }</span>
+<span class="nc" id="L316">        return false;</span>
+    }
+
+    public boolean containsScanRelation() {
+<span class="nc" id="L320">        return this.containsRelation(Condition.RelationType.SCAN);</span>
+    }
+
+    public boolean containsContainsCondition(Id key) {
+<span class="nc bnc" id="L324" title="All 2 branches missed.">        for (Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">            if (r.key().equals(key)) {</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">                return r.relation().equals(RelationType.CONTAINS) ||</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">                       r.relation().equals(RelationType.TEXT_CONTAINS);</span>
+            }
+<span class="nc" id="L329">        }</span>
+<span class="nc" id="L330">        return false;</span>
+    }
+
+    public boolean allSysprop() {
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        for (Condition c : this.conditions) {</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">            if (!c.isSysprop()) {</span>
+<span class="nc" id="L336">                return false;</span>
+            }
+<span class="nc" id="L338">        }</span>
+<span class="nc" id="L339">        return true;</span>
+    }
+
+    public boolean allRelation() {
+<span class="nc bnc" id="L343" title="All 2 branches missed.">        for (Condition c : this.conditions) {</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">            if (!c.isRelation()) {</span>
+<span class="nc" id="L345">                return false;</span>
+            }
+<span class="nc" id="L347">        }</span>
+<span class="nc" id="L348">        return true;</span>
+    }
+
+    public List&lt;Condition&gt; syspropConditions() {
+<span class="nc" id="L352">        this.checkFlattened();</span>
+<span class="nc" id="L353">        List&lt;Condition&gt; conds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">        for (Condition c : this.conditions) {</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">            if (c.isSysprop()) {</span>
+<span class="nc" id="L356">                conds.add(c);</span>
+            }
+<span class="nc" id="L358">        }</span>
+<span class="nc" id="L359">        return conds;</span>
+    }
+
+    public List&lt;Condition&gt; syspropConditions(HugeKeys key) {
+<span class="nc" id="L363">        this.checkFlattened();</span>
+<span class="nc" id="L364">        List&lt;Condition&gt; conditions = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        for (Condition condition : this.conditions) {</span>
+<span class="nc" id="L366">            Relation relation = (Relation) condition;</span>
+<span class="nc bnc" id="L367" title="All 2 branches missed.">            if (relation.key().equals(key)) {</span>
+<span class="nc" id="L368">                conditions.add(relation);</span>
+            }
+<span class="nc" id="L370">        }</span>
+<span class="nc" id="L371">        return conditions;</span>
+    }
+
+    public List&lt;Condition&gt; userpropConditions() {
+<span class="nc" id="L375">        this.checkFlattened();</span>
+<span class="nc" id="L376">        List&lt;Condition&gt; conds = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">        for (Condition c : this.conditions) {</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">            if (!c.isSysprop()) {</span>
+<span class="nc" id="L379">                conds.add(c);</span>
+            }
+<span class="nc" id="L381">        }</span>
+<span class="nc" id="L382">        return conds;</span>
+    }
+
+    public List&lt;Condition&gt; userpropConditions(Id key) {
+<span class="nc" id="L386">        this.checkFlattened();</span>
+<span class="nc" id="L387">        List&lt;Condition&gt; conditions = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L388" title="All 2 branches missed.">        for (Condition condition : this.conditions) {</span>
+<span class="nc" id="L389">            Relation relation = (Relation) condition;</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">            if (relation.key().equals(key)) {</span>
+<span class="nc" id="L391">                conditions.add(relation);</span>
+            }
+<span class="nc" id="L393">        }</span>
+<span class="nc" id="L394">        return conditions;</span>
+    }
+
+    public List&lt;Relation&gt; userpropRelations() {
+<span class="nc" id="L398">        List&lt;Relation&gt; relations = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">        for (Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">            if (!r.isSysprop()) {</span>
+<span class="nc" id="L401">                relations.add(r);</span>
+            }
+<span class="nc" id="L403">        }</span>
+<span class="nc" id="L404">        return relations;</span>
+    }
+
+    public void resetUserpropConditions() {
+<span class="nc bnc" id="L408" title="All 2 branches missed.">        this.conditions.removeIf(condition -&gt; !condition.isSysprop());</span>
+<span class="nc" id="L409">    }</span>
+
+    public Set&lt;Id&gt; userpropKeys() {
+<span class="nc" id="L412">        Set&lt;Id&gt; keys = new LinkedHashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">        for (Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L414" title="All 2 branches missed.">            if (!r.isSysprop()) {</span>
+<span class="nc" id="L415">                Condition.UserpropRelation ur = (Condition.UserpropRelation) r;</span>
+<span class="nc" id="L416">                keys.add(ur.key());</span>
+            }
+<span class="nc" id="L418">        }</span>
+<span class="nc" id="L419">        return keys;</span>
+    }
+
+    /**
+     * This method is only used for secondary index scenario,
+     * its relation must be EQ
+     * @param fields the user property fields
+     * @return the corresponding user property serial values of fields
+     */
+    public String userpropValuesString(List&lt;Id&gt; fields) {
+<span class="nc" id="L429">        List&lt;Object&gt; values = new ArrayList&lt;&gt;(fields.size());</span>
+<span class="nc bnc" id="L430" title="All 2 branches missed.">        for (Id field : fields) {</span>
+<span class="nc" id="L431">            boolean got = false;</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">            for (Relation r : this.userpropRelations()) {</span>
+<span class="nc bnc" id="L433" title="All 4 branches missed.">                if (r.key().equals(field) &amp;&amp; !r.isSysprop()) {</span>
+<span class="nc bnc" id="L434" title="All 4 branches missed.">                    E.checkState(r.relation == RelationType.EQ ||</span>
+                                 r.relation == RelationType.CONTAINS,
+                                 &quot;Method userpropValues(List&lt;String&gt;) only &quot; +
+                                 &quot;used for secondary index, &quot; +
+                                 &quot;relation must be EQ or CONTAINS, but got %s&quot;,
+<span class="nc" id="L439">                                 r.relation());</span>
+<span class="nc" id="L440">                    values.add(r.serialValue());</span>
+<span class="nc" id="L441">                    got = true;</span>
+                }
+<span class="nc" id="L443">            }</span>
+<span class="nc bnc" id="L444" title="All 2 branches missed.">            if (!got) {</span>
+<span class="nc" id="L445">                throw new BackendException(</span>
+                          &quot;No such userprop named '%s' in the query '%s'&quot;,
+                          field, this);
+            }
+<span class="nc" id="L449">        }</span>
+<span class="nc" id="L450">        return concatValues(values);</span>
+    }
+
+    public Set&lt;Object&gt; userpropValues(Id field) {
+<span class="nc" id="L454">        Set&lt;Object&gt; values = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L455" title="All 2 branches missed.">        for (Relation r : this.userpropRelations()) {</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">            if (r.key().equals(field)) {</span>
+<span class="nc" id="L457">                values.add(r.serialValue());</span>
+            }
+<span class="nc" id="L459">        }</span>
+<span class="nc" id="L460">        return values;</span>
+    }
+
+    public Object userpropValue(Id field) {
+<span class="nc" id="L464">        Set&lt;Object&gt; values = this.userpropValues(field);</span>
+<span class="nc bnc" id="L465" title="All 2 branches missed.">        if (values.isEmpty()) {</span>
+<span class="nc" id="L466">            return null;</span>
+        }
+<span class="nc bnc" id="L468" title="All 2 branches missed.">        E.checkState(values.size() == 1,</span>
+                     &quot;Expect one user-property value of field '%s', &quot; +
+<span class="nc" id="L470">                     &quot;but got '%s'&quot;, field, values.size());</span>
+<span class="nc" id="L471">        return values.iterator().next();</span>
+    }
+
+    public boolean hasRangeCondition() {
+        // NOTE: we need to judge all the conditions, including the nested
+<span class="nc bnc" id="L476" title="All 2 branches missed.">        for (Condition.Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">            if (r.relation().isRangeType()) {</span>
+<span class="nc" id="L478">                return true;</span>
+            }
+<span class="nc" id="L480">        }</span>
+<span class="nc" id="L481">        return false;</span>
+    }
+
+    public boolean hasSearchCondition() {
+        // NOTE: we need to judge all the conditions, including the nested
+<span class="nc bnc" id="L486" title="All 2 branches missed.">        for (Condition.Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">            if (r.relation().isSearchType()) {</span>
+<span class="nc" id="L488">                return true;</span>
+            }
+<span class="nc" id="L490">        }</span>
+<span class="nc" id="L491">        return false;</span>
+    }
+
+    public boolean hasSecondaryCondition() {
+        // NOTE: we need to judge all the conditions, including the nested
+<span class="nc bnc" id="L496" title="All 2 branches missed.">        for (Condition.Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">            if (r.relation().isSecondaryType()) {</span>
+<span class="nc" id="L498">                return true;</span>
+            }
+<span class="nc" id="L500">        }</span>
+<span class="nc" id="L501">        return false;</span>
+    }
+
+    public boolean hasNeqCondition() {
+        // NOTE: we need to judge all the conditions, including the nested
+<span class="nc bnc" id="L506" title="All 2 branches missed.">        for (Condition.Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L507" title="All 2 branches missed.">            if (r.relation() == RelationType.NEQ) {</span>
+<span class="nc" id="L508">                return true;</span>
+            }
+<span class="nc" id="L510">        }</span>
+<span class="nc" id="L511">        return false;</span>
+    }
+
+    public boolean matchUserpropKeys(List&lt;Id&gt; keys) {
+<span class="nc" id="L515">        Set&lt;Id&gt; conditionKeys = this.userpropKeys();</span>
+<span class="nc bnc" id="L516" title="All 4 branches missed.">        return keys.size() &gt; 0 &amp;&amp; conditionKeys.containsAll(keys);</span>
+    }
+
+    @Override
+    public ConditionQuery copy() {
+<span class="nc" id="L521">        ConditionQuery query = (ConditionQuery) super.copy();</span>
+<span class="nc" id="L522">        query.originQuery(this);</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">        if (query.conditions != EMPTY_CONDITIONS) {</span>
+<span class="nc" id="L524">            query.conditions = InsertionOrderUtil.newList(this.conditions);</span>
+        }
+<span class="nc" id="L526">        query.optimizedType = OptimizedType.NONE;</span>
+<span class="nc" id="L527">        query.resultsFilter = null;</span>
+
+<span class="nc" id="L529">        return query;</span>
+    }
+
+    public ConditionQuery copyAndResetUnshared() {
+<span class="nc" id="L533">        ConditionQuery query = this.copy();</span>
+        // These fields should not be shared by multiple sub-query
+<span class="nc" id="L535">        query.optimizedType = OptimizedType.NONE;</span>
+<span class="nc" id="L536">        query.resultsFilter = null;</span>
+<span class="nc" id="L537">        return query;</span>
+    }
+
+    @Override
+    public boolean test(HugeElement element) {
+<span class="nc bnc" id="L542" title="All 4 branches missed.">        if (!this.ids().isEmpty() &amp;&amp; !super.test(element)) {</span>
+<span class="nc" id="L543">            return false;</span>
+        }
+
+        /*
+         * Currently results-filter is used to filter unmatched results returned
+         * by search index, and there may be multiple results-filter for every
+         * sub-query like within() + Text.contains().
+         * We can't use sub-query results-filter here for fresh element which is
+         * not committed to backend store, because it's not from a sub-query.
+         */
+<span class="nc bnc" id="L553" title="All 4 branches missed.">        if (this.resultsFilter != null &amp;&amp; !element.fresh()) {</span>
+<span class="nc" id="L554">            return this.resultsFilter.test(element);</span>
+        }
+
+        /*
+         * NOTE: seems need to keep call checkRangeIndex() for each condition,
+         * so don't break early even if test() return false.
+         */
+<span class="nc" id="L561">        boolean valid = true;</span>
+<span class="nc bnc" id="L562" title="All 2 branches missed.">        for (Condition cond : this.conditions) {</span>
+<span class="nc" id="L563">            valid &amp;= cond.test(element);</span>
+<span class="nc bnc" id="L564" title="All 2 branches missed.">            valid &amp;= this.element2IndexValueMap == null ||</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">                     this.element2IndexValueMap.checkRangeIndex(element, cond);</span>
+<span class="nc" id="L566">        }</span>
+<span class="nc" id="L567">        return valid;</span>
+    }
+
+    public void checkFlattened() {
+<span class="nc" id="L571">        E.checkState(this.isFlattened(),</span>
+                     &quot;Query has none-flatten condition: %s&quot;, this);
+<span class="nc" id="L573">    }</span>
+
+    public boolean isFlattened() {
+<span class="nc bnc" id="L576" title="All 2 branches missed.">        for (Condition condition : this.conditions) {</span>
+<span class="nc bnc" id="L577" title="All 2 branches missed.">            if (!condition.isFlattened()) {</span>
+<span class="nc" id="L578">                return false;</span>
+            }
+<span class="nc" id="L580">        }</span>
+<span class="nc" id="L581">        return true;</span>
+    }
+
+    public boolean mayHasDupKeys(Set&lt;HugeKeys&gt; keys) {
+<span class="nc" id="L585">        Map&lt;HugeKeys, Integer&gt; keyCounts = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L586" title="All 2 branches missed.">        for (Condition condition : this.conditions) {</span>
+<span class="nc bnc" id="L587" title="All 2 branches missed.">            if (!condition.isRelation()) {</span>
+                // Assume may exist duplicate keys when has nested conditions
+<span class="nc" id="L589">                return true;</span>
+            }
+<span class="nc" id="L591">            Relation relation = (Relation) condition;</span>
+<span class="nc bnc" id="L592" title="All 2 branches missed.">            if (keys.contains(relation.key())) {</span>
+<span class="nc" id="L593">                int keyCount = keyCounts.getOrDefault(relation.key(), 0);</span>
+<span class="nc bnc" id="L594" title="All 2 branches missed.">                if (++keyCount &gt; 1) {</span>
+<span class="nc" id="L595">                    return true;</span>
+                }
+<span class="nc" id="L597">                keyCounts.put((HugeKeys) relation.key(), keyCount);</span>
+            }
+<span class="nc" id="L599">        }</span>
+<span class="nc" id="L600">        return false;</span>
+    }
+
+    public void optimized(OptimizedType optimizedType) {
+<span class="nc bnc" id="L604" title="All 2 branches missed.">        assert this.optimizedType.ordinal() &lt;= optimizedType.ordinal() :</span>
+               this.optimizedType + &quot; !&lt;= &quot; + optimizedType;
+<span class="nc" id="L606">        this.optimizedType = optimizedType;</span>
+
+<span class="nc" id="L608">        Query originQuery = this.originQuery();</span>
+<span class="nc bnc" id="L609" title="All 2 branches missed.">        if (originQuery instanceof ConditionQuery) {</span>
+<span class="nc" id="L610">            ConditionQuery cq = ((ConditionQuery) originQuery);</span>
+            /*
+             * Two sub-query(flatten) will both set optimized of originQuery,
+             * here we just keep the higher one, this may not be a perfect way
+             */
+<span class="nc bnc" id="L615" title="All 2 branches missed.">            if (optimizedType.ordinal() &gt; cq.optimized().ordinal()) {</span>
+<span class="nc" id="L616">                cq.optimized(optimizedType);</span>
+            }
+        }
+<span class="nc" id="L619">    }</span>
+
+    public OptimizedType optimized() {
+<span class="nc" id="L622">        return this.optimizedType;</span>
+    }
+
+    public void registerResultsFilter(ResultsFilter filter) {
+<span class="nc bnc" id="L626" title="All 2 branches missed.">        assert this.resultsFilter == null;</span>
+<span class="nc" id="L627">        this.resultsFilter = filter;</span>
+<span class="nc" id="L628">    }</span>
+
+    public void updateResultsFilter() {
+<span class="nc" id="L631">        Query originQuery = this.originQuery();</span>
+<span class="nc bnc" id="L632" title="All 2 branches missed.">        if (originQuery instanceof ConditionQuery) {</span>
+<span class="nc" id="L633">            ConditionQuery originCQ = ((ConditionQuery) originQuery);</span>
+<span class="nc bnc" id="L634" title="All 2 branches missed.">            if (this.resultsFilter != null) {</span>
+<span class="nc" id="L635">                originCQ.updateResultsFilter(this.resultsFilter);</span>
+            } else {
+<span class="nc" id="L637">                originCQ.updateResultsFilter();</span>
+            }
+        }
+<span class="nc" id="L640">    }</span>
+
+    protected void updateResultsFilter(ResultsFilter filter) {
+<span class="nc" id="L643">        this.resultsFilter = filter;</span>
+<span class="nc" id="L644">        Query originQuery = this.originQuery();</span>
+<span class="nc bnc" id="L645" title="All 2 branches missed.">        if (originQuery instanceof ConditionQuery) {</span>
+<span class="nc" id="L646">            ConditionQuery originCQ = ((ConditionQuery) originQuery);</span>
+<span class="nc" id="L647">            originCQ.updateResultsFilter(filter);</span>
+        }
+<span class="nc" id="L649">    }</span>
+
+    public ConditionQuery originConditionQuery() {
+<span class="nc" id="L652">        Query originQuery = this.originQuery();</span>
+<span class="nc bnc" id="L653" title="All 2 branches missed.">        if (!(originQuery instanceof ConditionQuery)) {</span>
+<span class="nc" id="L654">            return null;</span>
+        }
+
+<span class="nc bnc" id="L657" title="All 2 branches missed.">        while (originQuery.originQuery() instanceof ConditionQuery) {</span>
+<span class="nc" id="L658">            originQuery = originQuery.originQuery();</span>
+        }
+<span class="nc" id="L660">        return (ConditionQuery) originQuery;</span>
+    }
+
+    public static String concatValues(List&lt;?&gt; values) {
+<span class="nc bnc" id="L664" title="All 2 branches missed.">        assert !values.isEmpty();</span>
+<span class="nc" id="L665">        List&lt;Object&gt; newValues = new ArrayList&lt;&gt;(values.size());</span>
+<span class="nc bnc" id="L666" title="All 2 branches missed.">        for (Object v : values) {</span>
+<span class="nc" id="L667">            newValues.add(concatValues(v));</span>
+<span class="nc" id="L668">        }</span>
+<span class="nc" id="L669">        return SplicingIdGenerator.concatValues(newValues);</span>
+    }
+
+    public static String concatValues(Object value) {
+<span class="nc bnc" id="L673" title="All 2 branches missed.">        if (value instanceof String) {</span>
+<span class="nc" id="L674">            return escapeSpecialValueIfNeeded((String) value);</span>
+<span class="nc bnc" id="L675" title="All 2 branches missed.">        } if (value instanceof List) {</span>
+<span class="nc" id="L676">            return concatValues((List&lt;?&gt;) value);</span>
+<span class="nc bnc" id="L677" title="All 2 branches missed.">        } else if (needConvertNumber(value)) {</span>
+<span class="nc" id="L678">            return LongEncoding.encodeNumber(value);</span>
+        } else {
+<span class="nc" id="L680">            return escapeSpecialValueIfNeeded(value.toString());</span>
+        }
+    }
+
+    private static boolean needConvertNumber(Object value) {
+        // Numeric or date values should be converted to number from string
+<span class="nc bnc" id="L686" title="All 4 branches missed.">        return NumericUtil.isNumber(value) || value instanceof Date;</span>
+    }
+
+    private static String escapeSpecialValueIfNeeded(String value) {
+<span class="nc bnc" id="L690" title="All 2 branches missed.">        if (value.isEmpty()) {</span>
+            // Escape empty String to INDEX_SYM_EMPTY (char `\u0002`)
+<span class="nc" id="L692">            value = INDEX_SYM_EMPTY;</span>
+<span class="nc bnc" id="L693" title="All 2 branches missed.">        } else if (value == INDEX_VALUE_EMPTY) {</span>
+<span class="nc" id="L694">            value = &quot;&quot;;</span>
+<span class="nc bnc" id="L695" title="All 2 branches missed.">        } else if (value == INDEX_VALUE_NULL) {</span>
+<span class="nc" id="L696">            value = INDEX_SYM_NULL;</span>
+        } else {
+<span class="nc" id="L698">            char ch = value.charAt(0);</span>
+<span class="nc bnc" id="L699" title="All 2 branches missed.">            if (ch &lt;= INDEX_SYM_MAX) {</span>
+                /*
+                 * Special symbols can't be used due to impossible to parse,
+                 * and treat it as illegal value for the origin text property.
+                 * TODO: escape special symbols
+                 */
+<span class="nc" id="L705">                E.checkArgument(false,</span>
+                                &quot;Illegal leading char '\\u%s' &quot; +
+                                &quot;in index property: '%s'&quot;,
+<span class="nc" id="L708">                                (int) ch, value);</span>
+            }
+        }
+<span class="nc" id="L711">        return value;</span>
+    }
+
+<span class="nc" id="L714">    public enum OptimizedType {</span>
+<span class="nc" id="L715">        NONE,</span>
+<span class="nc" id="L716">        PRIMARY_KEY,</span>
+<span class="nc" id="L717">        SORT_KEYS,</span>
+<span class="nc" id="L718">        INDEX,</span>
+<span class="nc" id="L719">        INDEX_FILTER</span>
+    }
+
+    public static final class Element2IndexValueMap {
+
+        private final Map&lt;Id, Set&lt;LeftIndex&gt;&gt; leftIndexMap;
+        private final Map&lt;Id, Map&lt;Id, Set&lt;Object&gt;&gt;&gt; filed2IndexValues;
+        private Id selectedIndexField;
+
+<span class="nc" id="L728">        public Element2IndexValueMap() {</span>
+<span class="nc" id="L729">            this.filed2IndexValues = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L730">            this.leftIndexMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L731">        }</span>
+
+        public void addIndexValue(Id indexField, Id elementId,
+                                  Object indexValue) {
+<span class="nc bnc" id="L735" title="All 2 branches missed.">            if (!this.filed2IndexValues.containsKey(indexField)) {</span>
+<span class="nc" id="L736">                this.filed2IndexValues.putIfAbsent(indexField, new HashMap&lt;&gt;());</span>
+            }
+<span class="nc" id="L738">            Map&lt;Id, Set&lt;Object&gt;&gt; element2IndexValueMap =</span>
+<span class="nc" id="L739">                                 this.filed2IndexValues.get(indexField);</span>
+<span class="nc bnc" id="L740" title="All 2 branches missed.">            if (element2IndexValueMap.containsKey(elementId)) {</span>
+<span class="nc" id="L741">                element2IndexValueMap.get(elementId).add(indexValue);</span>
+            } else {
+<span class="nc" id="L743">                element2IndexValueMap.put(elementId,</span>
+<span class="nc" id="L744">                                          Sets.newHashSet(indexValue));</span>
+            }
+<span class="nc" id="L746">        }</span>
+
+        public void selectedIndexField(Id indexField) {
+<span class="nc" id="L749">            this.selectedIndexField = indexField;</span>
+<span class="nc" id="L750">        }</span>
+
+        public Set&lt;Object&gt; toRemoveIndexValues(Id indexField, Id elementId) {
+<span class="nc bnc" id="L753" title="All 2 branches missed.">            if (!this.filed2IndexValues.containsKey(indexField)) {</span>
+<span class="nc" id="L754">                return null;</span>
+            }
+<span class="nc" id="L756">            return this.filed2IndexValues.get(indexField).get(elementId);</span>
+        }
+
+        public void addLeftIndex(Id elementId, Id indexField,
+                                 Set&lt;Object&gt; indexValues) {
+<span class="nc" id="L761">            LeftIndex leftIndex = new LeftIndex(indexValues, indexField);</span>
+<span class="nc bnc" id="L762" title="All 2 branches missed.">            if (this.leftIndexMap.containsKey(elementId)) {</span>
+<span class="nc" id="L763">                this.leftIndexMap.get(elementId).add(leftIndex);</span>
+            } else {
+<span class="nc" id="L765">                this.leftIndexMap.put(elementId, Sets.newHashSet(leftIndex));</span>
+            }
+<span class="nc" id="L767">        }</span>
+
+        public Set&lt;LeftIndex&gt; getLeftIndex(Id elementId) {
+<span class="nc" id="L770">            return this.leftIndexMap.get(elementId);</span>
+        }
+
+        public void removeElementLeftIndex(Id elementId) {
+<span class="nc" id="L774">            this.leftIndexMap.remove(elementId);</span>
+<span class="nc" id="L775">        }</span>
+
+        public boolean checkRangeIndex(HugeElement element, Condition cond) {
+            // Not UserpropRelation
+<span class="nc bnc" id="L779" title="All 2 branches missed.">            if (!(cond instanceof Condition.UserpropRelation)) {</span>
+<span class="nc" id="L780">                return true;</span>
+            }
+
+<span class="nc" id="L783">            Condition.UserpropRelation propRelation =</span>
+                                       (Condition.UserpropRelation) cond;
+<span class="nc" id="L785">            Id propId = propRelation.key();</span>
+<span class="nc" id="L786">            Set&lt;Object&gt; fieldValues = this.toRemoveIndexValues(propId,</span>
+<span class="nc" id="L787">                                                               element.id());</span>
+<span class="nc bnc" id="L788" title="All 2 branches missed.">            if (fieldValues == null) {</span>
+                // Not range index
+<span class="nc" id="L790">                return true;</span>
+            }
+
+<span class="nc" id="L793">            HugeProperty&lt;Object&gt; property = element.getProperty(propId);</span>
+<span class="nc bnc" id="L794" title="All 2 branches missed.">            if (property == null) {</span>
+                // Property value has been deleted, so it's not matched
+<span class="nc" id="L796">                this.addLeftIndex(element.id(), propId, fieldValues);</span>
+<span class="nc" id="L797">                return false;</span>
+            }
+
+            /*
+             * NOTE: If removing successfully means there is correct index,
+             * else we should add left-index values to left index map to
+             * wait the left-index to be removed.
+             */
+<span class="nc" id="L805">            boolean hasRightValue = removeFieldValue(fieldValues,</span>
+<span class="nc" id="L806">                                                     property.value());</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">            if (fieldValues.size() &gt; 0) {</span>
+<span class="nc" id="L808">                this.addLeftIndex(element.id(), propId, fieldValues);</span>
+            }
+
+            /*
+             * NOTE: When query by more than one range index field,
+             * if current field is not the selected one, it can only be used to
+             * determine whether the index values matched, can't determine
+             * the element is valid or not.
+             */
+<span class="nc bnc" id="L817" title="All 2 branches missed.">            if (this.selectedIndexField != null) {</span>
+<span class="nc bnc" id="L818" title="All 4 branches missed.">                return !propId.equals(this.selectedIndexField) || hasRightValue;</span>
+            }
+
+<span class="nc" id="L821">            return hasRightValue;</span>
+        }
+
+        private static boolean removeFieldValue(Set&lt;Object&gt; values,
+                                                Object value) {
+<span class="nc bnc" id="L826" title="All 2 branches missed.">            for (Object elem : values) {</span>
+<span class="nc bnc" id="L827" title="All 2 branches missed.">                if (numberEquals(elem, value)) {</span>
+<span class="nc" id="L828">                    values.remove(elem);</span>
+<span class="nc" id="L829">                    return true;</span>
+                }
+<span class="nc" id="L831">            }</span>
+<span class="nc" id="L832">            return false;</span>
+        }
+
+        private static boolean numberEquals(Object number1, Object number2) {
+            // Same class compare directly
+<span class="nc bnc" id="L837" title="All 2 branches missed.">            if (number1.getClass().equals(number2.getClass())) {</span>
+<span class="nc" id="L838">                return number1.equals(number2);</span>
+            }
+
+            // Otherwise convert to BigDecimal to make two numbers comparable
+<span class="nc" id="L842">            Number n1 = NumericUtil.convertToNumber(number1);</span>
+<span class="nc" id="L843">            Number n2 = NumericUtil.convertToNumber(number2);</span>
+<span class="nc" id="L844">            BigDecimal b1 = BigDecimal.valueOf(n1.doubleValue());</span>
+<span class="nc" id="L845">            BigDecimal b2 = BigDecimal.valueOf(n2.doubleValue());</span>
+<span class="nc bnc" id="L846" title="All 2 branches missed.">            return b1.compareTo(b2) == 0;</span>
+        }
+    }
+
+    public static final class LeftIndex {
+
+        private final Set&lt;Object&gt; indexFieldValues;
+        private final Id indexField;
+
+<span class="nc" id="L855">        public LeftIndex(Set&lt;Object&gt; indexFieldValues, Id indexField) {</span>
+<span class="nc" id="L856">            this.indexFieldValues = indexFieldValues;</span>
+<span class="nc" id="L857">            this.indexField = indexField;</span>
+<span class="nc" id="L858">        }</span>
+
+        public Set&lt;Object&gt; indexFieldValues() {
+<span class="nc" id="L861">            return this.indexFieldValues;</span>
+        }
+
+        public Id indexField() {
+<span class="nc" id="L865">            return this.indexField;</span>
+        }
+    }
+
+    public interface ResultsFilter {
+
+        boolean test(HugeElement element);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

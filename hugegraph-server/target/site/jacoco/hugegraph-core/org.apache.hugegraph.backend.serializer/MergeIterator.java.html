@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MergeIterator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.serializer</a> &gt; <span class="el_source">MergeIterator.java</span></div><h1>MergeIterator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.serializer;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.function.BiFunction;
+
+import org.apache.hugegraph.iterator.WrappedIterator;
+import org.apache.hugegraph.util.E;
+
+<span class="nc" id="L28">public class MergeIterator&lt;T, R&gt; extends WrappedIterator&lt;T&gt; {</span>
+
+    private final Iterator&lt;T&gt; originIterator;
+    private final BiFunction&lt;T, R, Boolean&gt; merger;
+<span class="nc" id="L32">    private final List&lt;Iterator&lt;R&gt;&gt; iterators = new ArrayList&lt;&gt;();</span>
+    private final List&lt;R&gt; headElements;
+
+    public MergeIterator(Iterator&lt;T&gt; originIterator,
+                         List&lt;Iterator&lt;R&gt;&gt; iterators,
+<span class="nc" id="L37">                         BiFunction&lt;T, R, Boolean&gt; merger) {</span>
+<span class="nc" id="L38">        E.checkArgumentNotNull(originIterator, &quot;The origin iterator of &quot; +</span>
+                               &quot;MergeIterator can't be null&quot;);
+<span class="nc bnc" id="L40" title="All 4 branches missed.">        E.checkArgument(iterators != null &amp;&amp; !iterators.isEmpty(),</span>
+                        &quot;The iterators of MergeIterator can't be &quot; +
+                        &quot;null or empty&quot;);
+<span class="nc" id="L43">        E.checkArgumentNotNull(merger, &quot;The merger function of &quot; +</span>
+                               &quot;MergeIterator can't be null&quot;);
+<span class="nc" id="L45">        this.originIterator = originIterator;</span>
+<span class="nc" id="L46">        this.headElements = new ArrayList&lt;&gt;();</span>
+
+<span class="nc bnc" id="L48" title="All 2 branches missed.">        for (Iterator&lt;R&gt; iterator : iterators) {</span>
+<span class="nc bnc" id="L49" title="All 2 branches missed.">            if (iterator.hasNext()) {</span>
+<span class="nc" id="L50">                this.iterators.add(iterator);</span>
+<span class="nc" id="L51">                this.headElements.add(iterator.next());</span>
+            }
+<span class="nc" id="L53">        }</span>
+
+<span class="nc" id="L55">        this.merger = merger;</span>
+<span class="nc" id="L56">    }</span>
+
+    @Override
+    public void close() throws Exception {
+<span class="nc bnc" id="L60" title="All 2 branches missed.">        for (Iterator&lt;R&gt; iter : this.iterators) {</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">            if (iter instanceof AutoCloseable) {</span>
+<span class="nc" id="L62">                ((AutoCloseable) iter).close();</span>
+            }
+<span class="nc" id="L64">        }</span>
+<span class="nc" id="L65">    }</span>
+
+    @Override
+    protected Iterator&lt;T&gt; originIterator() {
+<span class="nc" id="L69">        return this.originIterator;</span>
+    }
+
+    @Override
+    protected final boolean fetch() {
+<span class="nc bnc" id="L74" title="All 2 branches missed.">        if (!this.originIterator.hasNext()) {</span>
+<span class="nc" id="L75">            return false;</span>
+        }
+
+<span class="nc" id="L78">        T next = this.originIterator.next();</span>
+
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        for (int i = 0; i &lt; this.iterators.size(); i++) {</span>
+<span class="nc" id="L81">            R element = this.headElements.get(i);</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">            if (element == none()) {</span>
+<span class="nc" id="L83">                continue;</span>
+            }
+
+<span class="nc bnc" id="L86" title="All 2 branches missed.">            if (this.merger.apply(next, element)) {</span>
+<span class="nc" id="L87">                Iterator&lt;R&gt; iter = this.iterators.get(i);</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">                if (iter.hasNext()) {</span>
+<span class="nc" id="L89">                    this.headElements.set(i, iter.next());</span>
+                } else {
+<span class="nc" id="L91">                    this.headElements.set(i, none());</span>
+<span class="nc" id="L92">                    close(iter);</span>
+                }
+            }
+        }
+
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        assert this.current == none();</span>
+<span class="nc" id="L98">        this.current = next;</span>
+<span class="nc" id="L99">        return true;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

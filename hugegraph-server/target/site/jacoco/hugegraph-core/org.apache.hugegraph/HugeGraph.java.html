@@ -1,0 +1,329 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeGraph.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph</a> &gt; <span class="el_source">HugeGraph.java</span></div><h1>HugeGraph.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+
+import org.apache.hugegraph.auth.AuthManager;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendStoreInfo;
+import org.apache.hugegraph.backend.store.raft.RaftGroupManager;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.TypedOption;
+import org.apache.hugegraph.masterelection.GlobalMasterInfo;
+import org.apache.hugegraph.masterelection.RoleElectionStateMachine;
+import org.apache.hugegraph.rpc.RpcServiceConfig4Client;
+import org.apache.hugegraph.rpc.RpcServiceConfig4Server;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeFeatures;
+import org.apache.hugegraph.task.TaskScheduler;
+import org.apache.hugegraph.traversal.optimize.HugeCountStepStrategy;
+import org.apache.hugegraph.traversal.optimize.HugeGraphStepStrategy;
+import org.apache.hugegraph.traversal.optimize.HugePrimaryKeyStrategy;
+import org.apache.hugegraph.traversal.optimize.HugeVertexStepStrategy;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.type.define.GraphReadMode;
+import org.apache.tinkerpop.gremlin.process.traversal.TraversalStrategies;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.Property;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.VertexProperty;
+
+import com.alipay.remoting.rpc.RpcServer;
+
+/**
+ * Graph interface for Gremlin operations
+ */
+public interface HugeGraph extends Graph {
+
+    HugeGraph hugegraph();
+
+    SchemaManager schema();
+
+    Id getNextId(HugeType type);
+
+    Id addPropertyKey(PropertyKey key);
+
+    void updatePropertyKey(PropertyKey key);
+
+    Id removePropertyKey(Id key);
+
+    Id clearPropertyKey(PropertyKey propertyKey);
+
+    Collection&lt;PropertyKey&gt; propertyKeys();
+
+    PropertyKey propertyKey(String key);
+
+    PropertyKey propertyKey(Id key);
+
+    boolean existsPropertyKey(String key);
+
+    void addVertexLabel(VertexLabel label);
+
+    void updateVertexLabel(VertexLabel label);
+
+    Id removeVertexLabel(Id label);
+
+    Collection&lt;VertexLabel&gt; vertexLabels();
+
+    VertexLabel vertexLabel(String label);
+
+    VertexLabel vertexLabel(Id label);
+
+    VertexLabel vertexLabelOrNone(Id id);
+
+    boolean existsVertexLabel(String label);
+
+    boolean existsLinkLabel(Id vertexLabel);
+
+    void addEdgeLabel(EdgeLabel label);
+
+    void updateEdgeLabel(EdgeLabel label);
+
+    Id removeEdgeLabel(Id label);
+
+    Collection&lt;EdgeLabel&gt; edgeLabels();
+
+    EdgeLabel edgeLabel(String label);
+
+    EdgeLabel edgeLabel(Id label);
+
+    EdgeLabel edgeLabelOrNone(Id label);
+
+    boolean existsEdgeLabel(String label);
+
+    void addIndexLabel(SchemaLabel schemaLabel, IndexLabel indexLabel);
+
+    void updateIndexLabel(IndexLabel label);
+
+    Id removeIndexLabel(Id label);
+
+    Id rebuildIndex(SchemaElement schema);
+
+    Collection&lt;IndexLabel&gt; indexLabels();
+
+    IndexLabel indexLabel(String label);
+
+    IndexLabel indexLabel(Id id);
+
+    boolean existsIndexLabel(String label);
+
+    @Override
+    Vertex addVertex(Object... keyValues);
+
+    void removeVertex(Vertex vertex);
+
+    void removeVertex(String label, Object id);
+
+    &lt;V&gt; void addVertexProperty(VertexProperty&lt;V&gt; property);
+
+    &lt;V&gt; void removeVertexProperty(VertexProperty&lt;V&gt; property);
+
+    Edge addEdge(Edge edge);
+
+    void canAddEdge(Edge edge);
+
+    void removeEdge(Edge edge);
+
+    void removeEdge(String label, Object id);
+
+    &lt;V&gt; void addEdgeProperty(Property&lt;V&gt; property);
+
+    &lt;V&gt; void removeEdgeProperty(Property&lt;V&gt; property);
+
+    Vertex vertex(Object object);
+
+    @Override
+    Iterator&lt;Vertex&gt; vertices(Object... objects);
+
+    Iterator&lt;Vertex&gt; vertices(Query query);
+
+    Iterator&lt;Vertex&gt; adjacentVertex(Object id);
+
+    boolean checkAdjacentVertexExist();
+
+    Edge edge(Object object);
+
+    @Override
+    Iterator&lt;Edge&gt; edges(Object... objects);
+
+    Iterator&lt;Edge&gt; edges(Query query);
+
+    Iterator&lt;Vertex&gt; adjacentVertices(Iterator&lt;Edge&gt; edges);
+
+    Iterator&lt;Edge&gt; adjacentEdges(Id vertexId);
+
+    Number queryNumber(Query query);
+
+    String name();
+
+    String backend();
+
+    BackendFeatures backendStoreFeatures();
+
+    BackendStoreInfo backendStoreInfo();
+
+    GraphMode mode();
+
+    void mode(GraphMode mode);
+
+    GraphReadMode readMode();
+
+    void readMode(GraphReadMode readMode);
+
+    void waitReady(RpcServer rpcServer);
+
+    void serverStarted(GlobalMasterInfo nodeInfo);
+
+    boolean started();
+
+    boolean closed();
+
+    &lt;T&gt; T metadata(HugeType type, String meta, Object... args);
+
+    void initBackend();
+
+    void clearBackend();
+
+    void truncateBackend();
+
+    void initSystemInfo();
+
+    void createSnapshot();
+
+    void resumeSnapshot();
+
+    void create(String configPath, GlobalMasterInfo nodeInfo);
+
+    void drop();
+
+    HugeConfig cloneConfig(String newGraph);
+
+    @Override
+    HugeFeatures features();
+
+    AuthManager authManager();
+
+    RoleElectionStateMachine roleElectionStateMachine();
+
+    void switchAuthManager(AuthManager authManager);
+
+    TaskScheduler taskScheduler();
+
+    RaftGroupManager raftGroupManager();
+
+    void proxy(HugeGraph graph);
+
+    boolean sameAs(HugeGraph graph);
+
+    long now();
+
+    &lt;K, V&gt; V option(TypedOption&lt;K, V&gt; option);
+
+    void registerRpcServices(RpcServiceConfig4Server serverConfig,
+                                    RpcServiceConfig4Client clientConfig);
+
+    default List&lt;String&gt; mapPkId2Name(Collection&lt;Id&gt; ids) {
+<span class="nc" id="L255">        List&lt;String&gt; names = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L257">            SchemaElement schema = this.propertyKey(id);</span>
+<span class="nc" id="L258">            names.add(schema.name());</span>
+<span class="nc" id="L259">        }</span>
+<span class="nc" id="L260">        return names;</span>
+    }
+
+    default List&lt;String&gt; mapVlId2Name(Collection&lt;Id&gt; ids) {
+<span class="nc" id="L264">        List&lt;String&gt; names = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L266">            SchemaElement schema = this.vertexLabel(id);</span>
+<span class="nc" id="L267">            names.add(schema.name());</span>
+<span class="nc" id="L268">        }</span>
+<span class="nc" id="L269">        return names;</span>
+    }
+
+    default List&lt;String&gt; mapElId2Name(Collection&lt;Id&gt; ids) {
+<span class="nc" id="L273">        List&lt;String&gt; names = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L274" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L275">            SchemaElement schema = this.edgeLabel(id);</span>
+<span class="nc" id="L276">            names.add(schema.name());</span>
+<span class="nc" id="L277">        }</span>
+<span class="nc" id="L278">        return names;</span>
+    }
+
+    default List&lt;String&gt; mapIlId2Name(Collection&lt;Id&gt; ids) {
+<span class="nc" id="L282">        List&lt;String&gt; names = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L284">            SchemaElement schema = this.indexLabel(id);</span>
+<span class="nc" id="L285">            names.add(schema.name());</span>
+<span class="nc" id="L286">        }</span>
+<span class="nc" id="L287">        return names;</span>
+    }
+
+    default List&lt;Id&gt; mapPkName2Id(Collection&lt;String&gt; pkeys) {
+<span class="nc" id="L291">        List&lt;Id&gt; ids = new ArrayList&lt;&gt;(pkeys.size());</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">        for (String pkey : pkeys) {</span>
+<span class="nc" id="L293">            PropertyKey propertyKey = this.propertyKey(pkey);</span>
+<span class="nc" id="L294">            ids.add(propertyKey.id());</span>
+<span class="nc" id="L295">        }</span>
+<span class="nc" id="L296">        return ids;</span>
+    }
+
+    default Id[] mapElName2Id(String[] edgeLabels) {
+<span class="nc" id="L300">        Id[] ids = new Id[edgeLabels.length];</span>
+<span class="nc bnc" id="L301" title="All 2 branches missed.">        for (int i = 0; i &lt; edgeLabels.length; i++) {</span>
+<span class="nc" id="L302">            EdgeLabel edgeLabel = this.edgeLabel(edgeLabels[i]);</span>
+<span class="nc" id="L303">            ids[i] = edgeLabel.id();</span>
+        }
+<span class="nc" id="L305">        return ids;</span>
+    }
+
+    default Id[] mapVlName2Id(String[] vertexLabels) {
+<span class="nc" id="L309">        Id[] ids = new Id[vertexLabels.length];</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">        for (int i = 0; i &lt; vertexLabels.length; i++) {</span>
+<span class="nc" id="L311">            VertexLabel vertexLabel = this.vertexLabel(vertexLabels[i]);</span>
+<span class="nc" id="L312">            ids[i] = vertexLabel.id();</span>
+        }
+<span class="nc" id="L314">        return ids;</span>
+    }
+
+    static void registerTraversalStrategies(Class&lt;?&gt; clazz) {
+<span class="nc" id="L318">        TraversalStrategies strategies = TraversalStrategies.GlobalCache</span>
+<span class="nc" id="L319">                                                            .getStrategies(Graph.class)</span>
+<span class="nc" id="L320">                                                            .clone();</span>
+<span class="nc" id="L321">        strategies.addStrategies(HugeVertexStepStrategy.instance(),</span>
+<span class="nc" id="L322">                                 HugeGraphStepStrategy.instance(),</span>
+<span class="nc" id="L323">                                 HugeCountStepStrategy.instance(),</span>
+<span class="nc" id="L324">                                 HugePrimaryKeyStrategy.instance());</span>
+
+<span class="nc" id="L326">        TraversalStrategies.GlobalCache.registerStrategies(clazz, strategies);</span>
+<span class="nc" id="L327">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

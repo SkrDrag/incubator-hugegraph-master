@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SchemaManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.schema</a> &gt; <span class="el_source">SchemaManager.java</span></div><h1>SchemaManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.schema;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.schema.builder.EdgeLabelBuilder;
+import org.apache.hugegraph.schema.builder.IndexLabelBuilder;
+import org.apache.hugegraph.schema.builder.PropertyKeyBuilder;
+import org.apache.hugegraph.schema.builder.VertexLabelBuilder;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+
+public class SchemaManager {
+
+    private final SchemaTransaction transaction;
+    private HugeGraph graph;
+
+<span class="nc" id="L40">    public SchemaManager(SchemaTransaction transaction, HugeGraph graph) {</span>
+<span class="nc" id="L41">        E.checkNotNull(transaction, &quot;transaction&quot;);</span>
+<span class="nc" id="L42">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+<span class="nc" id="L43">        this.transaction = transaction;</span>
+<span class="nc" id="L44">        this.graph = graph;</span>
+<span class="nc" id="L45">    }</span>
+
+    public HugeGraph proxy(HugeGraph graph) {
+<span class="nc" id="L48">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+<span class="nc" id="L49">        HugeGraph old = this.graph;</span>
+<span class="nc" id="L50">        this.graph = graph;</span>
+<span class="nc" id="L51">        return old;</span>
+    }
+
+    public PropertyKey.Builder propertyKey(String name) {
+<span class="nc" id="L55">        return new PropertyKeyBuilder(this.transaction, this.graph, name);</span>
+    }
+
+    public VertexLabel.Builder vertexLabel(String name) {
+<span class="nc" id="L59">        return new VertexLabelBuilder(this.transaction, this.graph, name);</span>
+    }
+
+    public EdgeLabel.Builder edgeLabel(String name) {
+<span class="nc" id="L63">        return new EdgeLabelBuilder(this.transaction, this.graph, name);</span>
+    }
+
+    public IndexLabel.Builder indexLabel(String name) {
+<span class="nc" id="L67">        return new IndexLabelBuilder(this.transaction, this.graph, name);</span>
+    }
+
+    public PropertyKey getPropertyKey(String name) {
+<span class="nc" id="L71">        E.checkArgumentNotNull(name, &quot;The name parameter can't be null&quot;);</span>
+<span class="nc" id="L72">        PropertyKey propertyKey = this.transaction.getPropertyKey(name);</span>
+<span class="nc" id="L73">        checkExists(HugeType.PROPERTY_KEY, propertyKey, name);</span>
+<span class="nc" id="L74">        return propertyKey;</span>
+    }
+
+    public VertexLabel getVertexLabel(String name) {
+<span class="nc" id="L78">        E.checkArgumentNotNull(name, &quot;The name parameter can't be null&quot;);</span>
+<span class="nc" id="L79">        VertexLabel vertexLabel = this.transaction.getVertexLabel(name);</span>
+<span class="nc" id="L80">        checkExists(HugeType.VERTEX_LABEL, vertexLabel, name);</span>
+<span class="nc" id="L81">        return vertexLabel;</span>
+    }
+
+    public EdgeLabel getEdgeLabel(String name) {
+<span class="nc" id="L85">        E.checkArgumentNotNull(name, &quot;The name parameter can't be null&quot;);</span>
+<span class="nc" id="L86">        EdgeLabel edgeLabel = this.transaction.getEdgeLabel(name);</span>
+<span class="nc" id="L87">        checkExists(HugeType.EDGE_LABEL, edgeLabel, name);</span>
+<span class="nc" id="L88">        return edgeLabel;</span>
+    }
+
+    public IndexLabel getIndexLabel(String name) {
+<span class="nc" id="L92">        E.checkArgumentNotNull(name, &quot;The name parameter can't be null&quot;);</span>
+<span class="nc" id="L93">        IndexLabel indexLabel = this.transaction.getIndexLabel(name);</span>
+<span class="nc" id="L94">        checkExists(HugeType.INDEX_LABEL, indexLabel, name);</span>
+<span class="nc" id="L95">        return indexLabel;</span>
+    }
+
+    public List&lt;PropertyKey&gt; getPropertyKeys() {
+<span class="nc" id="L99">        return this.graph.propertyKeys().stream()</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">                   .filter(pk -&gt; !Graph.Hidden.isHidden(pk.name()))</span>
+<span class="nc" id="L101">                   .collect(Collectors.toList());</span>
+    }
+
+    public List&lt;VertexLabel&gt; getVertexLabels() {
+<span class="nc" id="L105">        return this.graph.vertexLabels().stream()</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">                   .filter(vl -&gt; !Graph.Hidden.isHidden(vl.name()))</span>
+<span class="nc" id="L107">                   .collect(Collectors.toList());</span>
+    }
+
+    public List&lt;EdgeLabel&gt; getEdgeLabels() {
+<span class="nc" id="L111">        return this.graph.edgeLabels().stream()</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">                   .filter(el -&gt; !Graph.Hidden.isHidden(el.name()))</span>
+<span class="nc" id="L113">                   .collect(Collectors.toList());</span>
+    }
+
+    public List&lt;IndexLabel&gt; getIndexLabels() {
+<span class="nc" id="L117">        return this.graph.indexLabels().stream()</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">                   .filter(il -&gt; !Graph.Hidden.isHidden(il.name()))</span>
+<span class="nc" id="L119">                   .collect(Collectors.toList());</span>
+    }
+
+    public void copyFrom(SchemaManager schema) {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        for (PropertyKey pk : schema.getPropertyKeys()) {</span>
+<span class="nc" id="L124">            new PropertyKeyBuilder(this.transaction, this.graph, pk).create();</span>
+<span class="nc" id="L125">        }</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">        for (VertexLabel vl : schema.getVertexLabels()) {</span>
+<span class="nc" id="L127">            new VertexLabelBuilder(this.transaction, this.graph, vl).create();</span>
+<span class="nc" id="L128">        }</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        for (EdgeLabel el : schema.getEdgeLabels()) {</span>
+<span class="nc" id="L130">            new EdgeLabelBuilder(this.transaction, this.graph, el).create();</span>
+<span class="nc" id="L131">        }</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        for (IndexLabel il : schema.getIndexLabels()) {</span>
+<span class="nc" id="L133">            new IndexLabelBuilder(this.transaction, this.graph, il).create();</span>
+<span class="nc" id="L134">        }</span>
+<span class="nc" id="L135">    }</span>
+
+    private static void checkExists(HugeType type, Object object, String name) {
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        if (object == null) {</span>
+<span class="nc" id="L139">            throw new NotFoundException(&quot;%s with name '%s' does not exist&quot;,</span>
+<span class="nc" id="L140">                                        type.readableName(), name);</span>
+        }
+<span class="nc" id="L142">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

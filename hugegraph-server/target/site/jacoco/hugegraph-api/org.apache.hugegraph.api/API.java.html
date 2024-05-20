@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>API.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api</a> &gt; <span class="el_source">API.java</span></div><h1>API.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api;
+
+import java.util.Collection;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.function.Consumer;
+
+import org.apache.commons.lang.mutable.MutableLong;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.metrics.MetricsUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.Meter;
+import com.google.common.collect.ImmutableMap;
+
+import jakarta.ws.rs.ForbiddenException;
+import jakarta.ws.rs.NotSupportedException;
+import jakarta.ws.rs.core.MediaType;
+
+<span class="nc" id="L45">public class API {</span>
+
+    public static final String CHARSET = &quot;UTF-8&quot;;
+    public static final String TEXT_PLAIN = MediaType.TEXT_PLAIN;
+    public static final String APPLICATION_JSON = MediaType.APPLICATION_JSON;
+    public static final String APPLICATION_JSON_WITH_CHARSET =
+                               APPLICATION_JSON + &quot;;charset=&quot; + CHARSET;
+    public static final String APPLICATION_TEXT_WITH_CHARSET = MediaType.TEXT_PLAIN + &quot;;charset=&quot; + CHARSET;
+<span class="nc" id="L53">    public static final String JSON = MediaType.APPLICATION_JSON_TYPE</span>
+<span class="nc" id="L54">                                               .getSubtype();</span>
+    public static final String ACTION_APPEND = &quot;append&quot;;
+    public static final String ACTION_ELIMINATE = &quot;eliminate&quot;;
+    public static final String ACTION_CLEAR = &quot;clear&quot;;
+<span class="nc" id="L58">    protected static final Logger LOG = Log.logger(API.class);</span>
+<span class="nc" id="L59">    private static final Meter SUCCEED_METER =</span>
+<span class="nc" id="L60">                         MetricsUtil.registerMeter(API.class, &quot;commit-succeed&quot;);</span>
+<span class="nc" id="L61">    private static final Meter ILLEGAL_ARG_ERROR_METER =</span>
+<span class="nc" id="L62">                         MetricsUtil.registerMeter(API.class, &quot;illegal-arg&quot;);</span>
+<span class="nc" id="L63">    private static final Meter EXPECTED_ERROR_METER =</span>
+<span class="nc" id="L64">                         MetricsUtil.registerMeter(API.class, &quot;expected-error&quot;);</span>
+<span class="nc" id="L65">    private static final Meter UNKNOWN_ERROR_METER =</span>
+<span class="nc" id="L66">                         MetricsUtil.registerMeter(API.class, &quot;unknown-error&quot;);</span>
+
+    public static HugeGraph graph(GraphManager manager, String graph) {
+<span class="nc" id="L69">        HugeGraph g = manager.graph(graph);</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (g == null) {</span>
+<span class="nc" id="L71">            throw new NotFoundException(String.format(&quot;Graph '%s' does not exist&quot;, graph));</span>
+        }
+<span class="nc" id="L73">        return g;</span>
+    }
+
+    public static HugeGraph graph4admin(GraphManager manager, String graph) {
+<span class="nc" id="L77">        return graph(manager, graph).hugegraph();</span>
+    }
+
+    public static &lt;R&gt; R commit(HugeGraph g, Callable&lt;R&gt; callable) {
+<span class="nc" id="L81">        Consumer&lt;Throwable&gt; rollback = (error) -&gt; {</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">            if (error != null) {</span>
+<span class="nc" id="L83">                LOG.error(&quot;Failed to commit&quot;, error);</span>
+            }
+            try {
+<span class="nc" id="L86">                g.tx().rollback();</span>
+<span class="nc" id="L87">            } catch (Throwable e) {</span>
+<span class="nc" id="L88">                LOG.error(&quot;Failed to rollback&quot;, e);</span>
+<span class="nc" id="L89">            }</span>
+<span class="nc" id="L90">        };</span>
+
+        try {
+<span class="nc" id="L93">            R result = callable.call();</span>
+<span class="nc" id="L94">            g.tx().commit();</span>
+<span class="nc" id="L95">            SUCCEED_METER.mark();</span>
+<span class="nc" id="L96">            return result;</span>
+<span class="nc" id="L97">        } catch (IllegalArgumentException | NotFoundException |</span>
+                 ForbiddenException e) {
+<span class="nc" id="L99">            ILLEGAL_ARG_ERROR_METER.mark();</span>
+<span class="nc" id="L100">            rollback.accept(null);</span>
+<span class="nc" id="L101">            throw e;</span>
+<span class="nc" id="L102">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L103">            EXPECTED_ERROR_METER.mark();</span>
+<span class="nc" id="L104">            rollback.accept(e);</span>
+<span class="nc" id="L105">            throw e;</span>
+<span class="nc" id="L106">        } catch (Throwable e) {</span>
+<span class="nc" id="L107">            UNKNOWN_ERROR_METER.mark();</span>
+<span class="nc" id="L108">            rollback.accept(e);</span>
+            // TODO: throw the origin exception 'e'
+<span class="nc" id="L110">            throw new HugeException(&quot;Failed to commit&quot;, e);</span>
+        }
+    }
+
+    public static void commit(HugeGraph g, Runnable runnable) {
+<span class="nc" id="L115">        commit(g, () -&gt; {</span>
+<span class="nc" id="L116">            runnable.run();</span>
+<span class="nc" id="L117">            return null;</span>
+        });
+<span class="nc" id="L119">    }</span>
+
+    public static Object[] properties(Map&lt;String, Object&gt; properties) {
+<span class="nc" id="L122">        Object[] list = new Object[properties.size() * 2];</span>
+<span class="nc" id="L123">        int i = 0;</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; prop : properties.entrySet()) {</span>
+<span class="nc" id="L125">            list[i++] = prop.getKey();</span>
+<span class="nc" id="L126">            list[i++] = prop.getValue();</span>
+<span class="nc" id="L127">        }</span>
+<span class="nc" id="L128">        return list;</span>
+    }
+
+    protected static void checkCreatingBody(Checkable body) {
+<span class="nc" id="L132">        E.checkArgumentNotNull(body, &quot;The request body can't be empty&quot;);</span>
+<span class="nc" id="L133">        body.checkCreate(false);</span>
+<span class="nc" id="L134">    }</span>
+
+    protected static void checkUpdatingBody(Checkable body) {
+<span class="nc" id="L137">        E.checkArgumentNotNull(body, &quot;The request body can't be empty&quot;);</span>
+<span class="nc" id="L138">        body.checkUpdate();</span>
+<span class="nc" id="L139">    }</span>
+
+    protected static void checkCreatingBody(Collection&lt;? extends Checkable&gt; bodies) {
+<span class="nc" id="L142">        E.checkArgumentNotNull(bodies, &quot;The request body can't be empty&quot;);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        for (Checkable body : bodies) {</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">            E.checkArgument(body != null,</span>
+                            &quot;The batch body can't contain null record&quot;);
+<span class="nc" id="L146">            body.checkCreate(true);</span>
+<span class="nc" id="L147">        }</span>
+<span class="nc" id="L148">    }</span>
+
+    protected static void checkUpdatingBody(Collection&lt;? extends Checkable&gt; bodies) {
+<span class="nc" id="L151">        E.checkArgumentNotNull(bodies, &quot;The request body can't be empty&quot;);</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        for (Checkable body : bodies) {</span>
+<span class="nc" id="L153">            E.checkArgumentNotNull(body,</span>
+                                   &quot;The batch body can't contain null record&quot;);
+<span class="nc" id="L155">            body.checkUpdate();</span>
+<span class="nc" id="L156">        }</span>
+<span class="nc" id="L157">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected static Map&lt;String, Object&gt; parseProperties(String properties) {
+<span class="nc bnc" id="L161" title="All 4 branches missed.">        if (properties == null || properties.isEmpty()) {</span>
+<span class="nc" id="L162">            return ImmutableMap.of();</span>
+        }
+
+<span class="nc" id="L165">        Map&lt;String, Object&gt; props = null;</span>
+        try {
+<span class="nc" id="L167">            props = JsonUtil.fromJson(properties, Map.class);</span>
+<span class="nc" id="L168">        } catch (Exception ignored) {</span>
+            // ignore
+<span class="nc" id="L170">        }</span>
+
+        // If properties is the string &quot;null&quot;, props will be null
+<span class="nc bnc" id="L173" title="All 2 branches missed.">        E.checkArgument(props != null,</span>
+                        &quot;Invalid request with properties: %s&quot;, properties);
+<span class="nc" id="L175">        return props;</span>
+    }
+
+    public static boolean checkAndParseAction(String action) {
+<span class="nc" id="L179">        E.checkArgumentNotNull(action, &quot;The action param can't be empty&quot;);</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        if (action.equals(ACTION_APPEND)) {</span>
+<span class="nc" id="L181">            return true;</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        } else if (action.equals(ACTION_ELIMINATE)) {</span>
+<span class="nc" id="L183">            return false;</span>
+        } else {
+<span class="nc" id="L185">            throw new NotSupportedException(String.format(&quot;Not support action '%s'&quot;, action));</span>
+        }
+    }
+
+    public static class ApiMeasurer {
+
+        public static final String EDGE_ITER = &quot;edge_iterations&quot;;
+        public static final String VERTICE_ITER = &quot;vertice_iterations&quot;;
+        public static final String COST = &quot;cost(ns)&quot;;
+        private final long timeStart;
+        private final Map&lt;String, Object&gt; measures;
+
+<span class="nc" id="L197">        public ApiMeasurer() {</span>
+<span class="nc" id="L198">            this.timeStart = System.nanoTime();</span>
+<span class="nc" id="L199">            this.measures = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L200">        }</span>
+
+        public Map&lt;String, Object&gt; measures() {
+<span class="nc" id="L203">            measures.put(COST, System.nanoTime() - timeStart);</span>
+<span class="nc" id="L204">            return measures;</span>
+        }
+
+        public void put(String key, String value) {
+<span class="nc" id="L208">            this.measures.put(key, value);</span>
+<span class="nc" id="L209">        }</span>
+
+        public void put(String key, long value) {
+<span class="nc" id="L212">            this.measures.put(key, value);</span>
+<span class="nc" id="L213">        }</span>
+
+        public void put(String key, int value) {
+<span class="nc" id="L216">            this.measures.put(key, value);</span>
+<span class="nc" id="L217">        }</span>
+
+        protected void addCount(String key, long value) {
+<span class="nc" id="L220">            Object current = measures.get(key);</span>
+<span class="nc bnc" id="L221" title="All 2 branches missed.">            if (current == null) {</span>
+<span class="nc" id="L222">                measures.put(key, new MutableLong(value));</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">            } else if (current instanceof MutableLong) {</span>
+<span class="nc" id="L224">                ((MutableLong) measures.computeIfAbsent(key, MutableLong::new)).add(value);</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">            } else if (current instanceof Long) {</span>
+<span class="nc" id="L226">                Long currentLong = (Long) current;</span>
+<span class="nc" id="L227">                measures.put(key, new MutableLong(currentLong + value));</span>
+<span class="nc" id="L228">            } else {</span>
+<span class="nc" id="L229">                throw new NotSupportedException(&quot;addCount() method's 'value' datatype must be &quot; +</span>
+                                                &quot;Long or MutableLong&quot;);
+            }
+<span class="nc" id="L232">        }</span>
+
+        public void addIterCount(long verticeIters, long edgeIters) {
+<span class="nc" id="L235">            this.addCount(EDGE_ITER, edgeIters);</span>
+<span class="nc" id="L236">            this.addCount(VERTICE_ITER, verticeIters);</span>
+<span class="nc" id="L237">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TriangleCountAlgorithm.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.comm</a> &gt; <span class="el_source">TriangleCountAlgorithm.java</span></div><h1>TriangleCountAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.comm;
+
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.commons.lang.mutable.MutableLong;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+
+import com.google.common.collect.ImmutableMap;
+
+<span class="nc" id="L38">public class TriangleCountAlgorithm extends AbstractCommAlgorithm {</span>
+
+    public static final String ALGO_NAME = &quot;triangle_count&quot;;
+
+    protected static int workersWhenBoth(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L43">        Directions direction = direction4Out(parameters);</span>
+<span class="nc" id="L44">        int workers = workers(parameters);</span>
+<span class="nc bnc" id="L45" title="All 4 branches missed.">        E.checkArgument(direction == Directions.BOTH || workers &lt;= 0,</span>
+                        &quot;The workers must be not set when direction!=BOTH, &quot; +
+                        &quot;but got workers=%s and direction=%s&quot;,
+<span class="nc" id="L48">                        workers, direction);</span>
+<span class="nc" id="L49">        return workers;</span>
+    }
+
+    @Override
+    public String name() {
+<span class="nc" id="L54">        return ALGO_NAME;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L59">        direction4Out(parameters);</span>
+<span class="nc" id="L60">        degree(parameters);</span>
+<span class="nc" id="L61">        workersWhenBoth(parameters);</span>
+<span class="nc" id="L62">    }</span>
+
+    @Override
+    public Object call(UserJob&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L66">        int workers = workersWhenBoth(parameters);</span>
+<span class="nc" id="L67">        try (Traverser traverser = new Traverser(job, workers)) {</span>
+<span class="nc" id="L68">            return traverser.triangleCount(direction4Out(parameters),</span>
+<span class="nc" id="L69">                                           degree(parameters));</span>
+        }
+    }
+
+<span class="nc" id="L73">    protected static class Traverser extends AlgoTraverser {</span>
+
+        protected static final String KEY_TRIANGLES = &quot;triangles&quot;;
+        protected static final String KEY_TRIADS = &quot;triads&quot;;
+
+        public Traverser(UserJob&lt;Object&gt; job, int workers) {
+<span class="nc" id="L79">            super(job, ALGO_NAME, workers);</span>
+<span class="nc" id="L80">        }</span>
+
+        protected Traverser(UserJob&lt;Object&gt; job, String name, int workers) {
+<span class="nc" id="L83">            super(job, name, workers);</span>
+<span class="nc" id="L84">        }</span>
+
+        protected static &lt;V&gt; Set&lt;V&gt; newOrderedSet() {
+<span class="nc" id="L87">            return new TreeSet&lt;&gt;();</span>
+        }
+
+        public Object triangleCount(Directions direction, long degree) {
+<span class="nc" id="L91">            Map&lt;String, Long&gt; results = triangles(direction, degree);</span>
+<span class="nc" id="L92">            results = InsertionOrderUtil.newMap(results);</span>
+<span class="nc" id="L93">            results.remove(KEY_TRIADS);</span>
+<span class="nc" id="L94">            return results;</span>
+        }
+
+        protected Map&lt;String, Long&gt; triangles(Directions direction,
+                                              long degree) {
+<span class="nc bnc" id="L99" title="All 4 branches missed.">            if (direction == null || direction == Directions.BOTH) {</span>
+<span class="nc" id="L100">                return this.trianglesForBothDir(degree);</span>
+            }
+
+<span class="nc bnc" id="L103" title="All 4 branches missed.">            assert direction == Directions.OUT || direction == Directions.IN;</span>
+
+<span class="nc" id="L105">            Iterator&lt;Edge&gt; edges = this.edges(direction);</span>
+
+<span class="nc" id="L107">            long triangles = 0L;</span>
+<span class="nc" id="L108">            long triads = 0L;</span>
+<span class="nc" id="L109">            long totalEdges = 0L;</span>
+<span class="nc" id="L110">            long totalVertices = 0L;</span>
+<span class="nc" id="L111">            Id vertex = null;</span>
+
+<span class="nc" id="L113">            Set&lt;Id&gt; adjVertices = newOrderedSet();</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            while (edges.hasNext()) {</span>
+<span class="nc" id="L115">                HugeEdge edge = (HugeEdge) edges.next();</span>
+<span class="nc" id="L116">                this.updateProgress(++totalEdges);</span>
+
+<span class="nc" id="L118">                Id source = edge.ownerVertex().id();</span>
+<span class="nc" id="L119">                Id target = edge.otherVertex().id();</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">                if (vertex == source) {</span>
+                    // Ignore and skip the target vertex if exceed degree
+<span class="nc bnc" id="L122" title="All 4 branches missed.">                    if (adjVertices.size() &lt; degree || degree == NO_LIMIT) {</span>
+<span class="nc" id="L123">                        adjVertices.add(target);</span>
+                    }
+                    continue;
+                }
+
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                if (vertex != null) {</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">                    assert vertex != source;</span>
+                    /*
+                     * Find graph mode like this:
+                     * A -&gt; [B,C,D,E,F]
+                     *      B -&gt; [D,F]
+                     *      E -&gt; [B,C,F]
+                     */
+<span class="nc" id="L136">                    triangles += this.intersect(degree, adjVertices);</span>
+<span class="nc" id="L137">                    triads += this.localTriads(adjVertices.size());</span>
+<span class="nc" id="L138">                    totalVertices++;</span>
+                    // Reset for the next source
+<span class="nc" id="L140">                    adjVertices = newOrderedSet();</span>
+                }
+<span class="nc" id="L142">                vertex = source;</span>
+<span class="nc" id="L143">                adjVertices.add(target);</span>
+<span class="nc" id="L144">            }</span>
+
+<span class="nc bnc" id="L146" title="All 2 branches missed.">            if (vertex != null) {</span>
+<span class="nc" id="L147">                triangles += this.intersect(degree, adjVertices);</span>
+<span class="nc" id="L148">                triads += this.localTriads(adjVertices.size());</span>
+<span class="nc" id="L149">                totalVertices++;</span>
+            }
+
+<span class="nc" id="L152">            String suffix = &quot;_&quot; + direction.string();</span>
+<span class="nc" id="L153">            return ImmutableMap.of(&quot;edges&quot; + suffix, totalEdges,</span>
+<span class="nc" id="L154">                                   &quot;vertices&quot; + suffix, totalVertices,</span>
+<span class="nc" id="L155">                                   KEY_TRIANGLES, triangles,</span>
+<span class="nc" id="L156">                                   KEY_TRIADS, triads);</span>
+        }
+
+        protected Map&lt;String, Long&gt; trianglesForBothDir(long degree) {
+<span class="nc" id="L160">            AtomicLong triangles = new AtomicLong(0L);</span>
+<span class="nc" id="L161">            AtomicLong triads = new AtomicLong(0L);</span>
+<span class="nc" id="L162">            AtomicLong totalEdges = new AtomicLong(0L);</span>
+<span class="nc" id="L163">            AtomicLong totalVertices = new AtomicLong(0L);</span>
+
+<span class="nc" id="L165">            this.traverse(null, null, v -&gt; {</span>
+<span class="nc" id="L166">                Id source = (Id) v.id();</span>
+
+<span class="nc" id="L168">                MutableLong edgesCount = new MutableLong(0L);</span>
+<span class="nc" id="L169">                Set&lt;Id&gt; adjVertices = this.adjacentVertices(source, degree,</span>
+                                                            edgesCount);
+
+<span class="nc" id="L172">                triangles.addAndGet(this.intersect(degree, adjVertices));</span>
+<span class="nc" id="L173">                triads.addAndGet(this.localTriads(adjVertices.size()));</span>
+
+<span class="nc" id="L175">                totalVertices.incrementAndGet();</span>
+<span class="nc" id="L176">                totalEdges.addAndGet(edgesCount.longValue());</span>
+<span class="nc" id="L177">            });</span>
+
+<span class="nc bnc" id="L179" title="All 2 branches missed.">            assert totalEdges.get() % 2L == 0L;</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">            assert triangles.get() % 3L == 0L;</span>
+            // totalEdges /= 2L
+<span class="nc" id="L182">            totalEdges.getAndAccumulate(2L, (l, w) -&gt; l / w);</span>
+            // triangles /= 3L
+<span class="nc" id="L184">            triangles.getAndAccumulate(3L, (l, w) -&gt; l / w);</span>
+            // triads -= triangles * 2L
+<span class="nc" id="L186">            triads.addAndGet(triangles.get() * -2L);</span>
+
+<span class="nc" id="L188">            return ImmutableMap.of(&quot;edges&quot;, totalEdges.get(),</span>
+<span class="nc" id="L189">                                   &quot;vertices&quot;, totalVertices.get(),</span>
+<span class="nc" id="L190">                                   KEY_TRIANGLES, triangles.get(),</span>
+<span class="nc" id="L191">                                   KEY_TRIADS, triads.get());</span>
+        }
+
+        private Set&lt;Id&gt; adjacentVertices(Id source, long degree,
+                                         MutableLong edgesCount) {
+<span class="nc" id="L196">            Iterator&lt;Id&gt; adjVertices = this.adjacentVertices(source,</span>
+                                                             Directions.BOTH,
+                                                             (Id) null, degree);
+<span class="nc" id="L199">            Set&lt;Id&gt; set = newOrderedSet();</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">            while (adjVertices.hasNext()) {</span>
+<span class="nc" id="L201">                edgesCount.increment();</span>
+<span class="nc" id="L202">                set.add(adjVertices.next());</span>
+            }
+<span class="nc" id="L204">            return set;</span>
+        }
+
+        protected long intersect(long degree, Set&lt;Id&gt; adjVertices) {
+<span class="nc" id="L208">            long count = 0L;</span>
+<span class="nc" id="L209">            Directions dir = Directions.OUT;</span>
+<span class="nc" id="L210">            Id empty = IdGenerator.ZERO;</span>
+            Iterator&lt;Id&gt; vertices;
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            for (Id v : adjVertices) {</span>
+<span class="nc" id="L213">                vertices = this.adjacentVertices(v, dir, (Id) null, degree);</span>
+<span class="nc" id="L214">                Id lastVertex = empty;</span>
+<span class="nc bnc" id="L215" title="All 2 branches missed.">                while (vertices.hasNext()) {</span>
+<span class="nc" id="L216">                    Id vertex = vertices.next();</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">                    if (lastVertex.equals(vertex)) {</span>
+                        // Skip duplicated target vertex (through sortkeys)
+<span class="nc" id="L219">                        continue;</span>
+                    }
+<span class="nc" id="L221">                    lastVertex = vertex;</span>
+
+                    /*
+                     * FIXME: deduplicate two edges with opposite directions
+                     * between two specified adjacent vertices
+                     */
+<span class="nc bnc" id="L227" title="All 2 branches missed.">                    if (adjVertices.contains(vertex)) {</span>
+<span class="nc" id="L228">                        count++;</span>
+                    }
+<span class="nc" id="L230">                }</span>
+<span class="nc" id="L231">            }</span>
+<span class="nc" id="L232">            return count;</span>
+        }
+
+        protected long localTriads(int size) {
+<span class="nc" id="L236">            return size * (size - 1L) / 2L;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

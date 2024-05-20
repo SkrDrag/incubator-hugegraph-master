@@ -1,0 +1,367 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>QueryList.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.page</a> &gt; <span class="el_source">QueryList.java</span></div><h1>QueryList.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.page;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.ConditionQuery.OptimizedType;
+import org.apache.hugegraph.backend.query.IdQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.IdHolder.BatchIdHolder;
+import org.apache.hugegraph.backend.page.IdHolder.FixedIdHolder;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+
+<span class="nc" id="L36">public final class QueryList&lt;R&gt; {</span>
+
+    private final Query parent;
+    // The size of each page fetched by the inner page
+    private final QueryResults.Fetcher&lt;R&gt; fetcher;
+    private final List&lt;FlattenQuery&lt;R&gt;&gt; queries;
+
+<span class="nc" id="L43">    public QueryList(Query parent, QueryResults.Fetcher&lt;R&gt; fetcher) {</span>
+<span class="nc" id="L44">        this.parent = parent;</span>
+<span class="nc" id="L45">        this.fetcher = fetcher;</span>
+<span class="nc" id="L46">        this.queries = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L47">    }</span>
+
+    protected Query parent() {
+<span class="nc" id="L50">        return this.parent;</span>
+    }
+
+    private QueryResults.Fetcher&lt;R&gt; fetcher() {
+<span class="nc" id="L54">        return this.fetcher;</span>
+    }
+
+    public void add(IdHolderList holders, long indexBatchSize) {
+        // IdHolderList is results of one index query, the query is flattened
+<span class="nc" id="L59">        this.queries.add(new IndexQuery(holders, indexBatchSize));</span>
+<span class="nc" id="L60">    }</span>
+
+    public void add(Query query) {
+        // TODO: maybe need do dedup(for -&gt; flatten)
+<span class="nc" id="L64">        this.queries.add(new OptimizedQuery(query));</span>
+<span class="nc" id="L65">    }</span>
+
+    public int total() {
+<span class="nc" id="L68">        int total = 0;</span>
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        for (FlattenQuery&lt;R&gt; q : this.queries) {</span>
+<span class="nc" id="L70">            total += q.total();</span>
+<span class="nc" id="L71">        }</span>
+<span class="nc" id="L72">        return total;</span>
+    }
+
+    public boolean empty() {
+<span class="nc" id="L76">        return this.queries.isEmpty();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L81">        return String.format(&quot;Query{root:%s,queries:%s}&quot;,</span>
+                             this.parent, this.queries);
+    }
+
+    public QueryResults&lt;R&gt; fetch(int pageSize) {
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        assert !this.queries.isEmpty();</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        if (this.parent.paging()) {</span>
+            @SuppressWarnings(&quot;resource&quot;) // closed by QueryResults
+<span class="nc" id="L89">            PageEntryIterator&lt;R&gt; iter = new PageEntryIterator&lt;&gt;(this, pageSize);</span>
+            /*
+             * NOTE: PageEntryIterator query will change every fetch time.
+             * TODO: sort results by input ids in each page.
+             */
+<span class="nc" id="L94">            return iter.results();</span>
+        }
+
+        // Fetch all results once
+<span class="nc" id="L98">        return QueryResults.flatMap(this.queries.iterator(), FlattenQuery::iterator);</span>
+    }
+
+    protected PageResults&lt;R&gt; fetchNext(PageInfo pageInfo, long pageSize) {
+<span class="nc" id="L102">        FlattenQuery&lt;R&gt; query = null;</span>
+<span class="nc" id="L103">        int offset = pageInfo.offset();</span>
+<span class="nc" id="L104">        int visited = 0;</span>
+        // Find the first FlattenQuery not visited
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        for (FlattenQuery&lt;R&gt; q : this.queries) {</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">            if (visited + q.total() &gt; offset) {</span>
+                /*
+                 * The first FlattenQuery not visited is found
+                 * q.total() return holders size if it's IndexQuery else 1
+                 */
+<span class="nc" id="L112">                query = q;</span>
+<span class="nc" id="L113">                break;</span>
+            }
+<span class="nc" id="L115">            visited += q.total();</span>
+<span class="nc" id="L116">        }</span>
+<span class="nc" id="L117">        E.checkNotNull(query, &quot;query&quot;);</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        assert offset &gt;= visited;</span>
+<span class="nc" id="L119">        return query.iterator(offset - visited, pageInfo.page(), pageSize);</span>
+    }
+
+    /**
+     * A container that can generate queries
+     */
+    private interface FlattenQuery&lt;R&gt; {
+
+        /**
+         * For non-paging situation
+         * @return          BackendEntry iterator
+         */
+        QueryResults&lt;R&gt; iterator();
+
+        /**
+         * For paging situation
+         * @param index     position IdHolder(Query)
+         * @param page      set query page
+         * @param pageSize  set query page size
+         * @return          BackendEntry iterator with page
+         */
+        PageResults&lt;R&gt; iterator(int index, String page, long pageSize);
+
+        int total();
+    }
+
+    /**
+     * Generate queries from tx.optimizeQuery()
+     */
+<span class="nc" id="L148">    private class OptimizedQuery implements FlattenQuery&lt;R&gt; {</span>
+
+        private final Query query;
+
+<span class="nc" id="L152">        public OptimizedQuery(Query query) {</span>
+<span class="nc" id="L153">            this.query = query;</span>
+<span class="nc" id="L154">        }</span>
+
+        @Override
+        public QueryResults&lt;R&gt; iterator() {
+            // Iterate all
+<span class="nc" id="L159">            return fetcher().apply(this.query);</span>
+        }
+
+        @Override
+        public PageResults&lt;R&gt; iterator(int index, String page, long pageSize) {
+            // Iterate by paging
+<span class="nc bnc" id="L165" title="All 2 branches missed.">            assert index == 0;</span>
+<span class="nc" id="L166">            Query query = this.query.copy();</span>
+<span class="nc" id="L167">            query.page(page);</span>
+            // Not set limit to pageSize due to PageEntryIterator.remaining
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            if (this.query.noLimit()) {</span>
+<span class="nc" id="L170">                query.limit(pageSize);</span>
+            }
+
+<span class="nc" id="L173">            QueryResults&lt;R&gt; results = fetcher().apply(query);</span>
+
+            // Must iterate all entries before get the next page state
+<span class="nc" id="L176">            QueryResults&lt;R&gt; fetched = results.toList();</span>
+<span class="nc" id="L177">            PageState pageState = PageInfo.pageState(results.iterator());</span>
+
+<span class="nc" id="L179">            return new PageResults&lt;&gt;(fetched, pageState);</span>
+        }
+
+        @Override
+        public int total() {
+<span class="nc" id="L184">            return 1;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L189">            return String.format(&quot;OptimizedQuery{%s}&quot;, this.query);</span>
+        }
+    }
+
+    /**
+     * Generate queries from tx.indexQuery()
+     */
+<span class="nc" id="L196">    private class IndexQuery implements FlattenQuery&lt;R&gt; {</span>
+
+        // One IdHolder each sub-query
+        private final IdHolderList holders;
+        // Fetching ids size each time, default 100
+        private final long batchSize;
+
+<span class="nc" id="L203">        public IndexQuery(IdHolderList holders, long batchSize) {</span>
+<span class="nc" id="L204">            this.holders = holders;</span>
+<span class="nc" id="L205">            this.batchSize = batchSize;</span>
+<span class="nc" id="L206">        }</span>
+
+        @Override
+        public QueryResults&lt;R&gt; iterator() {
+            // Iterate all
+<span class="nc bnc" id="L211" title="All 2 branches missed.">            if (this.holders.size() == 1) {</span>
+<span class="nc" id="L212">                return this.each(this.holders.get(0));</span>
+            }
+<span class="nc" id="L214">            return QueryResults.flatMap(this.holders.iterator(), this::each);</span>
+        }
+
+        private QueryResults&lt;R&gt; each(IdHolder holder) {
+<span class="nc bnc" id="L218" title="All 2 branches missed.">            assert !holder.paging();</span>
+<span class="nc" id="L219">            Query bindQuery = holder.query();</span>
+<span class="nc" id="L220">            this.updateResultsFilter(bindQuery);</span>
+<span class="nc" id="L221">            this.updateOffsetIfNeeded(bindQuery);</span>
+
+            // Iterate by all
+<span class="nc bnc" id="L224" title="All 2 branches missed.">            if (holder instanceof FixedIdHolder) {</span>
+                // The search or joint index query may come here.
+<span class="nc" id="L226">                Set&lt;Id&gt; ids = holder.all();</span>
+<span class="nc" id="L227">                ids = bindQuery.skipOffsetIfNeeded(ids);</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">                if (ids.isEmpty()) {</span>
+<span class="nc" id="L229">                    return null;</span>
+                }
+
+                /*
+                 * Sort by input ids because search index results need to keep
+                 * in order by ids weight. In addition all the ids (IdQuery)
+                 * can be collected by upper layer.
+                 */
+<span class="nc" id="L237">                return this.queryByIndexIds(ids, holder.keepOrder());</span>
+            }
+
+            // Iterate by batch
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            assert holder instanceof BatchIdHolder;</span>
+<span class="nc" id="L242">            return QueryResults.flatMap((BatchIdHolder) holder, h -&gt; {</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">                assert ((BatchIdHolder) holder).hasNext();</span>
+<span class="nc" id="L244">                long remaining = bindQuery.remaining();</span>
+<span class="nc bnc" id="L245" title="All 4 branches missed.">                assert remaining &gt;= 0L || remaining == Query.NO_LIMIT;</span>
+<span class="nc bnc" id="L246" title="All 4 branches missed.">                if (remaining &gt; this.batchSize || remaining == Query.NO_LIMIT) {</span>
+                    /*
+                     * Avoid too many ids in one time query,
+                     * Assume it will get one result by each id
+                     */
+<span class="nc" id="L251">                    remaining = this.batchSize;</span>
+                }
+<span class="nc" id="L253">                Set&lt;Id&gt; ids = h.fetchNext(null, remaining).ids();</span>
+<span class="nc" id="L254">                ids = bindQuery.skipOffsetIfNeeded(ids);</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">                if (ids.isEmpty()) {</span>
+<span class="nc" id="L256">                    return null;</span>
+                }
+
+<span class="nc" id="L259">                return this.queryByIndexIds(ids);</span>
+            });
+        }
+
+        @Override
+        public PageResults&lt;R&gt; iterator(int index, String page, long pageSize) {
+            // Iterate by paging
+<span class="nc bnc" id="L266" title="All 4 branches missed.">            E.checkArgument(0 &lt;= index &amp;&amp; index &lt;= this.holders.size(),</span>
+<span class="nc" id="L267">                            &quot;Invalid page index %s&quot;, index);</span>
+<span class="nc" id="L268">            IdHolder holder = this.holders.get(index);</span>
+<span class="nc" id="L269">            Query bindQuery = holder.query();</span>
+<span class="nc" id="L270">            this.updateResultsFilter(bindQuery);</span>
+<span class="nc" id="L271">            PageIds pageIds = holder.fetchNext(page, pageSize);</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">            if (pageIds.empty()) {</span>
+<span class="nc" id="L273">                return PageResults.emptyIterator();</span>
+            }
+
+<span class="nc" id="L276">            QueryResults&lt;R&gt; results = this.queryByIndexIds(pageIds.ids());</span>
+
+<span class="nc" id="L278">            return new PageResults&lt;&gt;(results, pageIds.pageState());</span>
+        }
+
+        @Override
+        public int total() {
+<span class="nc" id="L283">            return this.holders.size();</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L288">            return String.format(&quot;IndexQuery{%s}&quot;, this.holders);</span>
+        }
+
+        private void updateOffsetIfNeeded(Query query) {
+<span class="nc" id="L292">            Query parent = parent();</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">            assert parent instanceof ConditionQuery;</span>
+<span class="nc" id="L294">            OptimizedType optimized = ((ConditionQuery) parent).optimized();</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">            if (optimized == OptimizedType.INDEX_FILTER) {</span>
+<span class="nc" id="L296">                return;</span>
+            }
+            // Others sub-query may update parent offset, so copy to this query
+<span class="nc" id="L299">            query.copyOffset(parent);</span>
+<span class="nc" id="L300">        }</span>
+
+        private void updateResultsFilter(Query query) {
+<span class="nc bnc" id="L303" title="All 2 branches missed.">            while (query != null) {</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">                if (query instanceof ConditionQuery) {</span>
+<span class="nc" id="L305">                    ((ConditionQuery) query).updateResultsFilter();</span>
+<span class="nc" id="L306">                    return;</span>
+                }
+<span class="nc" id="L308">                query = query.originQuery();</span>
+            }
+<span class="nc" id="L310">        }</span>
+
+        private QueryResults&lt;R&gt; queryByIndexIds(Set&lt;Id&gt; ids) {
+<span class="nc" id="L313">            return this.queryByIndexIds(ids, false);</span>
+        }
+
+        private QueryResults&lt;R&gt; queryByIndexIds(Set&lt;Id&gt; ids, boolean inOrder) {
+<span class="nc" id="L317">            IdQuery query = new IdQuery(parent(), ids);</span>
+<span class="nc" id="L318">            query.mustSortByInput(inOrder);</span>
+<span class="nc" id="L319">            return fetcher().apply(query);</span>
+        }
+    }
+
+    public static class PageResults&lt;R&gt; {
+
+<span class="nc" id="L325">        public static final PageResults&lt;?&gt; EMPTY = new PageResults&lt;&gt;(</span>
+<span class="nc" id="L326">                                                   QueryResults.empty(),</span>
+                                                   PageState.EMPTY);
+
+        private final QueryResults&lt;R&gt; results;
+        private final PageState pageState;
+
+<span class="nc" id="L332">        public PageResults(QueryResults&lt;R&gt; results, PageState pageState) {</span>
+<span class="nc" id="L333">            this.results = results;</span>
+<span class="nc" id="L334">            this.pageState = pageState;</span>
+<span class="nc" id="L335">        }</span>
+
+        public Iterator&lt;R&gt; get() {
+<span class="nc" id="L338">            return this.results.iterator();</span>
+        }
+
+        public boolean hasNextPage() {
+<span class="nc bnc" id="L342" title="All 2 branches missed.">            return !Bytes.equals(this.pageState.position(),</span>
+                                 PageState.EMPTY_BYTES);
+        }
+
+        public Query query() {
+<span class="nc" id="L347">            List&lt;Query&gt; queries = this.results.queries();</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">            E.checkState(queries.size() == 1,</span>
+                         &quot;Expect query size 1, but got: %s&quot;, queries);
+<span class="nc" id="L350">            return queries.get(0);</span>
+        }
+
+        public String page() {
+<span class="nc" id="L354">            return this.pageState.toString();</span>
+        }
+
+        public long total() {
+<span class="nc" id="L358">            return this.pageState.total();</span>
+        }
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+        public static &lt;R&gt; PageResults&lt;R&gt; emptyIterator() {
+<span class="nc" id="L363">            return (PageResults&lt;R&gt;) EMPTY;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

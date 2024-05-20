@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Reflection.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util</a> &gt; <span class="el_source">Reflection.java</span></div><h1>Reflection.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.slf4j.Logger;
+
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Arrays;
+
+<span class="nc" id="L28">public class Reflection {</span>
+
+<span class="nc" id="L30">    private static final Logger LOG = Log.logger(Reflection.class);</span>
+
+    private static final Class&lt;?&gt; REFLECTION_CLAZZ;
+    private static final Method REGISTER_FILEDS_TO_FILTER_METHOD;
+    private static final Method REGISTER_METHODS_TO_FILTER_MOTHOD;
+
+    public static final String JDK_INTERNAL_REFLECT_REFLECTION =
+                               &quot;jdk.internal.reflect.Reflection&quot;;
+    public static final String SUN_REFLECT_REFLECTION =
+                               &quot;sun.reflect.Reflection&quot;;
+
+    static {
+<span class="nc" id="L42">        Method registerFieldsToFilterMethodTemp = null;</span>
+<span class="nc" id="L43">        Method registerMethodsToFilterMethodTemp = null;</span>
+<span class="nc" id="L44">        Class&lt;?&gt; reflectionClazzTemp = null;</span>
+        try {
+<span class="nc" id="L46">            reflectionClazzTemp = Class.forName(</span>
+                                  JDK_INTERNAL_REFLECT_REFLECTION);
+<span class="nc" id="L48">        } catch (ClassNotFoundException e) {</span>
+            try {
+<span class="nc" id="L50">                reflectionClazzTemp = Class.forName(SUN_REFLECT_REFLECTION);</span>
+<span class="nc" id="L51">            } catch (ClassNotFoundException ex) {</span>
+<span class="nc" id="L52">                LOG.error(&quot;Can't find Reflection class&quot;, ex);</span>
+<span class="nc" id="L53">            }</span>
+<span class="nc" id="L54">        }</span>
+
+<span class="nc" id="L56">        REFLECTION_CLAZZ = reflectionClazzTemp;</span>
+
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        if (REFLECTION_CLAZZ != null) {</span>
+            try {
+<span class="nc" id="L60">                registerFieldsToFilterMethodTemp =</span>
+<span class="nc" id="L61">                        REFLECTION_CLAZZ.getMethod(&quot;registerFieldsToFilter&quot;,</span>
+                                                   Class.class, String[].class);
+<span class="nc" id="L63">            } catch (Throwable e) {</span>
+<span class="nc" id="L64">                LOG.error(&quot;Can't find registerFieldsToFilter method&quot;, e);</span>
+<span class="nc" id="L65">            }</span>
+
+            try {
+<span class="nc" id="L68">                registerMethodsToFilterMethodTemp =</span>
+<span class="nc" id="L69">                        REFLECTION_CLAZZ.getMethod(&quot;registerMethodsToFilter&quot;,</span>
+                                                   Class.class, String[].class);
+<span class="nc" id="L71">            } catch (NoSuchMethodException e) {</span>
+<span class="nc" id="L72">                LOG.error(&quot;Can't find registerMethodsToFilter method&quot;, e);</span>
+<span class="nc" id="L73">            }</span>
+        }
+<span class="nc" id="L75">        REGISTER_FILEDS_TO_FILTER_METHOD = registerFieldsToFilterMethodTemp;</span>
+<span class="nc" id="L76">        REGISTER_METHODS_TO_FILTER_MOTHOD = registerMethodsToFilterMethodTemp;</span>
+<span class="nc" id="L77">    }</span>
+
+    public static void registerFieldsToFilter(Class&lt;?&gt; containingClass,
+                                              String... fieldNames) {
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (REGISTER_FILEDS_TO_FILTER_METHOD == null) {</span>
+<span class="nc" id="L82">            throw new NotSupportException(</span>
+                      &quot;Reflection.registerFieldsToFilter()&quot;);
+        }
+
+        try {
+<span class="nc" id="L87">            REGISTER_FILEDS_TO_FILTER_METHOD.setAccessible(true);</span>
+<span class="nc" id="L88">            REGISTER_FILEDS_TO_FILTER_METHOD.invoke(REFLECTION_CLAZZ,</span>
+                                                    containingClass, fieldNames);
+<span class="nc" id="L90">        } catch (IllegalAccessException | InvocationTargetException e) {</span>
+<span class="nc" id="L91">            throw new HugeException(</span>
+                      &quot;Failed to register class '%s' fields to filter: %s&quot;,
+<span class="nc" id="L93">                       containingClass, Arrays.toString(fieldNames));</span>
+<span class="nc" id="L94">        }</span>
+<span class="nc" id="L95">    }</span>
+
+    public static void registerMethodsToFilter(Class&lt;?&gt; containingClass,
+                                               String... methodNames) {
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        if (REGISTER_METHODS_TO_FILTER_MOTHOD == null) {</span>
+<span class="nc" id="L100">            throw new NotSupportException(</span>
+                      &quot;Reflection.registerMethodsToFilterMethod()&quot;);
+        }
+
+        try {
+<span class="nc" id="L105">            REGISTER_METHODS_TO_FILTER_MOTHOD.setAccessible(true);</span>
+<span class="nc" id="L106">            REGISTER_METHODS_TO_FILTER_MOTHOD.invoke(REFLECTION_CLAZZ,</span>
+                                                     containingClass, methodNames);
+<span class="nc" id="L108">        } catch (IllegalAccessException | InvocationTargetException e) {</span>
+<span class="nc" id="L109">            throw new HugeException(</span>
+                      &quot;Failed to register class '%s' methods to filter: %s&quot;,
+<span class="nc" id="L111">                      containingClass, Arrays.toString(methodNames));</span>
+<span class="nc" id="L112">        }</span>
+<span class="nc" id="L113">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

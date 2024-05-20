@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ContextGremlinServer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">ContextGremlinServer.java</span></div><h1>ContextGremlinServer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadFactory;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.auth.HugeGraphAuthProxy.Context;
+import org.apache.hugegraph.auth.HugeGraphAuthProxy.ContextThreadPoolExecutor;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.testutil.Whitebox;
+import org.apache.hugegraph.util.Events;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.groovy.engine.GremlinExecutor;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
+import org.apache.tinkerpop.gremlin.server.GraphManager;
+import org.apache.tinkerpop.gremlin.server.GremlinServer;
+import org.apache.tinkerpop.gremlin.server.Settings;
+import org.apache.tinkerpop.gremlin.server.util.ThreadFactoryUtil;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.slf4j.Logger;
+
+/**
+ * GremlinServer with custom ServerGremlinExecutor, which can pass Context
+ */
+public class ContextGremlinServer extends GremlinServer {
+
+<span class="nc" id="L47">    private static final Logger LOG = Log.logger(ContextGremlinServer.class);</span>
+
+    private static final String G_PREFIX = &quot;__g_&quot;;
+
+    private final EventHub eventHub;
+
+    static {
+<span class="nc" id="L54">        HugeGraphAuthProxy.setContext(Context.admin());</span>
+<span class="nc" id="L55">    }</span>
+
+    public ContextGremlinServer(final Settings settings, EventHub eventHub) {
+        /*
+         * pass custom Executor https://github.com/apache/tinkerpop/pull/813
+         */
+<span class="nc" id="L61">        super(settings, newGremlinExecutorService(settings));</span>
+<span class="nc" id="L62">        this.eventHub = eventHub;</span>
+<span class="nc" id="L63">        this.listenChanges();</span>
+<span class="nc" id="L64">    }</span>
+
+    private void listenChanges() {
+<span class="nc" id="L67">        this.eventHub.listen(Events.GRAPH_CREATE, event -&gt; {</span>
+<span class="nc" id="L68">            LOG.debug(&quot;GremlinServer accepts event '{}'&quot;, event.name());</span>
+<span class="nc" id="L69">            event.checkArgs(HugeGraph.class);</span>
+<span class="nc" id="L70">            HugeGraph graph = (HugeGraph) event.args()[0];</span>
+<span class="nc" id="L71">            this.injectGraph(graph);</span>
+<span class="nc" id="L72">            return null;</span>
+        });
+<span class="nc" id="L74">        this.eventHub.listen(Events.GRAPH_DROP, event -&gt; {</span>
+<span class="nc" id="L75">            LOG.debug(&quot;GremlinServer accepts event '{}'&quot;, event.name());</span>
+<span class="nc" id="L76">            event.checkArgs(HugeGraph.class);</span>
+<span class="nc" id="L77">            HugeGraph graph = (HugeGraph) event.args()[0];</span>
+<span class="nc" id="L78">            this.removeGraph(graph.name());</span>
+<span class="nc" id="L79">            return null;</span>
+        });
+<span class="nc" id="L81">    }</span>
+
+    private void unlistenChanges() {
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        if (this.eventHub == null) {</span>
+<span class="nc" id="L85">            return;</span>
+        }
+<span class="nc" id="L87">        this.eventHub.unlisten(Events.GRAPH_CREATE);</span>
+<span class="nc" id="L88">        this.eventHub.unlisten(Events.GRAPH_DROP);</span>
+<span class="nc" id="L89">    }</span>
+
+    @Override
+    public synchronized CompletableFuture&lt;Void&gt; stop() {
+        try {
+<span class="nc" id="L94">            return super.stop();</span>
+        } finally {
+<span class="nc" id="L96">            this.unlistenChanges();</span>
+        }
+    }
+
+    public void injectAuthGraph() {
+<span class="nc" id="L101">        GraphManager manager = this.getServerGremlinExecutor()</span>
+<span class="nc" id="L102">                                   .getGraphManager();</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        for (String name : manager.getGraphNames()) {</span>
+<span class="nc" id="L104">            Graph graph = manager.getGraph(name);</span>
+<span class="nc" id="L105">            graph = new HugeGraphAuthProxy((HugeGraph) graph);</span>
+<span class="nc" id="L106">            manager.putGraph(name, graph);</span>
+<span class="nc" id="L107">        }</span>
+<span class="nc" id="L108">    }</span>
+
+    public void injectTraversalSource() {
+<span class="nc" id="L111">        GraphManager manager = this.getServerGremlinExecutor()</span>
+<span class="nc" id="L112">                                   .getGraphManager();</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        for (String graph : manager.getGraphNames()) {</span>
+<span class="nc" id="L114">            GraphTraversalSource g = manager.getGraph(graph).traversal();</span>
+<span class="nc" id="L115">            String gName = G_PREFIX + graph;</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            if (manager.getTraversalSource(gName) != null) {</span>
+<span class="nc" id="L117">                throw new HugeException(</span>
+                          &quot;Found existing name '%s' in global bindings, &quot; +
+                          &quot;it may lead to gremlin query error.&quot;, gName);
+            }
+            // Add a traversal source for all graphs with customed rule.
+<span class="nc" id="L122">            manager.putTraversalSource(gName, g);</span>
+<span class="nc" id="L123">        }</span>
+<span class="nc" id="L124">    }</span>
+
+    private void injectGraph(HugeGraph graph) {
+<span class="nc" id="L127">        String name = graph.name();</span>
+<span class="nc" id="L128">        GraphManager manager = this.getServerGremlinExecutor()</span>
+<span class="nc" id="L129">                                   .getGraphManager();</span>
+<span class="nc" id="L130">        GremlinExecutor executor = this.getServerGremlinExecutor()</span>
+<span class="nc" id="L131">                                       .getGremlinExecutor();</span>
+
+<span class="nc" id="L133">        manager.putGraph(name, graph);</span>
+
+<span class="nc" id="L135">        GraphTraversalSource g = manager.getGraph(name).traversal();</span>
+<span class="nc" id="L136">        manager.putTraversalSource(G_PREFIX + name, g);</span>
+
+<span class="nc" id="L138">        Whitebox.invoke(executor, &quot;globalBindings&quot;,</span>
+                        new Class&lt;?&gt;[]{ String.class, Object.class },
+                        &quot;put&quot;, name, graph);
+<span class="nc" id="L141">    }</span>
+
+    private void removeGraph(String name) {
+<span class="nc" id="L144">        GraphManager manager = this.getServerGremlinExecutor()</span>
+<span class="nc" id="L145">                                   .getGraphManager();</span>
+<span class="nc" id="L146">        GremlinExecutor executor = this.getServerGremlinExecutor()</span>
+<span class="nc" id="L147">                                       .getGremlinExecutor();</span>
+        try {
+<span class="nc" id="L149">            manager.removeGraph(name);</span>
+<span class="nc" id="L150">            manager.removeTraversalSource(G_PREFIX + name);</span>
+<span class="nc" id="L151">            Whitebox.invoke(executor, &quot;globalBindings&quot;,</span>
+                            new Class&lt;?&gt;[]{ Object.class },
+                            &quot;remove&quot;, name);
+<span class="nc" id="L154">        } catch (Exception e) {</span>
+<span class="nc" id="L155">            throw new HugeException(&quot;Failed to remove graph '%s' from &quot; +</span>
+                                    &quot;gremlin server context&quot;, e, name);
+<span class="nc" id="L157">        }</span>
+<span class="nc" id="L158">    }</span>
+
+    static ExecutorService newGremlinExecutorService(Settings settings) {
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        if (settings.gremlinPool == 0) {</span>
+<span class="nc" id="L162">            settings.gremlinPool = CoreOptions.CPUS;</span>
+        }
+<span class="nc" id="L164">        int size = settings.gremlinPool;</span>
+<span class="nc" id="L165">        ThreadFactory factory = ThreadFactoryUtil.create(&quot;exec-%d&quot;);</span>
+<span class="nc" id="L166">        return new ContextThreadPoolExecutor(size, size, factory);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

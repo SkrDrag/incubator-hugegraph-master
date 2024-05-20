@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BackendEntry.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">BackendEntry.java</span></div><h1>BackendEntry.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.NoSuchElementException;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.iterator.WrappedIterator;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.Idfiable;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.StringEncoding;
+
+public interface BackendEntry extends Idfiable {
+
+<span class="nc" id="L34">    class BackendColumn implements Comparable&lt;BackendColumn&gt; {</span>
+
+        public byte[] name;
+        public byte[] value;
+
+        public static BackendColumn of(byte[] name, byte[] value) {
+<span class="nc" id="L40">            BackendColumn col = new BackendColumn();</span>
+<span class="nc" id="L41">            col.name = name;</span>
+<span class="nc" id="L42">            col.value = value;</span>
+<span class="nc" id="L43">            return col;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L48">            return String.format(&quot;%s=%s&quot;,</span>
+<span class="nc" id="L49">                                 StringEncoding.decode(name),</span>
+<span class="nc" id="L50">                                 StringEncoding.decode(value));</span>
+        }
+
+        @Override
+        public int compareTo(BackendColumn other) {
+<span class="nc bnc" id="L55" title="All 2 branches missed.">            if (other == null) {</span>
+<span class="nc" id="L56">                return 1;</span>
+            }
+<span class="nc" id="L58">            return Bytes.compare(this.name, other.name);</span>
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+<span class="nc bnc" id="L63" title="All 2 branches missed.">            if (!(obj instanceof BackendColumn)) {</span>
+<span class="nc" id="L64">                return false;</span>
+            }
+<span class="nc" id="L66">            BackendColumn other = (BackendColumn) obj;</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">            return Bytes.equals(this.name, other.name) &amp;&amp;</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">                   Bytes.equals(this.value, other.value);</span>
+        }
+
+        public int hashCode() {
+<span class="nc" id="L72">            return this.name.hashCode() ^</span>
+<span class="nc" id="L73">                   this.value.hashCode();</span>
+        }
+
+    }
+
+    HugeType type();
+
+    @Override
+    Id id();
+
+    Id originId();
+
+    Id subId();
+
+    long ttl();
+
+    int columnsSize();
+
+    Collection&lt;BackendColumn&gt; columns();
+
+    void columns(Collection&lt;BackendColumn&gt; columns);
+
+    void columns(BackendColumn column);
+
+    void merge(BackendEntry other);
+
+    boolean mergeable(BackendEntry other);
+
+    void clear();
+
+    default boolean belongToMe(BackendColumn column) {
+<span class="nc" id="L104">        return Bytes.prefixWith(column.name, id().asBytes());</span>
+    }
+
+    default boolean olap() {
+<span class="nc" id="L108">        return false;</span>
+    }
+
+    interface BackendIterator&lt;T&gt; extends Iterator&lt;T&gt;, AutoCloseable {
+
+        @Override
+        void close();
+
+        byte[] position();
+    }
+
+    interface BackendColumnIterator extends BackendIterator&lt;BackendColumn&gt; {
+
+        static BackendColumnIterator empty() {
+<span class="nc" id="L122">            return EMPTY;</span>
+        }
+
+        static BackendColumnIterator iterator(BackendColumn element) {
+<span class="nc" id="L126">            return new OneColumnIterator(element);</span>
+        }
+
+        static BackendColumnIterator wrap(Iterator&lt;BackendColumn&gt; iter) {
+<span class="nc" id="L130">            return new BackendColumnIteratorWrapper(iter);</span>
+        }
+
+<span class="nc" id="L133">        BackendColumnIterator EMPTY = new EmptyIterator();</span>
+
+<span class="nc" id="L135">        final class EmptyIterator implements BackendColumnIterator {</span>
+
+            @Override
+            public boolean hasNext() {
+<span class="nc" id="L139">                return false;</span>
+            }
+
+            @Override
+            public BackendColumn next() {
+<span class="nc" id="L144">                throw new NoSuchElementException();</span>
+            }
+
+            @Override
+            public void close() {
+                // pass
+<span class="nc" id="L150">            }</span>
+
+            @Override
+            public byte[] position() {
+<span class="nc" id="L154">                return null;</span>
+            }
+        }
+
+<span class="nc" id="L158">        final class OneColumnIterator implements BackendColumnIterator {</span>
+
+            private BackendColumn element;
+
+<span class="nc" id="L162">            public OneColumnIterator(BackendColumn element) {</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                assert element != null;</span>
+<span class="nc" id="L164">                this.element = element;</span>
+<span class="nc" id="L165">            }</span>
+
+            @Override
+            public boolean hasNext() {
+<span class="nc bnc" id="L169" title="All 2 branches missed.">                return this.element != null;</span>
+            }
+
+            @Override
+            public BackendColumn next() {
+<span class="nc bnc" id="L174" title="All 2 branches missed.">                if (this.element == null) {</span>
+<span class="nc" id="L175">                    throw new NoSuchElementException();</span>
+                }
+<span class="nc" id="L177">                BackendColumn result = this.element;</span>
+<span class="nc" id="L178">                this.element = null;</span>
+<span class="nc" id="L179">                return result;</span>
+            }
+
+            @Override
+            public void close() {
+                // pass
+<span class="nc" id="L185">            }</span>
+
+            @Override
+            public byte[] position() {
+<span class="nc" id="L189">                return null;</span>
+            }
+        }
+
+        final class BackendColumnIteratorWrapper implements BackendColumnIterator {
+
+            private final Iterator&lt;BackendColumn&gt; iter;
+
+<span class="nc" id="L197">            public BackendColumnIteratorWrapper(Iterator&lt;BackendColumn&gt; iter) {</span>
+<span class="nc" id="L198">                E.checkNotNull(iter, &quot;iter&quot;);</span>
+<span class="nc" id="L199">                this.iter = iter;</span>
+<span class="nc" id="L200">            }</span>
+
+            @Override
+            public boolean hasNext() {
+<span class="nc" id="L204">                return this.iter.hasNext();</span>
+            }
+
+            @Override
+            public BackendColumn next() {
+<span class="nc" id="L209">                return this.iter.next();</span>
+            }
+
+            @Override
+            public void close() {
+<span class="nc" id="L214">                WrappedIterator.close(this.iter);</span>
+<span class="nc" id="L215">            }</span>
+
+            @Override
+            public byte[] position() {
+                // No paging position for discrete iterators like queryByIds()
+<span class="nc" id="L220">                return null;</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

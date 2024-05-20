@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RepeatEdgeStep.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.algorithm.steps</a> &gt; <span class="el_source">RepeatEdgeStep.java</span></div><h1>RepeatEdgeStep.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.algorithm.steps;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.type.define.Directions;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+
+public class RepeatEdgeStep extends EdgeStep {
+
+<span class="nc" id="L32">    private int maxTimes = 1;</span>
+
+    public RepeatEdgeStep(HugeGraph g, Directions direction) {
+<span class="nc" id="L35">        this(g, direction, ImmutableList.of());</span>
+<span class="nc" id="L36">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, Directions direction, int maxTimes) {
+<span class="nc" id="L39">        this(g, direction);</span>
+<span class="nc" id="L40">        this.maxTimes = maxTimes;</span>
+<span class="nc" id="L41">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, List&lt;String&gt; labels) {
+<span class="nc" id="L44">        this(g, Directions.BOTH, labels);</span>
+<span class="nc" id="L45">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, List&lt;String&gt; labels, int maxTimes) {
+<span class="nc" id="L48">        this(g, labels);</span>
+<span class="nc" id="L49">        this.maxTimes = maxTimes;</span>
+<span class="nc" id="L50">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, Map&lt;String, Object&gt; properties) {
+<span class="nc" id="L53">        this(g, Directions.BOTH, ImmutableList.of(), properties);</span>
+<span class="nc" id="L54">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, Map&lt;String, Object&gt; properties,
+                          int maxTimes) {
+<span class="nc" id="L58">        this(g, properties);</span>
+<span class="nc" id="L59">        this.maxTimes = maxTimes;</span>
+<span class="nc" id="L60">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, Directions direction,
+                          List&lt;String&gt; labels) {
+<span class="nc" id="L64">        this(g, direction, labels, ImmutableMap.of());</span>
+<span class="nc" id="L65">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, Directions direction,
+                          List&lt;String&gt; labels, int maxTimes) {
+<span class="nc" id="L69">        this(g, direction, labels);</span>
+<span class="nc" id="L70">        this.maxTimes = maxTimes;</span>
+<span class="nc" id="L71">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, Directions direction,
+                          List&lt;String&gt; labels,
+                          Map&lt;String, Object&gt; properties) {
+<span class="nc" id="L76">        this(g, direction, labels, properties,</span>
+<span class="nc" id="L77">             Long.parseLong(DEFAULT_MAX_DEGREE), 0L, 1);</span>
+<span class="nc" id="L78">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, Directions direction,
+                          List&lt;String&gt; labels,
+                          Map&lt;String, Object&gt; properties, int maxTimes) {
+<span class="nc" id="L83">        this(g, direction, labels, properties);</span>
+<span class="nc" id="L84">        this.maxTimes = maxTimes;</span>
+<span class="nc" id="L85">    }</span>
+
+    public RepeatEdgeStep(HugeGraph g, Directions direction,
+                          List&lt;String&gt; labels,
+                          Map&lt;String, Object&gt; properties, long degree,
+                          long skipDegree, int maxTimes) {
+<span class="nc" id="L91">        super(g, direction, labels, properties, degree, skipDegree);</span>
+<span class="nc" id="L92">        this.maxTimes = maxTimes;</span>
+<span class="nc" id="L93">    }</span>
+
+    public int remainTimes() {
+<span class="nc" id="L96">        return this.maxTimes;</span>
+    }
+
+    public void decreaseTimes() {
+<span class="nc" id="L100">        this.maxTimes--;</span>
+<span class="nc" id="L101">    }</span>
+
+    public int maxTimes() {
+<span class="nc" id="L104">        return this.maxTimes;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

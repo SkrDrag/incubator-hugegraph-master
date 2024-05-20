@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CustomizedPathsAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">CustomizedPathsAPI.java</span></div><h1>CustomizedPathsAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_CAPACITY;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_PATHS_LIMIT;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_SAMPLE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_WEIGHT;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.traversal.algorithm.CustomizePathsTraverser;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.traversal.algorithm.steps.WeightedEdgeStep;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/traversers/customizedpaths&quot;)
+@Singleton
+@Tag(name = &quot;CustomizedPathsAPI&quot;)
+<span class="nc" id="L63">public class CustomizedPathsAPI extends API {</span>
+
+<span class="nc" id="L65">    private static final Logger LOG = Log.logger(CustomizedPathsAPI.class);</span>
+
+    private static List&lt;WeightedEdgeStep&gt; step(HugeGraph graph,
+                                               PathRequest request) {
+<span class="nc" id="L69">        int stepSize = request.steps.size();</span>
+<span class="nc" id="L70">        List&lt;WeightedEdgeStep&gt; steps = new ArrayList&lt;&gt;(stepSize);</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        for (Step step : request.steps) {</span>
+<span class="nc" id="L72">            steps.add(step.jsonToStep(graph));</span>
+<span class="nc" id="L73">        }</span>
+<span class="nc" id="L74">        return steps;</span>
+    }
+
+    @POST
+    @Timed
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String post(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       PathRequest request) {
+<span class="nc" id="L84">        E.checkArgumentNotNull(request, &quot;The path request body can't be null&quot;);</span>
+<span class="nc" id="L85">        E.checkArgumentNotNull(request.sources,</span>
+                               &quot;The sources of path request can't be null&quot;);
+<span class="nc bnc" id="L87" title="All 4 branches missed.">        E.checkArgument(request.steps != null &amp;&amp; !request.steps.isEmpty(),</span>
+                        &quot;The steps of path request can't be empty&quot;);
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        if (request.sortBy == null) {</span>
+<span class="nc" id="L90">            request.sortBy = SortBy.NONE;</span>
+        }
+
+<span class="nc" id="L93">        LOG.debug(&quot;Graph [{}] get customized paths from source vertex '{}', &quot; +</span>
+                  &quot;with steps '{}', sort by '{}', capacity '{}', limit '{}', &quot; +
+                  &quot;with_vertex '{}' and with_edge '{}'&quot;, graph, request.sources, request.steps,
+<span class="nc" id="L96">                  request.sortBy, request.capacity, request.limit,</span>
+<span class="nc" id="L97">                  request.withVertex, request.withEdge);</span>
+
+<span class="nc" id="L99">        ApiMeasurer measure = new ApiMeasurer();</span>
+
+<span class="nc" id="L101">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L102">        Iterator&lt;Vertex&gt; sources = request.sources.vertices(g);</span>
+<span class="nc" id="L103">        List&lt;WeightedEdgeStep&gt; steps = step(g, request);</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        boolean sorted = request.sortBy != SortBy.NONE;</span>
+
+<span class="nc" id="L106">        CustomizePathsTraverser traverser = new CustomizePathsTraverser(g);</span>
+        List&lt;HugeTraverser.Path&gt; paths;
+<span class="nc" id="L108">        paths = traverser.customizedPaths(sources, steps, sorted,</span>
+                                          request.capacity, request.limit);
+<span class="nc" id="L110">        measure.addIterCount(traverser.vertexIterCounter.get(),</span>
+<span class="nc" id="L111">                             traverser.edgeIterCounter.get());</span>
+
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        if (sorted) {</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            boolean incr = request.sortBy == SortBy.INCR;</span>
+<span class="nc" id="L115">            paths = CustomizePathsTraverser.topNPath(paths, incr,</span>
+                                                     request.limit);
+        }
+
+        Iterator&lt;?&gt; iterVertex;
+<span class="nc" id="L120">        Set&lt;Id&gt; vertexIds = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        for (HugeTraverser.Path path : paths) {</span>
+<span class="nc" id="L122">            vertexIds.addAll(path.vertices());</span>
+<span class="nc" id="L123">        }</span>
+<span class="nc bnc" id="L124" title="All 4 branches missed.">        if (request.withVertex &amp;&amp; !vertexIds.isEmpty()) {</span>
+<span class="nc" id="L125">            iterVertex = g.vertices(vertexIds.toArray());</span>
+<span class="nc" id="L126">            measure.addIterCount(vertexIds.size(), 0L);</span>
+        } else {
+<span class="nc" id="L128">            iterVertex = vertexIds.iterator();</span>
+        }
+
+        Iterator&lt;?&gt; iterEdge;
+<span class="nc" id="L132">        Set&lt;Edge&gt; edges = traverser.edgeResults().getEdges(paths);</span>
+<span class="nc bnc" id="L133" title="All 4 branches missed.">        if (request.withEdge &amp;&amp; !edges.isEmpty()) {</span>
+<span class="nc" id="L134">            iterEdge = edges.iterator();</span>
+        } else {
+<span class="nc" id="L136">            iterEdge = HugeTraverser.EdgeRecord.getEdgeIds(edges).iterator();</span>
+        }
+
+<span class="nc" id="L139">        return manager.serializer(g, measure.measures())</span>
+<span class="nc" id="L140">                      .writePaths(&quot;paths&quot;, paths, false,</span>
+                                  iterVertex, iterEdge);
+    }
+
+<span class="nc" id="L144">    private enum SortBy {</span>
+<span class="nc" id="L145">        INCR,</span>
+<span class="nc" id="L146">        DECR,</span>
+<span class="nc" id="L147">        NONE</span>
+    }
+
+<span class="nc" id="L150">    private static class PathRequest {</span>
+
+        @JsonProperty(&quot;sources&quot;)
+        public Vertices sources;
+        @JsonProperty(&quot;steps&quot;)
+        public List&lt;Step&gt; steps;
+        @JsonProperty(&quot;sort_by&quot;)
+        public SortBy sortBy;
+<span class="nc" id="L158">        @JsonProperty(&quot;capacity&quot;)</span>
+<span class="nc" id="L159">        public long capacity = Long.parseLong(DEFAULT_CAPACITY);</span>
+<span class="nc" id="L160">        @JsonProperty(&quot;limit&quot;)</span>
+<span class="nc" id="L161">        public int limit = Integer.parseInt(DEFAULT_PATHS_LIMIT);</span>
+<span class="nc" id="L162">        @JsonProperty(&quot;with_vertex&quot;)</span>
+        public boolean withVertex = false;
+
+<span class="nc" id="L165">        @JsonProperty(&quot;with_edge&quot;)</span>
+        public boolean withEdge = false;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L170">            return String.format(&quot;PathRequest{sourceVertex=%s,steps=%s,&quot; +</span>
+                                 &quot;sortBy=%s,capacity=%s,limit=%s,&quot; +
+                                 &quot;withVertex=%s,withEdge=%s}&quot;, this.sources, this.steps,
+<span class="nc" id="L173">                                 this.sortBy, this.capacity, this.limit,</span>
+<span class="nc" id="L174">                                 this.withVertex, this.withEdge);</span>
+        }
+    }
+
+<span class="nc" id="L178">    private static class Step {</span>
+
+        @JsonProperty(&quot;direction&quot;)
+        public Directions direction;
+        @JsonProperty(&quot;labels&quot;)
+        public List&lt;String&gt; labels;
+        @JsonProperty(&quot;properties&quot;)
+        public Map&lt;String, Object&gt; properties;
+<span class="nc" id="L186">        @JsonAlias(&quot;degree&quot;)</span>
+        @JsonProperty(&quot;max_degree&quot;)
+<span class="nc" id="L188">        public long maxDegree = Long.parseLong(DEFAULT_MAX_DEGREE);</span>
+<span class="nc" id="L189">        @JsonProperty(&quot;skip_degree&quot;)</span>
+        public long skipDegree = 0L;
+        @JsonProperty(&quot;weight_by&quot;)
+        public String weightBy;
+<span class="nc" id="L193">        @JsonProperty(&quot;default_weight&quot;)</span>
+<span class="nc" id="L194">        public double defaultWeight = Double.parseDouble(DEFAULT_WEIGHT);</span>
+<span class="nc" id="L195">        @JsonProperty(&quot;sample&quot;)</span>
+<span class="nc" id="L196">        public long sample = Long.parseLong(DEFAULT_SAMPLE);</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L200">            return String.format(&quot;Step{direction=%s,labels=%s,properties=%s,&quot; +</span>
+                                 &quot;maxDegree=%s,skipDegree=%s,&quot; +
+                                 &quot;weightBy=%s,defaultWeight=%s,sample=%s}&quot;,
+                                 this.direction, this.labels, this.properties,
+<span class="nc" id="L204">                                 this.maxDegree, this.skipDegree,</span>
+<span class="nc" id="L205">                                 this.weightBy, this.defaultWeight,</span>
+<span class="nc" id="L206">                                 this.sample);</span>
+        }
+
+        private WeightedEdgeStep jsonToStep(HugeGraph g) {
+<span class="nc" id="L210">            return new WeightedEdgeStep(g, this.direction, this.labels,</span>
+                                        this.properties, this.maxDegree,
+                                        this.skipDegree, this.weightBy,
+                                        this.defaultWeight, this.sample);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

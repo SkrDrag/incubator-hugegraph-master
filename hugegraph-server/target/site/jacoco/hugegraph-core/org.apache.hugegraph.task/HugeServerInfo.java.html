@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeServerInfo.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.task</a> &gt; <span class="el_source">HugeServerInfo.java</span></div><h1>HugeServerInfo.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.task;
+
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.NodeRole;
+import org.apache.hugegraph.type.define.SerialEnum;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.T;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.VertexProperty;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.util.DateUtil;
+import org.apache.hugegraph.util.E;
+
+public class HugeServerInfo {
+
+    // Unit millisecond
+    private static final long EXPIRED_INTERVAL =
+                              TaskManager.SCHEDULE_PERIOD * 10;
+
+    private Id id;
+    private NodeRole role;
+    private int maxLoad;
+    private int load;
+    private Date updateTime;
+
+<span class="nc" id="L60">    private transient boolean updated = false;</span>
+
+    public HugeServerInfo(String name, NodeRole role) {
+<span class="nc" id="L63">        this(IdGenerator.of(name), role);</span>
+<span class="nc" id="L64">    }</span>
+
+<span class="nc" id="L66">    public HugeServerInfo(Id id) {</span>
+<span class="nc" id="L67">        this.id = id;</span>
+<span class="nc" id="L68">        this.role = NodeRole.WORKER;</span>
+<span class="nc" id="L69">        this.maxLoad = 0;</span>
+<span class="nc" id="L70">        this.load = 0;</span>
+<span class="nc" id="L71">        this.updateTime = DateUtil.now();</span>
+<span class="nc" id="L72">    }</span>
+
+<span class="nc" id="L74">    public HugeServerInfo(Id id, NodeRole role) {</span>
+<span class="nc" id="L75">        this.id = id;</span>
+<span class="nc" id="L76">        this.load = 0;</span>
+<span class="nc" id="L77">        this.role = role;</span>
+<span class="nc" id="L78">        this.updateTime = DateUtil.now();</span>
+<span class="nc" id="L79">    }</span>
+
+    public Id id() {
+<span class="nc" id="L82">        return this.id;</span>
+    }
+
+    public String name() {
+<span class="nc" id="L86">        return this.id.asString();</span>
+    }
+
+    public NodeRole role() {
+<span class="nc" id="L90">        return this.role;</span>
+    }
+
+    public void role(NodeRole role) {
+<span class="nc" id="L94">        this.role = role;</span>
+<span class="nc" id="L95">    }</span>
+
+    public int maxLoad() {
+<span class="nc" id="L98">        return this.maxLoad;</span>
+    }
+
+    public void maxLoad(int maxLoad) {
+<span class="nc" id="L102">        this.maxLoad = maxLoad;</span>
+<span class="nc" id="L103">    }</span>
+
+    public int load() {
+<span class="nc" id="L106">        return this.load;</span>
+    }
+
+    public void load(int load) {
+<span class="nc" id="L110">        this.load = load;</span>
+<span class="nc" id="L111">    }</span>
+
+    public void increaseLoad(int delta) {
+<span class="nc" id="L114">        this.load += delta;</span>
+<span class="nc" id="L115">        this.updated = true;</span>
+<span class="nc" id="L116">    }</span>
+
+    public Date updateTime() {
+<span class="nc" id="L119">        return this.updateTime;</span>
+    }
+
+    public void updateTime(Date updateTime) {
+<span class="nc" id="L123">        this.updateTime = updateTime;</span>
+<span class="nc" id="L124">    }</span>
+
+    public boolean alive() {
+<span class="nc" id="L127">        long now = DateUtil.now().getTime();</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        return this.updateTime != null &amp;&amp;</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">               this.updateTime.getTime() + EXPIRED_INTERVAL &gt; now;</span>
+    }
+
+    public boolean updated() {
+<span class="nc" id="L133">        return this.updated;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L138">        return String.format(&quot;HugeServerInfo(%s)%s&quot;, this.id, this.asMap());</span>
+    }
+
+    protected boolean property(String key, Object value) {
+<span class="nc bnc" id="L142" title="All 5 branches missed.">        switch (key) {</span>
+            case P.ROLE:
+<span class="nc" id="L144">                this.role = SerialEnum.fromCode(NodeRole.class, (byte) value);</span>
+<span class="nc" id="L145">                break;</span>
+            case P.MAX_LOAD:
+<span class="nc" id="L147">                this.maxLoad = (int) value;</span>
+<span class="nc" id="L148">                break;</span>
+            case P.LOAD:
+<span class="nc" id="L150">                this.load = (int) value;</span>
+<span class="nc" id="L151">                break;</span>
+            case P.UPDATE_TIME:
+<span class="nc" id="L153">                this.updateTime = (Date) value;</span>
+<span class="nc" id="L154">                break;</span>
+            default:
+<span class="nc" id="L156">                throw new AssertionError(&quot;Unsupported key: &quot; + key);</span>
+        }
+<span class="nc" id="L158">        return true;</span>
+    }
+
+    protected Object[] asArray() {
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        E.checkState(this.id != null, &quot;Server id can't be null&quot;);</span>
+
+<span class="nc" id="L164">        List&lt;Object&gt; list = new ArrayList&lt;&gt;(12);</span>
+
+<span class="nc" id="L166">        list.add(T.label);</span>
+<span class="nc" id="L167">        list.add(P.SERVER);</span>
+
+<span class="nc" id="L169">        list.add(T.id);</span>
+<span class="nc" id="L170">        list.add(this.id);</span>
+
+<span class="nc" id="L172">        list.add(P.ROLE);</span>
+<span class="nc" id="L173">        list.add(this.role.code());</span>
+
+<span class="nc" id="L175">        list.add(P.MAX_LOAD);</span>
+<span class="nc" id="L176">        list.add(this.maxLoad);</span>
+
+<span class="nc" id="L178">        list.add(P.LOAD);</span>
+<span class="nc" id="L179">        list.add(this.load);</span>
+
+<span class="nc" id="L181">        list.add(P.UPDATE_TIME);</span>
+<span class="nc" id="L182">        list.add(this.updateTime);</span>
+
+<span class="nc" id="L184">        return list.toArray();</span>
+    }
+
+    public Map&lt;String, Object&gt; asMap() {
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        E.checkState(this.id != null, &quot;Server id can't be null&quot;);</span>
+
+<span class="nc" id="L190">        Map&lt;String, Object&gt; map = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L192">        map.put(Graph.Hidden.unHide(P.ID), this.id);</span>
+<span class="nc" id="L193">        map.put(Graph.Hidden.unHide(P.LABEL), P.SERVER);</span>
+<span class="nc" id="L194">        map.put(Graph.Hidden.unHide(P.ROLE), this.role);</span>
+<span class="nc" id="L195">        map.put(Graph.Hidden.unHide(P.MAX_LOAD), this.maxLoad);</span>
+<span class="nc" id="L196">        map.put(Graph.Hidden.unHide(P.LOAD), this.load);</span>
+<span class="nc" id="L197">        map.put(Graph.Hidden.unHide(P.UPDATE_TIME), this.updateTime);</span>
+
+<span class="nc" id="L199">        return map;</span>
+    }
+
+    public static HugeServerInfo fromVertex(Vertex vertex) {
+<span class="nc" id="L203">        HugeServerInfo serverInfo = new HugeServerInfo((Id) vertex.id());</span>
+<span class="nc" id="L204">        for (Iterator&lt;VertexProperty&lt;Object&gt;&gt; iter = vertex.properties();</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">             iter.hasNext();) {</span>
+<span class="nc" id="L206">            VertexProperty&lt;Object&gt; prop = iter.next();</span>
+<span class="nc" id="L207">            serverInfo.property(prop.key(), prop.value());</span>
+<span class="nc" id="L208">        }</span>
+<span class="nc" id="L209">        return serverInfo;</span>
+    }
+
+    public &lt;V&gt; boolean suitableFor(HugeTask&lt;V&gt; task, long now) {
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (task.computer() != this.role.computer()) {</span>
+<span class="nc" id="L214">            return false;</span>
+        }
+<span class="nc bnc" id="L216" title="All 2 branches missed.">        if (this.updateTime.getTime() + EXPIRED_INTERVAL &lt; now ||</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">            this.load() + task.load() &gt; this.maxLoad) {</span>
+<span class="nc" id="L218">            return false;</span>
+        }
+<span class="nc" id="L220">        return true;</span>
+    }
+
+    public static Schema schema(HugeGraphParams graph) {
+<span class="nc" id="L224">        return new Schema(graph);</span>
+    }
+
+<span class="nc" id="L227">    public static final class P {</span>
+
+<span class="nc" id="L229">        public static final String SERVER = Graph.Hidden.hide(&quot;server&quot;);</span>
+
+<span class="nc" id="L231">        public static final String ID = T.id.getAccessor();</span>
+<span class="nc" id="L232">        public static final String LABEL = T.label.getAccessor();</span>
+
+        public static final String NAME = &quot;~server_name&quot;;
+        public static final String ROLE = &quot;~server_role&quot;;
+        public static final String LOAD = &quot;~server_load&quot;;
+        public static final String MAX_LOAD = &quot;~server_max_load&quot;;
+        public static final String UPDATE_TIME = &quot;~server_update_time&quot;;
+
+        public static String unhide(String key) {
+<span class="nc" id="L241">            final String prefix = Graph.Hidden.hide(&quot;server_&quot;);</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">            if (key.startsWith(prefix)) {</span>
+<span class="nc" id="L243">                return key.substring(prefix.length());</span>
+            }
+<span class="nc" id="L245">            return key;</span>
+        }
+    }
+
+    public static final class Schema {
+
+<span class="nc" id="L251">        public static final String SERVER = P.SERVER;</span>
+
+        protected final HugeGraphParams graph;
+
+<span class="nc" id="L255">        public Schema(HugeGraphParams graph) {</span>
+<span class="nc" id="L256">            this.graph = graph;</span>
+<span class="nc" id="L257">        }</span>
+
+        public void initSchemaIfNeeded() {
+<span class="nc bnc" id="L260" title="All 2 branches missed.">            if (this.existVertexLabel(SERVER)) {</span>
+<span class="nc" id="L261">                return;</span>
+            }
+
+<span class="nc" id="L264">            HugeGraph graph = this.graph.graph();</span>
+<span class="nc" id="L265">            String[] properties = this.initProperties();</span>
+
+            // Create vertex label '~server'
+<span class="nc" id="L268">            VertexLabel label = graph.schema().vertexLabel(SERVER)</span>
+<span class="nc" id="L269">                                     .properties(properties)</span>
+<span class="nc" id="L270">                                     .useCustomizeStringId()</span>
+<span class="nc" id="L271">                                     .nullableKeys(P.ROLE, P.MAX_LOAD,</span>
+                                                   P.LOAD, P.UPDATE_TIME)
+<span class="nc" id="L273">                                     .enableLabelIndex(true)</span>
+<span class="nc" id="L274">                                     .build();</span>
+<span class="nc" id="L275">            this.graph.schemaTransaction().addVertexLabel(label);</span>
+<span class="nc" id="L276">        }</span>
+
+        private String[] initProperties() {
+<span class="nc" id="L279">            List&lt;String&gt; props = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L281">            props.add(createPropertyKey(P.ROLE, DataType.BYTE));</span>
+<span class="nc" id="L282">            props.add(createPropertyKey(P.MAX_LOAD, DataType.INT));</span>
+<span class="nc" id="L283">            props.add(createPropertyKey(P.LOAD, DataType.INT));</span>
+<span class="nc" id="L284">            props.add(createPropertyKey(P.UPDATE_TIME, DataType.DATE));</span>
+
+<span class="nc" id="L286">            return props.toArray(new String[0]);</span>
+        }
+
+        public boolean existVertexLabel(String label) {
+<span class="nc" id="L290">            return this.graph.schemaTransaction()</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">                       .getVertexLabel(label) != null;</span>
+        }
+
+        @SuppressWarnings(&quot;unused&quot;)
+        private String createPropertyKey(String name) {
+<span class="nc" id="L296">            return this.createPropertyKey(name, DataType.TEXT);</span>
+        }
+
+        private String createPropertyKey(String name, DataType dataType) {
+<span class="nc" id="L300">            return this.createPropertyKey(name, dataType, Cardinality.SINGLE);</span>
+        }
+
+        private String createPropertyKey(String name, DataType dataType,
+                                         Cardinality cardinality) {
+<span class="nc" id="L305">            SchemaManager schema = this.graph.graph().schema();</span>
+<span class="nc" id="L306">            PropertyKey propertyKey = schema.propertyKey(name)</span>
+<span class="nc" id="L307">                                            .dataType(dataType)</span>
+<span class="nc" id="L308">                                            .cardinality(cardinality)</span>
+<span class="nc" id="L309">                                            .build();</span>
+<span class="nc" id="L310">            this.graph.schemaTransaction().addPropertyKey(propertyKey);</span>
+<span class="nc" id="L311">            return name;</span>
+        }
+
+        @SuppressWarnings(&quot;unused&quot;)
+        private IndexLabel createIndexLabel(VertexLabel label, String field) {
+<span class="nc" id="L316">            SchemaManager schema = this.graph.graph().schema();</span>
+<span class="nc" id="L317">            String name = Graph.Hidden.hide(&quot;server-index-by-&quot; + field);</span>
+<span class="nc" id="L318">            IndexLabel indexLabel = schema.indexLabel(name)</span>
+<span class="nc" id="L319">                                          .on(HugeType.VERTEX_LABEL, SERVER)</span>
+<span class="nc" id="L320">                                          .by(field)</span>
+<span class="nc" id="L321">                                          .build();</span>
+<span class="nc" id="L322">            this.graph.schemaTransaction().addIndexLabel(label, indexLabel);</span>
+<span class="nc" id="L323">            return indexLabel;</span>
+        }
+
+        @SuppressWarnings(&quot;unused&quot;)
+        private IndexLabel indexLabel(String field) {
+<span class="nc" id="L328">            String name = Graph.Hidden.hide(&quot;server-index-by-&quot; + field);</span>
+<span class="nc" id="L329">            return this.graph.graph().indexLabel(name);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,654 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CoreOptions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.config</a> &gt; <span class="el_source">CoreOptions.java</span></div><h1>CoreOptions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.config;
+
+import static org.apache.hugegraph.backend.tx.GraphTransaction.COMMIT_BATCH;
+import static org.apache.hugegraph.config.OptionChecker.allowValues;
+import static org.apache.hugegraph.config.OptionChecker.disallowEmpty;
+import static org.apache.hugegraph.config.OptionChecker.positiveInt;
+import static org.apache.hugegraph.config.OptionChecker.rangeInt;
+
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.type.define.CollectionType;
+import org.apache.hugegraph.util.Bytes;
+
+public class CoreOptions extends OptionHolder {
+
+<span class="nc" id="L32">    public static final int CPUS = Runtime.getRuntime().availableProcessors();</span>
+
+    private CoreOptions() {
+        super();
+    }
+
+    private static volatile CoreOptions instance;
+
+    public static synchronized CoreOptions instance() {
+<span class="nc bnc" id="L41" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L42">            instance = new CoreOptions();</span>
+            // Should initialize all static members first, then register.
+<span class="nc" id="L44">            instance.registerOptions();</span>
+        }
+<span class="nc" id="L46">        return instance;</span>
+    }
+
+<span class="nc" id="L49">    public static final ConfigOption&lt;String&gt; GREMLIN_GRAPH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;gremlin.graph&quot;,
+                    &quot;Gremlin entrance to create graph.&quot;,
+<span class="nc" id="L53">                    disallowEmpty(),</span>
+                    &quot;org.apache.hugegraph.HugeFactory&quot;
+            );
+
+<span class="nc" id="L57">    public static final ConfigOption&lt;String&gt; BACKEND =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;backend&quot;,
+                    &quot;The data store type.&quot;,
+<span class="nc" id="L61">                    disallowEmpty(),</span>
+                    &quot;memory&quot;
+            );
+
+<span class="nc" id="L65">    public static final ConfigOption&lt;String&gt; STORE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;store&quot;,
+                    &quot;The database name like Cassandra Keyspace.&quot;,
+<span class="nc" id="L69">                    disallowEmpty(),</span>
+                    &quot;hugegraph&quot;
+            );
+
+<span class="nc" id="L73">    public static final ConfigOption&lt;String&gt; STORE_GRAPH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;store.graph&quot;,
+                    &quot;The graph table name, which store vertex, edge and property.&quot;,
+<span class="nc" id="L77">                    disallowEmpty(),</span>
+                    &quot;g&quot;
+            );
+
+<span class="nc" id="L81">    public static final ConfigOption&lt;String&gt; SERIALIZER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;serializer&quot;,
+                    &quot;The serializer for backend store, like: text/binary/cassandra.&quot;,
+<span class="nc" id="L85">                    disallowEmpty(),</span>
+                    &quot;text&quot;
+            );
+
+<span class="nc" id="L89">    public static final ConfigOption&lt;Boolean&gt; RAFT_MODE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.mode&quot;,
+                    &quot;Whether the backend storage works in raft mode.&quot;,
+<span class="nc" id="L93">                    disallowEmpty(),</span>
+<span class="nc" id="L94">                    false</span>
+            );
+
+<span class="nc" id="L97">    public static final ConfigOption&lt;Boolean&gt; RAFT_SAFE_READ =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.safe_read&quot;,
+                    &quot;Whether to use linearly consistent read.&quot;,
+<span class="nc" id="L101">                    disallowEmpty(),</span>
+<span class="nc" id="L102">                    false</span>
+            );
+
+<span class="nc" id="L105">    public static final ConfigOption&lt;String&gt; RAFT_PATH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.path&quot;,
+                    &quot;The log path of current raft node.&quot;,
+<span class="nc" id="L109">                    disallowEmpty(),</span>
+                    &quot;./raftlog&quot;
+            );
+
+<span class="nc" id="L113">    public static final ConfigOption&lt;Boolean&gt; RAFT_REPLICATOR_PIPELINE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.use_replicator_pipeline&quot;,
+                    &quot;Whether to use replicator line, when turned on it &quot; +
+                    &quot;multiple logs can be sent in parallel, and the next log &quot; +
+                    &quot;doesn't have to wait for the ack message of the current &quot; +
+                    &quot;log to be sent.&quot;,
+<span class="nc" id="L120">                    disallowEmpty(),</span>
+<span class="nc" id="L121">                    true</span>
+            );
+
+<span class="nc" id="L124">    public static final ConfigOption&lt;Integer&gt; RAFT_ELECTION_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.election_timeout&quot;,
+                    &quot;Timeout in milliseconds to launch a round of election.&quot;,
+<span class="nc" id="L128">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L129">                    10000</span>
+            );
+
+<span class="nc" id="L132">    public static final ConfigOption&lt;Integer&gt; RAFT_SNAPSHOT_INTERVAL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.snapshot_interval&quot;,
+                    &quot;The interval in seconds to trigger snapshot save.&quot;,
+<span class="nc" id="L136">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L137">                    3600</span>
+            );
+
+<span class="nc" id="L140">    public static final ConfigOption&lt;Integer&gt; RAFT_SNAPSHOT_THREADS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.snapshot_threads&quot;,
+                    &quot;The thread number used to do snapshot.&quot;,
+<span class="nc" id="L144">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L145">                    4</span>
+            );
+
+<span class="nc" id="L148">    public static final ConfigOption&lt;Boolean&gt; RAFT_SNAPSHOT_PARALLEL_COMPRESS =</span>
+        new ConfigOption&lt;&gt;(
+            &quot;raft.snapshot_parallel_compress&quot;,
+            &quot;Whether to enable parallel compress.&quot;,
+<span class="nc" id="L152">            disallowEmpty(),</span>
+<span class="nc" id="L153">            false</span>
+        );
+
+<span class="nc" id="L156">    public static final ConfigOption&lt;Integer&gt; RAFT_SNAPSHOT_COMPRESS_THREADS =</span>
+        new ConfigOption&lt;&gt;(
+            &quot;raft.snapshot_compress_threads&quot;,
+            &quot;The thread number used to do snapshot compress.&quot;,
+<span class="nc" id="L160">            rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L161">            4</span>
+        );
+
+<span class="nc" id="L164">    public static final ConfigOption&lt;Integer&gt; RAFT_SNAPSHOT_DECOMPRESS_THREADS =</span>
+        new ConfigOption&lt;&gt;(
+            &quot;raft.snapshot_decompress_threads&quot;,
+            &quot;The thread number used to do snapshot decompress.&quot;,
+<span class="nc" id="L168">            rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L169">            4</span>
+        );
+
+<span class="nc" id="L172">    public static final ConfigOption&lt;Integer&gt; RAFT_BACKEND_THREADS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.backend_threads&quot;,
+                    &quot;The thread number used to apply task to backend.&quot;,
+<span class="nc" id="L176">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L177">                    CPUS</span>
+            );
+
+<span class="nc" id="L180">    public static final ConfigOption&lt;Integer&gt; RAFT_READ_INDEX_THREADS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.read_index_threads&quot;,
+                    &quot;The thread number used to execute reading index.&quot;,
+<span class="nc" id="L184">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L185">                    8</span>
+            );
+
+<span class="nc" id="L188">    public static final ConfigOption&lt;String&gt; RAFT_READ_STRATEGY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.read_strategy&quot;,
+                    &quot;The linearizability of read strategy.&quot;,
+<span class="nc" id="L192">                    allowValues(&quot;ReadOnlyLeaseBased&quot;, &quot;ReadOnlySafe&quot;),</span>
+                    &quot;ReadOnlyLeaseBased&quot;
+            );
+
+<span class="nc" id="L196">    public static final ConfigOption&lt;Integer&gt; RAFT_APPLY_BATCH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.apply_batch&quot;,
+                    &quot;The apply batch size to trigger disruptor event handler.&quot;,
+<span class="nc" id="L200">                    positiveInt(),</span>
+                    // jraft default value is 32
+<span class="nc" id="L202">                    1</span>
+            );
+
+<span class="nc" id="L205">    public static final ConfigOption&lt;Integer&gt; RAFT_QUEUE_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.queue_size&quot;,
+                    &quot;The disruptor buffers size for jraft RaftNode, &quot; +
+                    &quot;StateMachine and LogManager.&quot;,
+<span class="nc" id="L210">                    positiveInt(),</span>
+                    // jraft default value is 16384
+<span class="nc" id="L212">                    16384</span>
+            );
+
+<span class="nc" id="L215">    public static final ConfigOption&lt;Integer&gt; RAFT_QUEUE_PUBLISH_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.queue_publish_timeout&quot;,
+                    &quot;The timeout in second when publish event into disruptor.&quot;,
+<span class="nc" id="L219">                    positiveInt(),</span>
+                    // jraft default value is 10(sec)
+<span class="nc" id="L221">                    60</span>
+            );
+
+<span class="nc" id="L224">    public static final ConfigOption&lt;Integer&gt; RAFT_RPC_THREADS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.rpc_threads&quot;,
+                    &quot;The rpc threads for jraft RPC layer&quot;,
+<span class="nc" id="L228">                    positiveInt(),</span>
+                    // jraft default value is 80
+<span class="nc" id="L230">                    Math.max(CPUS * 2, 80)</span>
+            );
+
+<span class="nc" id="L233">    public static final ConfigOption&lt;Integer&gt; RAFT_RPC_CONNECT_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.rpc_connect_timeout&quot;,
+                    &quot;The rpc connect timeout for jraft rpc.&quot;,
+<span class="nc" id="L237">                    positiveInt(),</span>
+                    // jraft default value is 1000(ms)
+<span class="nc" id="L239">                    5000</span>
+            );
+
+<span class="nc" id="L242">    public static final ConfigOption&lt;Integer&gt; RAFT_RPC_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.rpc_timeout&quot;,
+                    &quot;The general rpc timeout in seconds for jraft rpc.&quot;,
+<span class="nc" id="L246">                    positiveInt(),</span>
+                    // jraft default value is 5s
+<span class="nc" id="L248">                    60</span>
+            );
+
+<span class="nc" id="L251">    public static final ConfigOption&lt;Integer&gt; RAFT_INSTALL_SNAPSHOT_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.install_snapshot_rpc_timeout&quot;,
+                    &quot;The install snapshot rpc timeout in seconds for jraft rpc.&quot;,
+<span class="nc" id="L255">                    positiveInt(),</span>
+                    // jraft default value is 5 minutes
+<span class="nc" id="L257">                    10 * 60 * 60</span>
+            );
+
+<span class="nc" id="L260">    public static final ConfigOption&lt;Integer&gt; RAFT_RPC_BUF_LOW_WATER_MARK =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.rpc_buf_low_water_mark&quot;,
+                    &quot;The ChannelOutboundBuffer's low water mark of netty, &quot; +
+                    &quot;when buffer size less than this size, the method &quot; +
+                    &quot;ChannelOutboundBuffer.isWritable() will return true, &quot; +
+                    &quot;it means that low downstream pressure or good network.&quot;,
+<span class="nc" id="L267">                    positiveInt(),</span>
+<span class="nc" id="L268">                    10 * 1024 * 1024</span>
+            );
+
+<span class="nc" id="L271">    public static final ConfigOption&lt;Integer&gt; RAFT_RPC_BUF_HIGH_WATER_MARK =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.rpc_buf_high_water_mark&quot;,
+                    &quot;The ChannelOutboundBuffer's high water mark of netty, &quot; +
+                    &quot;only when buffer size exceed this size, the method &quot; +
+                    &quot;ChannelOutboundBuffer.isWritable() will return false, &quot; +
+                    &quot;it means that the downstream pressure is too great to &quot; +
+                    &quot;process the request or network is very congestion, &quot; +
+                    &quot;upstream needs to limit rate at this time.&quot;,
+<span class="nc" id="L280">                    positiveInt(),</span>
+<span class="nc" id="L281">                    20 * 1024 * 1024</span>
+            );
+
+<span class="nc" id="L284">    public static final ConfigOption&lt;Integer&gt; RATE_LIMIT_WRITE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rate_limit.write&quot;,
+                    &quot;The max rate(items/s) to add/update/delete vertices/edges.&quot;,
+<span class="nc" id="L288">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L289">                    0</span>
+            );
+
+<span class="nc" id="L292">    public static final ConfigOption&lt;Integer&gt; RATE_LIMIT_READ =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;rate_limit.read&quot;,
+                    &quot;The max rate(times/s) to execute query of vertices/edges.&quot;,
+<span class="nc" id="L296">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L297">                    0</span>
+            );
+
+<span class="nc" id="L300">    public static final ConfigOption&lt;Long&gt; TASK_WAIT_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;task.wait_timeout&quot;,
+                    &quot;Timeout in seconds for waiting for the task to &quot; +
+                    &quot;complete, such as when truncating or clearing the &quot; +
+                    &quot;backend.&quot;,
+<span class="nc" id="L306">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L307">                    10L</span>
+            );
+
+<span class="nc" id="L310">    public static final ConfigOption&lt;Long&gt; TASK_INPUT_SIZE_LIMIT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;task.input_size_limit&quot;,
+                    &quot;The job input size limit in bytes.&quot;,
+<span class="nc" id="L314">                    rangeInt(0L, Bytes.GB),</span>
+<span class="nc" id="L315">                    16 * Bytes.MB</span>
+            );
+
+<span class="nc" id="L318">    public static final ConfigOption&lt;Long&gt; TASK_RESULT_SIZE_LIMIT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;task.result_size_limit&quot;,
+                    &quot;The job result size limit in bytes.&quot;,
+<span class="nc" id="L322">                    rangeInt(0L, Bytes.GB),</span>
+<span class="nc" id="L323">                    16 * Bytes.MB</span>
+            );
+
+<span class="nc" id="L326">    public static final ConfigOption&lt;Integer&gt; TASK_TTL_DELETE_BATCH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;task.ttl_delete_batch&quot;,
+                    &quot;The batch size used to delete expired data.&quot;,
+<span class="nc" id="L330">                    rangeInt(1, 500),</span>
+<span class="nc" id="L331">                    1</span>
+            );
+
+<span class="nc" id="L334">    public static final ConfigOption&lt;Boolean&gt; TASK_SYNC_DELETION =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;task.sync_deletion&quot;,
+                    &quot;Whether to delete schema or expired data synchronously.&quot;,
+<span class="nc" id="L338">                    disallowEmpty(),</span>
+<span class="nc" id="L339">                    false</span>
+            );
+
+<span class="nc" id="L342">    public static final ConfigOption&lt;Long&gt; STORE_CONN_DETECT_INTERVAL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;store.connection_detect_interval&quot;,
+                    &quot;The interval in seconds for detecting connections, &quot; +
+                    &quot;if the idle time of a connection exceeds this value, &quot; +
+                    &quot;detect it and reconnect if needed before using, &quot; +
+                    &quot;value 0 means detecting every time.&quot;,
+<span class="nc" id="L349">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L350">                    600L</span>
+            );
+
+<span class="nc" id="L353">    public static final ConfigOption&lt;String&gt; VERTEX_DEFAULT_LABEL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.default_label&quot;,
+                    &quot;The default vertex label.&quot;,
+<span class="nc" id="L357">                    disallowEmpty(),</span>
+                    &quot;vertex&quot;
+            );
+
+<span class="nc" id="L361">    public static final ConfigOption&lt;Boolean&gt; VERTEX_CHECK_CUSTOMIZED_ID_EXIST =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.check_customized_id_exist&quot;,
+                    &quot;Whether to check the vertices exist for those using &quot; +
+                    &quot;customized id strategy.&quot;,
+<span class="nc" id="L366">                    disallowEmpty(),</span>
+<span class="nc" id="L367">                    false</span>
+            );
+
+<span class="nc" id="L370">    public static final ConfigOption&lt;Boolean&gt; VERTEX_REMOVE_LEFT_INDEX =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.remove_left_index_at_overwrite&quot;,
+                    &quot;Whether remove left index at overwrite.&quot;,
+<span class="nc" id="L374">                    disallowEmpty(),</span>
+<span class="nc" id="L375">                    false</span>
+            );
+
+<span class="nc" id="L378">    public static final ConfigOption&lt;Boolean&gt; VERTEX_ADJACENT_VERTEX_EXIST =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.check_adjacent_vertex_exist&quot;,
+                    &quot;Whether to check the adjacent vertices of edges exist.&quot;,
+<span class="nc" id="L382">                    disallowEmpty(),</span>
+<span class="nc" id="L383">                    false</span>
+            );
+
+<span class="nc" id="L386">    public static final ConfigOption&lt;Boolean&gt; VERTEX_ADJACENT_VERTEX_LAZY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.lazy_load_adjacent_vertex&quot;,
+                    &quot;Whether to lazy load adjacent vertices of edges.&quot;,
+<span class="nc" id="L390">                    disallowEmpty(),</span>
+<span class="nc" id="L391">                    true</span>
+            );
+
+<span class="nc" id="L394">    public static final ConfigOption&lt;Integer&gt; VERTEX_PART_EDGE_COMMIT_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.part_edge_commit_size&quot;,
+                    &quot;Whether to enable the mode to commit part of edges of &quot; +
+                    &quot;vertex, enabled if commit size &gt; 0, 0 meas disabled.&quot;,
+<span class="nc" id="L399">                    rangeInt(0, (int) Query.DEFAULT_CAPACITY),</span>
+<span class="nc" id="L400">                    5000</span>
+            );
+
+<span class="nc" id="L403">    public static final ConfigOption&lt;Boolean&gt; VERTEX_ENCODE_PK_NUMBER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.encode_primary_key_number&quot;,
+                    &quot;Whether to encode number value of primary key &quot; +
+                    &quot;in vertex id.&quot;,
+<span class="nc" id="L408">                    disallowEmpty(),</span>
+<span class="nc" id="L409">                    true</span>
+            );
+
+<span class="nc" id="L412">    public static final ConfigOption&lt;Integer&gt; VERTEX_TX_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.tx_capacity&quot;,
+                    &quot;The max size(items) of vertices(uncommitted) in &quot; +
+                    &quot;transaction.&quot;,
+<span class="nc" id="L417">                    rangeInt(COMMIT_BATCH, 1000000),</span>
+<span class="nc" id="L418">                    10000</span>
+            );
+
+<span class="nc" id="L421">    public static final ConfigOption&lt;Integer&gt; EDGE_TX_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;edge.tx_capacity&quot;,
+                    &quot;The max size(items) of edges(uncommitted) in &quot; +
+                     &quot;transaction.&quot;,
+<span class="nc" id="L426">                    rangeInt(COMMIT_BATCH, 1000000),</span>
+<span class="nc" id="L427">                    10000</span>
+            );
+
+<span class="nc" id="L430">    public static final ConfigOption&lt;Boolean&gt; QUERY_IGNORE_INVALID_DATA =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;query.ignore_invalid_data&quot;,
+                    &quot;Whether to ignore invalid data of vertex or edge.&quot;,
+<span class="nc" id="L434">                    disallowEmpty(),</span>
+<span class="nc" id="L435">                    true</span>
+            );
+
+<span class="nc" id="L438">    public static final ConfigOption&lt;Boolean&gt; QUERY_OPTIMIZE_AGGR_BY_INDEX =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;query.optimize_aggregate_by_index&quot;,
+                    &quot;Whether to optimize aggregate query(like count) by index.&quot;,
+<span class="nc" id="L442">                    disallowEmpty(),</span>
+<span class="nc" id="L443">                    false</span>
+            );
+
+<span class="nc" id="L446">    public static final ConfigOption&lt;Integer&gt; QUERY_BATCH_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;query.batch_size&quot;,
+                    &quot;The size of each batch when querying by batch.&quot;,
+<span class="nc" id="L450">                    rangeInt(1, (int) Query.DEFAULT_CAPACITY),</span>
+<span class="nc" id="L451">                    1000</span>
+            );
+
+<span class="nc" id="L454">    public static final ConfigOption&lt;Integer&gt; QUERY_PAGE_SIZE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;query.page_size&quot;,
+                    &quot;The size of each page when querying by paging.&quot;,
+<span class="nc" id="L458">                    rangeInt(1, (int) Query.DEFAULT_CAPACITY),</span>
+<span class="nc" id="L459">                    500</span>
+            );
+
+<span class="nc" id="L462">    public static final ConfigOption&lt;Integer&gt; QUERY_INDEX_INTERSECT_THRESHOLD =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;query.index_intersect_threshold&quot;,
+                    &quot;The maximum number of intermediate results to &quot; +
+                    &quot;intersect indexes when querying by multiple single &quot; +
+                    &quot;index properties.&quot;,
+<span class="nc" id="L468">                    rangeInt(1, (int) Query.DEFAULT_CAPACITY),</span>
+<span class="nc" id="L469">                    1000</span>
+            );
+
+<span class="nc" id="L472">    public static final ConfigOption&lt;Boolean&gt; QUERY_RAMTABLE_ENABLE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;query.ramtable_enable&quot;,
+                    &quot;Whether to enable ramtable for query of adjacent edges.&quot;,
+<span class="nc" id="L476">                    disallowEmpty(),</span>
+<span class="nc" id="L477">                    false</span>
+            );
+
+<span class="nc" id="L480">    public static final ConfigOption&lt;Long&gt; QUERY_RAMTABLE_VERTICES_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;query.ramtable_vertices_capacity&quot;,
+                    &quot;The maximum number of vertices in ramtable, &quot; +
+                    &quot;generally the largest vertex id is used as capacity.&quot;,
+<span class="nc" id="L485">                    rangeInt(1L, Integer.MAX_VALUE * 2L),</span>
+<span class="nc" id="L486">                    10000000L</span>
+            );
+
+<span class="nc" id="L489">    public static final ConfigOption&lt;Integer&gt; QUERY_RAMTABLE_EDGES_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;query.ramtable_edges_capacity&quot;,
+                    &quot;The maximum number of edges in ramtable, &quot; +
+                    &quot;include OUT and IN edges.&quot;,
+<span class="nc" id="L494">                    rangeInt(1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L495">                    20000000</span>
+            );
+
+    /**
+     * The schema name rule:
+     * 1、Not allowed end with spaces
+     * 2、Not allowed start with '~'
+     */
+<span class="nc" id="L503">    public static final ConfigOption&lt;String&gt; SCHEMA_ILLEGAL_NAME_REGEX =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;schema.illegal_name_regex&quot;,
+                    &quot;The regex specified the illegal format for schema name.&quot;,
+<span class="nc" id="L507">                    disallowEmpty(),</span>
+                    &quot;.*\\s+$|~.*&quot;
+            );
+
+<span class="nc" id="L511">    public static final ConfigOption&lt;Long&gt; SCHEMA_CACHE_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;schema.cache_capacity&quot;,
+                    &quot;The max cache size(items) of schema cache.&quot;,
+<span class="nc" id="L515">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L516">                    10000L</span>
+            );
+
+<span class="nc" id="L519">    public static final ConfigOption&lt;String&gt; VERTEX_CACHE_TYPE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.cache_type&quot;,
+                    &quot;The type of vertex cache, allowed values are [l1, l2].&quot;,
+<span class="nc" id="L523">                    allowValues(&quot;l1&quot;, &quot;l2&quot;),</span>
+                    &quot;l2&quot;
+            );
+
+<span class="nc" id="L527">    public static final ConfigOption&lt;Long&gt; VERTEX_CACHE_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.cache_capacity&quot;,
+                    &quot;The max cache size(items) of vertex cache.&quot;,
+<span class="nc" id="L531">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L532">                    (1000 * 1000 * 10L)</span>
+            );
+
+<span class="nc" id="L535">    public static final ConfigOption&lt;Integer&gt; VERTEX_CACHE_EXPIRE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;vertex.cache_expire&quot;,
+                    &quot;The expiration time in seconds of vertex cache.&quot;,
+<span class="nc" id="L539">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L540">                    (60 * 10)</span>
+            );
+
+<span class="nc" id="L543">    public static final ConfigOption&lt;String&gt; EDGE_CACHE_TYPE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;edge.cache_type&quot;,
+                    &quot;The type of edge cache, allowed values are [l1, l2].&quot;,
+<span class="nc" id="L547">                    allowValues(&quot;l1&quot;, &quot;l2&quot;),</span>
+                    &quot;l2&quot;
+            );
+
+<span class="nc" id="L551">    public static final ConfigOption&lt;Long&gt; EDGE_CACHE_CAPACITY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;edge.cache_capacity&quot;,
+                    &quot;The max cache size(items) of edge cache.&quot;,
+<span class="nc" id="L555">                    rangeInt(0L, Long.MAX_VALUE),</span>
+<span class="nc" id="L556">                    (1000 * 1000 * 1L)</span>
+            );
+
+<span class="nc" id="L559">    public static final ConfigOption&lt;Integer&gt; EDGE_CACHE_EXPIRE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;edge.cache_expire&quot;,
+                    &quot;The expiration time in seconds of edge cache.&quot;,
+<span class="nc" id="L563">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L564">                    (60 * 10)</span>
+            );
+
+<span class="nc" id="L567">    public static final ConfigOption&lt;Long&gt; SNOWFLAKE_WORKER_ID =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;snowflake.worker_id&quot;,
+                    &quot;The worker id of snowflake id generator.&quot;,
+<span class="nc" id="L571">                    disallowEmpty(),</span>
+<span class="nc" id="L572">                    0L</span>
+            );
+
+<span class="nc" id="L575">    public static final ConfigOption&lt;Long&gt; SNOWFLAKE_DATACENTER_ID =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;snowflake.datacenter_id&quot;,
+                    &quot;The datacenter id of snowflake id generator.&quot;,
+<span class="nc" id="L579">                    disallowEmpty(),</span>
+<span class="nc" id="L580">                    0L</span>
+            );
+
+<span class="nc" id="L583">    public static final ConfigOption&lt;Boolean&gt; SNOWFLAKE_FORCE_STRING =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;snowflake.force_string&quot;,
+                    &quot;Whether to force the snowflake long id to be a string.&quot;,
+<span class="nc" id="L587">                    disallowEmpty(),</span>
+<span class="nc" id="L588">                    false</span>
+            );
+
+<span class="nc" id="L591">    public static final ConfigOption&lt;String&gt; TEXT_ANALYZER =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;search.text_analyzer&quot;,
+                    &quot;Choose a text analyzer for searching the &quot; +
+                    &quot;vertex/edge properties, available type are &quot; +
+                    &quot;[ansj, hanlp, smartcn, jieba, jcseg, &quot; +
+                    &quot;mmseg4j, ikanalyzer].&quot;,
+<span class="nc" id="L598">                    disallowEmpty(),</span>
+                    &quot;ikanalyzer&quot;
+            );
+
+<span class="nc" id="L602">    public static final ConfigOption&lt;String&gt; TEXT_ANALYZER_MODE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;search.text_analyzer_mode&quot;,
+                    &quot;Specify the mode for the text analyzer, &quot; +
+                    &quot;the available mode of analyzer are &quot; +
+                    &quot;ansj: [BaseAnalysis, IndexAnalysis, ToAnalysis, &quot; +
+                           &quot;NlpAnalysis], &quot; +
+                    &quot;hanlp: [standard, nlp, index, nShort, shortest, speed], &quot; +
+                    &quot;smartcn: [], &quot; +
+                    &quot;jieba: [SEARCH, INDEX], &quot; +
+                    &quot;jcseg: [Simple, Complex], &quot; +
+                    &quot;mmseg4j: [Simple, Complex, MaxWord], &quot; +
+                    &quot;ikanalyzer: [smart, max_word]&quot; +
+                    &quot;}.&quot;,
+<span class="nc" id="L616">                    disallowEmpty(),</span>
+                    &quot;smart&quot;
+            );
+
+<span class="nc" id="L620">    public static final ConfigOption&lt;String&gt; COMPUTER_CONFIG =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;computer.config&quot;,
+                    &quot;The config file path of computer job.&quot;,
+<span class="nc" id="L624">                    disallowEmpty(),</span>
+                    &quot;./conf/computer.yaml&quot;
+            );
+
+<span class="nc" id="L628">    public static final ConfigOption&lt;Integer&gt; OLTP_CONCURRENT_THREADS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;oltp.concurrent_threads&quot;,
+                    &quot;Thread number to concurrently execute oltp algorithm.&quot;,
+<span class="nc" id="L632">                    rangeInt(0, 65535),</span>
+<span class="nc" id="L633">                    10</span>
+            );
+
+<span class="nc" id="L636">    public static final ConfigOption&lt;Integer&gt; OLTP_CONCURRENT_DEPTH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;oltp.concurrent_depth&quot;,
+                    &quot;The min depth to enable concurrent oltp algorithm.&quot;,
+<span class="nc" id="L640">                    rangeInt(0, 65535),</span>
+<span class="nc" id="L641">                    10</span>
+            );
+
+<span class="nc" id="L644">    public static final ConfigConvOption&lt;String, CollectionType&gt; OLTP_COLLECTION_TYPE =</span>
+            new ConfigConvOption&lt;&gt;(
+                    &quot;oltp.collection_type&quot;,
+                    &quot;The implementation type of collections &quot; +
+                    &quot;used in oltp algorithm.&quot;,
+<span class="nc" id="L649">                    allowValues(&quot;JCF&quot;, &quot;EC&quot;, &quot;FU&quot;),</span>
+                    CollectionType::valueOf,
+                    &quot;EC&quot;
+            );
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

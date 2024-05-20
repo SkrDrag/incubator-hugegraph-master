@@ -1,0 +1,326 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AuthenticationFilter.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.filter</a> &gt; <span class="el_source">AuthenticationFilter.java</span></div><h1>AuthenticationFilter.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.filter;
+
+import static org.apache.hugegraph.config.ServerOptions.WHITE_IP_STATUS;
+
+import java.io.IOException;
+import java.security.Principal;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import javax.xml.bind.DatatypeConverter;
+
+import org.apache.hugegraph.auth.HugeAuthenticator;
+import org.apache.hugegraph.auth.HugeAuthenticator.RequiredPerm;
+import org.apache.hugegraph.auth.HugeAuthenticator.RolePerm;
+import org.apache.hugegraph.auth.HugeAuthenticator.User;
+import org.apache.hugegraph.auth.RolePermission;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.server.auth.AuthenticationException;
+import org.glassfish.grizzly.http.server.Request;
+import org.glassfish.grizzly.utils.Charsets;
+import org.slf4j.Logger;
+
+import com.alipay.remoting.util.StringUtils;
+import com.google.common.collect.ImmutableList;
+
+import jakarta.annotation.Priority;
+import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.ForbiddenException;
+import jakarta.ws.rs.NotAuthorizedException;
+import jakarta.ws.rs.Priorities;
+import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.container.ContainerRequestFilter;
+import jakarta.ws.rs.container.PreMatching;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.SecurityContext;
+import jakarta.ws.rs.core.UriInfo;
+import jakarta.ws.rs.ext.Provider;
+
+@Provider
+@PreMatching
+@Priority(Priorities.AUTHENTICATION)
+<span class="nc" id="L66">public class AuthenticationFilter implements ContainerRequestFilter {</span>
+
+    public static final String BASIC_AUTH_PREFIX = &quot;Basic &quot;;
+    public static final String BEARER_TOKEN_PREFIX = &quot;Bearer &quot;;
+
+<span class="nc" id="L71">    private static final Logger LOG = Log.logger(AuthenticationFilter.class);</span>
+
+<span class="nc" id="L73">    private static final List&lt;String&gt; WHITE_API_LIST = ImmutableList.of(</span>
+            &quot;auth/login&quot;,
+            &quot;versions&quot;,
+            &quot;openapi.json&quot;
+    );
+
+    private static String whiteIpStatus;
+
+    private static final String STRING_WHITE_IP_LIST = &quot;whiteiplist&quot;;
+    private static final String STRING_ENABLE = &quot;enable&quot;;
+
+    @Context
+    private jakarta.inject.Provider&lt;GraphManager&gt; managerProvider;
+
+    @Context
+    private jakarta.inject.Provider&lt;Request&gt; requestProvider;
+
+    @Context
+    private jakarta.inject.Provider&lt;HugeConfig&gt; configProvider;
+
+    @Override
+    public void filter(ContainerRequestContext context) throws IOException {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        if (AuthenticationFilter.isWhiteAPI(context)) {</span>
+<span class="nc" id="L96">            return;</span>
+        }
+<span class="nc" id="L98">        User user = this.authenticate(context);</span>
+<span class="nc" id="L99">        Authorizer authorizer = new Authorizer(user, context.getUriInfo());</span>
+<span class="nc" id="L100">        context.setSecurityContext(authorizer);</span>
+<span class="nc" id="L101">    }</span>
+
+    protected User authenticate(ContainerRequestContext context) {
+<span class="nc" id="L104">        GraphManager manager = this.managerProvider.get();</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">        E.checkState(manager != null, &quot;Context GraphManager is absent&quot;);</span>
+
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (!manager.requireAuthentication()) {</span>
+            // Return anonymous user with admin role if disable authentication
+<span class="nc" id="L109">            return User.ANONYMOUS;</span>
+        }
+
+        // Get peer info
+<span class="nc" id="L113">        Request request = this.requestProvider.get();</span>
+<span class="nc" id="L114">        String peer = null;</span>
+<span class="nc" id="L115">        String path = null;</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (request != null) {</span>
+<span class="nc" id="L117">            peer = request.getRemoteAddr() + &quot;:&quot; + request.getRemotePort();</span>
+<span class="nc" id="L118">            path = request.getRequestURI();</span>
+        }
+
+        // Check whiteIp
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (whiteIpStatus == null) {</span>
+<span class="nc" id="L123">            whiteIpStatus = this.configProvider.get().get(WHITE_IP_STATUS);</span>
+        }
+
+<span class="nc bnc" id="L126" title="All 4 branches missed.">        if (Objects.equals(whiteIpStatus, STRING_ENABLE) &amp;&amp; request != null) {</span>
+<span class="nc" id="L127">            peer = request.getRemoteAddr() + &quot;:&quot; + request.getRemotePort();</span>
+<span class="nc" id="L128">            path = request.getRequestURI();</span>
+
+<span class="nc" id="L130">            String remoteIp = request.getRemoteAddr();</span>
+<span class="nc" id="L131">            Set&lt;String&gt; whiteIpList = manager.authManager().listWhiteIPs();</span>
+<span class="nc" id="L132">            boolean whiteIpEnabled = manager.authManager().getWhiteIpStatus();</span>
+<span class="nc bnc" id="L133" title="All 4 branches missed.">            if (!path.contains(STRING_WHITE_IP_LIST) &amp;&amp; whiteIpEnabled &amp;&amp;</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">                !whiteIpList.contains(remoteIp)) {</span>
+<span class="nc" id="L135">                throw new ForbiddenException(</span>
+<span class="nc" id="L136">                        String.format(&quot;Remote ip '%s' is not permitted&quot;,</span>
+                                      remoteIp));
+            }
+        }
+
+<span class="nc" id="L141">        Map&lt;String, String&gt; credentials = new HashMap&lt;&gt;();</span>
+        // Extract authentication credentials
+<span class="nc" id="L143">        String auth = context.getHeaderString(HttpHeaders.AUTHORIZATION);</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        if (auth == null) {</span>
+<span class="nc" id="L145">            throw new NotAuthorizedException(</span>
+                      &quot;Authentication credentials are required&quot;,
+                      &quot;Missing authentication credentials&quot;);
+        }
+
+<span class="nc bnc" id="L150" title="All 2 branches missed.">        if (auth.startsWith(BASIC_AUTH_PREFIX)) {</span>
+<span class="nc" id="L151">            auth = auth.substring(BASIC_AUTH_PREFIX.length());</span>
+<span class="nc" id="L152">            auth = new String(DatatypeConverter.parseBase64Binary(auth),</span>
+                              Charsets.ASCII_CHARSET);
+<span class="nc" id="L154">            String[] values = auth.split(&quot;:&quot;);</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            if (values.length != 2) {</span>
+<span class="nc" id="L156">                throw new BadRequestException(</span>
+                          &quot;Invalid syntax for username and password&quot;);
+            }
+
+<span class="nc" id="L160">            final String username = values[0];</span>
+<span class="nc" id="L161">            final String password = values[1];</span>
+
+<span class="nc bnc" id="L163" title="All 2 branches missed.">            if (StringUtils.isEmpty(username) ||</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">                StringUtils.isEmpty(password)) {</span>
+<span class="nc" id="L165">                throw new BadRequestException(</span>
+                          &quot;Invalid syntax for username and password&quot;);
+            }
+
+<span class="nc" id="L169">            credentials.put(HugeAuthenticator.KEY_USERNAME, username);</span>
+<span class="nc" id="L170">            credentials.put(HugeAuthenticator.KEY_PASSWORD, password);</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        } else if (auth.startsWith(BEARER_TOKEN_PREFIX)) {</span>
+<span class="nc" id="L172">            String token = auth.substring(BEARER_TOKEN_PREFIX.length());</span>
+<span class="nc" id="L173">            credentials.put(HugeAuthenticator.KEY_TOKEN, token);</span>
+<span class="nc" id="L174">        } else {</span>
+<span class="nc" id="L175">            throw new BadRequestException(</span>
+                      &quot;Only HTTP Basic or Bearer authentication is supported&quot;);
+        }
+
+<span class="nc" id="L179">        credentials.put(HugeAuthenticator.KEY_ADDRESS, peer);</span>
+<span class="nc" id="L180">        credentials.put(HugeAuthenticator.KEY_PATH, path);</span>
+
+        // Validate the extracted credentials
+        try {
+<span class="nc" id="L184">            return manager.authenticate(credentials);</span>
+<span class="nc" id="L185">        } catch (AuthenticationException e) {</span>
+<span class="nc" id="L186">            throw new NotAuthorizedException(&quot;Authentication failed&quot;,</span>
+<span class="nc" id="L187">                                             e.getMessage());</span>
+        }
+    }
+
+<span class="nc" id="L191">    public static class Authorizer implements SecurityContext {</span>
+
+        private final UriInfo uri;
+        private final User user;
+        private final Principal principal;
+
+<span class="nc" id="L197">        public Authorizer(final User user, final UriInfo uri) {</span>
+<span class="nc" id="L198">            E.checkNotNull(user, &quot;user&quot;);</span>
+<span class="nc" id="L199">            E.checkNotNull(uri, &quot;uri&quot;);</span>
+<span class="nc" id="L200">            this.uri = uri;</span>
+<span class="nc" id="L201">            this.user = user;</span>
+<span class="nc" id="L202">            this.principal = new UserPrincipal();</span>
+<span class="nc" id="L203">        }</span>
+
+        public String username() {
+<span class="nc" id="L206">            return this.user.username();</span>
+        }
+
+        public RolePermission role() {
+<span class="nc" id="L210">            return this.user.role();</span>
+        }
+
+        @Override
+        public Principal getUserPrincipal() {
+<span class="nc" id="L215">            return this.principal;</span>
+        }
+
+        @Override
+        public boolean isUserInRole(String required) {
+<span class="nc bnc" id="L220" title="All 2 branches missed.">            if (required.equals(HugeAuthenticator.KEY_DYNAMIC)) {</span>
+                // Let the resource itself determine dynamically
+<span class="nc" id="L222">                return true;</span>
+            } else {
+<span class="nc" id="L224">                return this.matchPermission(required);</span>
+            }
+        }
+
+        @Override
+        public boolean isSecure() {
+<span class="nc" id="L230">            return &quot;https&quot;.equals(this.uri.getRequestUri().getScheme());</span>
+        }
+
+        @Override
+        public String getAuthenticationScheme() {
+<span class="nc" id="L235">            return SecurityContext.BASIC_AUTH;</span>
+        }
+
+        private boolean matchPermission(String required) {
+            boolean valid;
+            RequiredPerm requiredPerm;
+
+<span class="nc bnc" id="L242" title="All 2 branches missed.">            if (!required.startsWith(HugeAuthenticator.KEY_OWNER)) {</span>
+                // Permission format like: &quot;admin&quot;
+<span class="nc" id="L244">                requiredPerm = new RequiredPerm();</span>
+<span class="nc" id="L245">                requiredPerm.owner(required);</span>
+            } else {
+                // The required like: $owner=graph1 $action=vertex_write
+<span class="nc" id="L248">                requiredPerm = RequiredPerm.fromPermission(required);</span>
+
+                /*
+                 * Replace owner value(it may be a variable) if the permission
+                 * format like: &quot;$owner=$graph $action=vertex_write&quot;
+                 */
+<span class="nc" id="L254">                String owner = requiredPerm.owner();</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">                if (owner.startsWith(HugeAuthenticator.VAR_PREFIX)) {</span>
+                    // Replace `$graph` with graph name like &quot;graph1&quot;
+<span class="nc" id="L257">                    int prefixLen = HugeAuthenticator.VAR_PREFIX.length();</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">                    assert owner.length() &gt; prefixLen;</span>
+<span class="nc" id="L259">                    owner = owner.substring(prefixLen);</span>
+<span class="nc" id="L260">                    owner = this.getPathParameter(owner);</span>
+<span class="nc" id="L261">                    requiredPerm.owner(owner);</span>
+                }
+            }
+
+<span class="nc bnc" id="L265" title="All 2 branches missed.">            if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L266">                LOG.debug(&quot;Verify permission {} {} for user '{}' with role {}&quot;,</span>
+<span class="nc" id="L267">                          requiredPerm.action().string(),</span>
+<span class="nc" id="L268">                          requiredPerm.resourceObject(),</span>
+<span class="nc" id="L269">                          this.user.username(), this.user.role());</span>
+            }
+
+            // verify role permission
+<span class="nc" id="L273">            valid = RolePerm.match(this.role(), requiredPerm);</span>
+
+<span class="nc bnc" id="L275" title="All 4 branches missed.">            if (!valid &amp;&amp; LOG.isInfoEnabled() &amp;&amp;</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">                !required.equals(HugeAuthenticator.USER_ADMIN)) {</span>
+<span class="nc" id="L277">                LOG.info(&quot;User '{}' is denied to {} {}&quot;,</span>
+<span class="nc" id="L278">                         this.user.username(), requiredPerm.action().string(),</span>
+<span class="nc" id="L279">                         requiredPerm.resourceObject());</span>
+            }
+<span class="nc" id="L281">            return valid;</span>
+        }
+
+        private String getPathParameter(String key) {
+<span class="nc" id="L285">            List&lt;String&gt; params = this.uri.getPathParameters().get(key);</span>
+<span class="nc bnc" id="L286" title="All 4 branches missed.">            E.checkState(params != null &amp;&amp; params.size() == 1,</span>
+                         &quot;There is no matched path parameter: '%s'&quot;, key);
+<span class="nc" id="L288">            return params.get(0);</span>
+        }
+
+<span class="nc" id="L291">        private final class UserPrincipal implements Principal {</span>
+
+            @Override
+            public String getName() {
+<span class="nc" id="L295">                return Authorizer.this.user.getName();</span>
+            }
+
+            @Override
+            public String toString() {
+<span class="nc" id="L300">                return Authorizer.this.user.toString();</span>
+            }
+
+            @Override
+            public int hashCode() {
+<span class="nc" id="L305">                return Authorizer.this.user.hashCode();</span>
+            }
+
+            @Override
+            public boolean equals(Object obj) {
+<span class="nc" id="L310">                return Authorizer.this.user.equals(obj);</span>
+            }
+        }
+    }
+
+    public static boolean isWhiteAPI(ContainerRequestContext context) {
+<span class="nc" id="L316">        String path = context.getUriInfo().getPath();</span>
+
+<span class="nc bnc" id="L318" title="All 2 branches missed.">        for (String whiteApi : WHITE_API_LIST) {</span>
+<span class="nc bnc" id="L319" title="All 2 branches missed.">            if (path.endsWith(whiteApi)) {</span>
+<span class="nc" id="L320">                return true;</span>
+            }
+<span class="nc" id="L322">        }</span>
+<span class="nc" id="L323">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

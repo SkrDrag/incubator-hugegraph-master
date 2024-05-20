@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LocalCounter.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend</a> &gt; <span class="el_source">LocalCounter.java</span></div><h1>LocalCounter.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.type.HugeType;
+
+public class LocalCounter {
+
+    private final Map&lt;HugeType, AtomicLong&gt; counters;
+
+<span class="nc" id="L32">    public LocalCounter() {</span>
+<span class="nc" id="L33">        this.counters = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L34">    }</span>
+
+    public synchronized Id nextId(HugeType type) {
+<span class="nc" id="L37">        AtomicLong counter = this.counters.get(type);</span>
+<span class="nc bnc" id="L38" title="All 2 branches missed.">        if (counter == null) {</span>
+<span class="nc" id="L39">            counter = new AtomicLong(0);</span>
+<span class="nc" id="L40">            AtomicLong previous = this.counters.putIfAbsent(type, counter);</span>
+<span class="nc bnc" id="L41" title="All 2 branches missed.">            if (previous != null) {</span>
+<span class="nc" id="L42">                counter = previous;</span>
+            }
+        }
+<span class="nc" id="L45">        return IdGenerator.of(counter.incrementAndGet());</span>
+    }
+
+    public long getCounter(HugeType type) {
+<span class="nc" id="L49">        AtomicLong counter = this.counters.get(type);</span>
+<span class="nc bnc" id="L50" title="All 2 branches missed.">        if (counter == null) {</span>
+<span class="nc" id="L51">            counter = new AtomicLong(0);</span>
+<span class="nc" id="L52">            AtomicLong previous = this.counters.putIfAbsent(type, counter);</span>
+<span class="nc bnc" id="L53" title="All 2 branches missed.">            if (previous != null) {</span>
+<span class="nc" id="L54">                counter = previous;</span>
+            }
+        }
+<span class="nc" id="L57">        return counter.longValue();</span>
+    }
+
+    public synchronized void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L61">        AtomicLong counter = this.counters.get(type);</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        if (counter == null) {</span>
+<span class="nc" id="L63">            counter = new AtomicLong(0);</span>
+<span class="nc" id="L64">            AtomicLong previous = this.counters.putIfAbsent(type, counter);</span>
+<span class="nc bnc" id="L65" title="All 2 branches missed.">            if (previous != null) {</span>
+<span class="nc" id="L66">                counter = previous;</span>
+            }
+        }
+<span class="nc" id="L69">        long oldValue = counter.longValue();</span>
+<span class="nc" id="L70">        AtomicLong value = new AtomicLong(oldValue + increment);</span>
+<span class="nc" id="L71">        this.counters.put(type, value);</span>
+<span class="nc" id="L72">    }</span>
+
+    public void reset() {
+<span class="nc" id="L75">        this.counters.clear();</span>
+<span class="nc" id="L76">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

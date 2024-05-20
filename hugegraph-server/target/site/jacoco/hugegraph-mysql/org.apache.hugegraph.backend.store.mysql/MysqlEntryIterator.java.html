@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MysqlEntryIterator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-mysql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.mysql</a> &gt; <span class="el_source">MysqlEntryIterator.java</span></div><h1>MysqlEntryIterator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.mysql;
+
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.BiFunction;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntryIterator;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.StringEncoding;
+
+<span class="nc" id="L38">public class MysqlEntryIterator extends BackendEntryIterator {</span>
+
+    private final ResultSetWrapper results;
+    private final BiFunction&lt;BackendEntry, BackendEntry, BackendEntry&gt; merger;
+
+    private BackendEntry next;
+    private BackendEntry lastest;
+    private boolean exceedLimit;
+
+    public MysqlEntryIterator(ResultSetWrapper rs, Query query,
+           BiFunction&lt;BackendEntry, BackendEntry, BackendEntry&gt; merger) {
+<span class="nc" id="L49">        super(query);</span>
+<span class="nc" id="L50">        this.results = rs;</span>
+<span class="nc" id="L51">        this.merger = merger;</span>
+<span class="nc" id="L52">        this.next = null;</span>
+<span class="nc" id="L53">        this.lastest = null;</span>
+<span class="nc" id="L54">        this.exceedLimit = false;</span>
+<span class="nc" id="L55">    }</span>
+
+    @Override
+    protected final boolean fetch() {
+<span class="nc bnc" id="L59" title="All 2 branches missed.">        assert this.current == null;</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">        if (this.next != null) {</span>
+<span class="nc" id="L61">            this.current = this.next;</span>
+<span class="nc" id="L62">            this.next = null;</span>
+        }
+
+        try {
+<span class="nc bnc" id="L66" title="All 2 branches missed.">            while (this.results.next()) {</span>
+<span class="nc" id="L67">                MysqlBackendEntry entry = this.row2Entry(this.results.resultSet());</span>
+<span class="nc" id="L68">                this.lastest = entry;</span>
+<span class="nc" id="L69">                BackendEntry merged = this.merger.apply(this.current, entry);</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">                if (this.current == null) {</span>
+                    // The first time to read
+<span class="nc" id="L72">                    this.current = merged;</span>
+<span class="nc bnc" id="L73" title="All 2 branches missed.">                } else if (merged == this.current) {</span>
+                    // Does the next entry belongs to the current entry
+<span class="nc bnc" id="L75" title="All 2 branches missed.">                    assert merged != null;</span>
+                } else {
+                    // New entry
+<span class="nc bnc" id="L78" title="All 2 branches missed.">                    assert this.next == null;</span>
+<span class="nc" id="L79">                    this.next = merged;</span>
+<span class="nc" id="L80">                    break;</span>
+                }
+
+                // When limit exceed, stop fetching
+<span class="nc bnc" id="L84" title="All 2 branches missed.">                if (this.reachLimit(this.fetched() - 1)) {</span>
+<span class="nc" id="L85">                    this.exceedLimit = true;</span>
+                    // Need remove last one because fetched limit + 1 records
+<span class="nc" id="L87">                    this.removeLastRecord();</span>
+<span class="nc" id="L88">                    this.results.close();</span>
+<span class="nc" id="L89">                    break;</span>
+                }
+<span class="nc" id="L91">            }</span>
+<span class="nc" id="L92">        } catch (SQLException e) {</span>
+<span class="nc" id="L93">            throw new BackendException(&quot;Fetch next error&quot;, e);</span>
+<span class="nc" id="L94">        }</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        return this.current != null;</span>
+    }
+
+    @Override
+    protected PageState pageState() {
+        byte[] position;
+        // There is no latest or no next page
+<span class="nc bnc" id="L102" title="All 4 branches missed.">        if (this.lastest == null || !this.exceedLimit &amp;&amp;</span>
+<span class="nc bnc" id="L103" title="All 4 branches missed.">            this.fetched() &lt;= this.query.limit() &amp;&amp; this.next == null) {</span>
+<span class="nc" id="L104">            position = PageState.EMPTY_BYTES;</span>
+        } else {
+<span class="nc" id="L106">            MysqlBackendEntry entry = (MysqlBackendEntry) this.lastest;</span>
+<span class="nc" id="L107">            position = new PagePosition(entry.columnsMap()).toBytes();</span>
+        }
+<span class="nc" id="L109">        return new PageState(position, 0, (int) this.count());</span>
+    }
+
+    @Override
+    protected void skipOffset() {
+        // pass
+<span class="nc" id="L115">    }</span>
+
+    @Override
+    protected final long sizeOf(BackendEntry entry) {
+<span class="nc" id="L119">        MysqlBackendEntry e = (MysqlBackendEntry) entry;</span>
+<span class="nc" id="L120">        int subRowsSize = e.subRows().size();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        return subRowsSize &gt; 0 ? subRowsSize : 1L;</span>
+    }
+
+    @Override
+    protected final long skip(BackendEntry entry, long skip) {
+<span class="nc" id="L126">        MysqlBackendEntry e = (MysqlBackendEntry) entry;</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        E.checkState(e.subRows().size() &gt; skip, &quot;Invalid entry to skip&quot;);</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        for (long i = 0; i &lt; skip; i++) {</span>
+<span class="nc" id="L129">            e.subRows().remove(0);</span>
+        }
+<span class="nc" id="L131">        return e.subRows().size();</span>
+    }
+
+    @Override
+    public void close() throws Exception {
+<span class="nc" id="L136">        this.results.close();</span>
+<span class="nc" id="L137">    }</span>
+
+    private MysqlBackendEntry row2Entry(ResultSet result) throws SQLException {
+<span class="nc" id="L140">        HugeType type = this.query.resultType();</span>
+<span class="nc" id="L141">        MysqlBackendEntry entry = new MysqlBackendEntry(type);</span>
+<span class="nc" id="L142">        ResultSetMetaData metaData = result.getMetaData();</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        for (int i = 1; i &lt;= metaData.getColumnCount(); i++) {</span>
+<span class="nc" id="L144">            String name = metaData.getColumnLabel(i);</span>
+<span class="nc" id="L145">            HugeKeys key = MysqlTable.parseKey(name);</span>
+<span class="nc" id="L146">            Object value = result.getObject(i);</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            if (value == null) {</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">                assert key == HugeKeys.EXPIRED_TIME;</span>
+                continue;
+            }
+<span class="nc" id="L151">            entry.column(key, value);</span>
+        }
+<span class="nc" id="L153">        return entry;</span>
+    }
+
+    private void removeLastRecord() {
+<span class="nc" id="L157">        MysqlBackendEntry entry = (MysqlBackendEntry) this.current;</span>
+<span class="nc" id="L158">        int lastOne = entry.subRows().size() - 1;</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        assert lastOne &gt;= 0;</span>
+<span class="nc" id="L160">        entry.subRows().remove(lastOne);</span>
+<span class="nc" id="L161">    }</span>
+
+    public static class PagePosition {
+
+        private final Map&lt;HugeKeys, Object&gt; columns;
+
+<span class="nc" id="L167">        public PagePosition(Map&lt;HugeKeys, Object&gt; columns) {</span>
+<span class="nc" id="L168">            this.columns = columns;</span>
+<span class="nc" id="L169">        }</span>
+
+        public Map&lt;HugeKeys, Object&gt; columns() {
+<span class="nc" id="L172">            return this.columns;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L177">            return JsonUtil.toJson(this.columns);</span>
+        }
+
+        public byte[] toBytes() {
+<span class="nc" id="L181">            String json = JsonUtil.toJson(this.columns);</span>
+<span class="nc" id="L182">            return StringEncoding.encode(json);</span>
+        }
+
+        public static PagePosition fromBytes(byte[] bytes) {
+<span class="nc" id="L186">            String json = StringEncoding.decode(bytes);</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L188">            Map&lt;String, Object&gt; columns = JsonUtil.fromJson(json, Map.class);</span>
+<span class="nc" id="L189">            Map&lt;HugeKeys, Object&gt; keyColumns = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">            for (Map.Entry&lt;String, Object&gt; entry : columns.entrySet()) {</span>
+<span class="nc" id="L191">                HugeKeys key = MysqlTable.parseKey(entry.getKey());</span>
+<span class="nc" id="L192">                keyColumns.put(key, entry.getValue());</span>
+<span class="nc" id="L193">            }</span>
+<span class="nc" id="L194">            return new PagePosition(keyColumns);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

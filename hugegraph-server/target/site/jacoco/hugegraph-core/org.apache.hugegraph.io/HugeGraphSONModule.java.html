@@ -1,0 +1,600 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeGraphSONModule.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.io</a> &gt; <span class="el_source">HugeGraphSONModule.java</span></div><h1>HugeGraphSONModule.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.io;
+
+import java.io.File;
+import java.io.IOException;
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
+import java.util.Collection;
+import java.util.Date;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.id.IdGenerator.LongId;
+import org.apache.hugegraph.backend.id.IdGenerator.StringId;
+import org.apache.hugegraph.backend.id.IdGenerator.UuidId;
+import org.apache.hugegraph.backend.store.Shard;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.Blob;
+import org.apache.tinkerpop.gremlin.process.traversal.Path;
+import org.apache.tinkerpop.gremlin.process.traversal.step.util.Tree;
+import org.apache.tinkerpop.gremlin.structure.Element;
+import org.apache.tinkerpop.gremlin.structure.io.graphson.GraphSONIo;
+import org.apache.tinkerpop.gremlin.structure.io.graphson.GraphSONTokens;
+import org.apache.tinkerpop.gremlin.structure.io.graphson.TinkerPopJacksonModule;
+import org.apache.tinkerpop.shaded.jackson.core.JsonGenerator;
+import org.apache.tinkerpop.shaded.jackson.core.JsonParser;
+import org.apache.tinkerpop.shaded.jackson.core.JsonToken;
+import org.apache.tinkerpop.shaded.jackson.core.type.WritableTypeId;
+import org.apache.tinkerpop.shaded.jackson.databind.DeserializationContext;
+import org.apache.tinkerpop.shaded.jackson.databind.JsonSerializer;
+import org.apache.tinkerpop.shaded.jackson.databind.SerializerProvider;
+import org.apache.tinkerpop.shaded.jackson.databind.deser.std.DateDeserializers.DateDeserializer;
+import org.apache.tinkerpop.shaded.jackson.databind.deser.std.StdDeserializer;
+import org.apache.tinkerpop.shaded.jackson.databind.deser.std.UUIDDeserializer;
+import org.apache.tinkerpop.shaded.jackson.databind.jsontype.TypeSerializer;
+import org.apache.tinkerpop.shaded.jackson.databind.module.SimpleModule;
+import org.apache.tinkerpop.shaded.jackson.databind.ser.std.DateSerializer;
+import org.apache.tinkerpop.shaded.jackson.databind.ser.std.StdSerializer;
+import org.apache.tinkerpop.shaded.jackson.databind.ser.std.UUIDSerializer;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.structure.HugeVertex;
+
+@SuppressWarnings(&quot;serial&quot;)
+public class HugeGraphSONModule extends TinkerPopJacksonModule {
+
+    private static final long serialVersionUID = 6480426922914059122L;
+
+    private static final String TYPE_NAMESPACE = &quot;hugegraph&quot;;
+
+<span class="nc" id="L80">    private static boolean OPTIMIZE_SERIALIZE = true;</span>
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    private static final Map&lt;Class, String&gt; TYPE_DEFINITIONS;
+
+<span class="nc" id="L85">    private static final GraphSONSchemaSerializer SCHEMA_SERIALIZER =</span>
+                         new GraphSONSchemaSerializer();
+
+    // NOTE: jackson will synchronize DateFormat
+    private static final String DF = &quot;yyyy-MM-dd HH:mm:ss.SSS&quot;;
+<span class="nc" id="L90">    private static final DateFormat DATE_FORMAT = new SimpleDateFormat(DF);</span>
+
+    static {
+<span class="nc" id="L93">        TYPE_DEFINITIONS = new ConcurrentHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L95">        TYPE_DEFINITIONS.put(Optional.class, &quot;Optional&quot;);</span>
+<span class="nc" id="L96">        TYPE_DEFINITIONS.put(Date.class, &quot;Date&quot;);</span>
+<span class="nc" id="L97">        TYPE_DEFINITIONS.put(UUID.class, &quot;UUID&quot;);</span>
+
+        // HugeGraph id serializer
+<span class="nc" id="L100">        TYPE_DEFINITIONS.put(StringId.class, &quot;StringId&quot;);</span>
+<span class="nc" id="L101">        TYPE_DEFINITIONS.put(LongId.class, &quot;LongId&quot;);</span>
+<span class="nc" id="L102">        TYPE_DEFINITIONS.put(EdgeId.class, &quot;EdgeId&quot;);</span>
+
+        // HugeGraph schema serializer
+<span class="nc" id="L105">        TYPE_DEFINITIONS.put(PropertyKey.class, &quot;PropertyKey&quot;);</span>
+<span class="nc" id="L106">        TYPE_DEFINITIONS.put(VertexLabel.class, &quot;VertexLabel&quot;);</span>
+<span class="nc" id="L107">        TYPE_DEFINITIONS.put(EdgeLabel.class, &quot;EdgeLabel&quot;);</span>
+<span class="nc" id="L108">        TYPE_DEFINITIONS.put(IndexLabel.class, &quot;IndexLabel&quot;);</span>
+
+        // HugeGraph vertex serializer
+<span class="nc" id="L111">        TYPE_DEFINITIONS.put(HugeVertex.class, &quot;HugeVertex&quot;);</span>
+        // TYPE_DEFINITIONS.put(HugeEdge.class, &quot;HugeEdge&quot;);
+
+        // HugeGraph shard serializer
+<span class="nc" id="L115">        TYPE_DEFINITIONS.put(Shard.class, &quot;Shard&quot;);</span>
+<span class="nc" id="L116">    }</span>
+
+    public static void register(HugeGraphIoRegistry io) {
+<span class="nc" id="L119">        io.register(GraphSONIo.class, null, new HugeGraphSONModule());</span>
+<span class="nc" id="L120">    }</span>
+
+    private HugeGraphSONModule() {
+<span class="nc" id="L123">        super(TYPE_NAMESPACE);</span>
+
+<span class="nc" id="L125">        registerCommonSerializers(this);</span>
+
+        // HugeGraph id serializer
+<span class="nc" id="L128">        registerIdSerializers(this);</span>
+
+        // HugeGraph schema serializer
+<span class="nc" id="L131">        registerSchemaSerializers(this);</span>
+
+        // HugeGraph vertex/edge serializer
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        if (OPTIMIZE_SERIALIZE) {</span>
+<span class="nc" id="L135">            registerGraphSerializers(this);</span>
+        }
+<span class="nc" id="L137">    }</span>
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    @Override
+    public Map&lt;Class, String&gt; getTypeDefinitions() {
+<span class="nc" id="L142">        return TYPE_DEFINITIONS;</span>
+    }
+
+    @Override
+    public String getTypeNamespace() {
+<span class="nc" id="L147">        return TYPE_NAMESPACE;</span>
+    }
+
+    public static void registerCommonSerializers(SimpleModule module) {
+<span class="nc" id="L151">        module.addSerializer(Optional.class, new OptionalSerializer());</span>
+
+<span class="nc" id="L153">        module.addSerializer(Shard.class, new ShardSerializer());</span>
+
+<span class="nc" id="L155">        module.addSerializer(File.class, new FileSerializer());</span>
+
+<span class="nc" id="L157">        boolean useTimestamp = false;</span>
+<span class="nc" id="L158">        module.addSerializer(Date.class,</span>
+<span class="nc" id="L159">                             new DateSerializer(useTimestamp, DATE_FORMAT));</span>
+<span class="nc" id="L160">        module.addDeserializer(Date.class, new DateDeserializer(</span>
+                               new DateDeserializer(), DATE_FORMAT, DF));
+
+<span class="nc" id="L163">        module.addSerializer(UUID.class, new UUIDSerializer());</span>
+<span class="nc" id="L164">        module.addDeserializer(UUID.class, new UUIDDeserializer());</span>
+
+<span class="nc" id="L166">        module.addSerializer(Blob.class, new BlobSerializer());</span>
+<span class="nc" id="L167">        module.addDeserializer(Blob.class, new BlobDeserializer());</span>
+<span class="nc" id="L168">    }</span>
+
+    public static void registerIdSerializers(SimpleModule module) {
+<span class="nc" id="L171">        module.addSerializer(StringId.class,</span>
+                             new IdSerializer&lt;&gt;(StringId.class));
+<span class="nc" id="L173">        module.addDeserializer(StringId.class,</span>
+                               new IdDeserializer&lt;&gt;(StringId.class));
+
+<span class="nc" id="L176">        module.addSerializer(LongId.class,</span>
+                             new IdSerializer&lt;&gt;(LongId.class));
+<span class="nc" id="L178">        module.addDeserializer(LongId.class,</span>
+                               new IdDeserializer&lt;&gt;(LongId.class));
+
+<span class="nc" id="L181">        module.addSerializer(UuidId.class,</span>
+                             new IdSerializer&lt;&gt;(UuidId.class));
+<span class="nc" id="L183">        module.addDeserializer(UuidId.class,</span>
+                               new IdDeserializer&lt;&gt;(UuidId.class));
+
+<span class="nc" id="L186">        module.addSerializer(EdgeId.class,</span>
+                             new IdSerializer&lt;&gt;(EdgeId.class));
+<span class="nc" id="L188">        module.addDeserializer(EdgeId.class,</span>
+                               new IdDeserializer&lt;&gt;(EdgeId.class));
+<span class="nc" id="L190">    }</span>
+
+    public static void registerSchemaSerializers(SimpleModule module) {
+<span class="nc" id="L193">        module.addSerializer(PropertyKey.class, new PropertyKeySerializer());</span>
+<span class="nc" id="L194">        module.addSerializer(VertexLabel.class, new VertexLabelSerializer());</span>
+<span class="nc" id="L195">        module.addSerializer(EdgeLabel.class, new EdgeLabelSerializer());</span>
+<span class="nc" id="L196">        module.addSerializer(IndexLabel.class, new IndexLabelSerializer());</span>
+<span class="nc" id="L197">    }</span>
+
+    public static void registerGraphSerializers(SimpleModule module) {
+        /*
+         * Use customized serializer need to be compatible with V1 and V2
+         * Graphson, and seems need to implement edge deserializer，it is
+         * a little complicated.
+         */
+<span class="nc" id="L205">        module.addSerializer(HugeVertex.class, new HugeVertexSerializer());</span>
+<span class="nc" id="L206">        module.addSerializer(HugeEdge.class, new HugeEdgeSerializer());</span>
+
+<span class="nc" id="L208">        module.addSerializer(Path.class, new PathSerializer());</span>
+<span class="nc" id="L209">        module.addSerializer(Tree.class, new TreeSerializer());</span>
+<span class="nc" id="L210">    }</span>
+
+    @SuppressWarnings(&quot;rawtypes&quot;)
+    private static class OptionalSerializer extends StdSerializer&lt;Optional&gt; {
+
+        public OptionalSerializer() {
+<span class="nc" id="L216">            super(Optional.class);</span>
+<span class="nc" id="L217">        }</span>
+
+        @Override
+        public void serialize(Optional optional,
+                              JsonGenerator jsonGenerator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc bnc" id="L224" title="All 2 branches missed.">            if (optional.isPresent()) {</span>
+<span class="nc" id="L225">                jsonGenerator.writeObject(optional.get());</span>
+            } else {
+<span class="nc" id="L227">                jsonGenerator.writeObject(null);</span>
+            }
+<span class="nc" id="L229">        }</span>
+    }
+
+    private static class IdSerializer&lt;T extends Id&gt; extends StdSerializer&lt;T&gt; {
+
+        public IdSerializer(Class&lt;T&gt; clazz) {
+<span class="nc" id="L235">            super(clazz);</span>
+<span class="nc" id="L236">        }</span>
+
+        @Override
+        public void serialize(T value,
+                              JsonGenerator jsonGenerator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc bnc" id="L243" title="All 2 branches missed.">            if (value.number()) {</span>
+<span class="nc" id="L244">                jsonGenerator.writeNumber(value.asLong());</span>
+            } else {
+<span class="nc" id="L246">                jsonGenerator.writeString(value.asString());</span>
+            }
+<span class="nc" id="L248">        }</span>
+
+        @Override
+        public void serializeWithType(T value,
+                                      JsonGenerator jsonGenerator,
+                                      SerializerProvider provider,
+                                      TypeSerializer typeSer)
+                                      throws IOException {
+            // https://github.com/FasterXML/jackson-databind/issues/2320
+<span class="nc" id="L257">            WritableTypeId typeId = typeSer.typeId(value, JsonToken.VALUE_STRING);</span>
+<span class="nc" id="L258">            typeSer.writeTypePrefix(jsonGenerator, typeId);</span>
+<span class="nc" id="L259">            this.serialize(value, jsonGenerator, provider);</span>
+<span class="nc" id="L260">            typeSer.writeTypeSuffix(jsonGenerator, typeId);</span>
+<span class="nc" id="L261">        }</span>
+    }
+
+<span class="nc" id="L264">    private static class IdDeserializer&lt;T extends Id&gt;</span>
+                   extends StdDeserializer&lt;T&gt; {
+
+        public IdDeserializer(Class&lt;T&gt; clazz) {
+<span class="nc" id="L268">            super(clazz);</span>
+<span class="nc" id="L269">        }</span>
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+        @Override
+        public T deserialize(JsonParser jsonParser,
+                             DeserializationContext ctxt)
+                             throws IOException {
+<span class="nc" id="L276">            Class&lt;?&gt; clazz = this.handledType();</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            if (clazz.equals(LongId.class)) {</span>
+<span class="nc" id="L278">                Number idValue = ctxt.readValue(jsonParser, Number.class);</span>
+<span class="nc" id="L279">                return (T) IdGenerator.of(idValue.longValue());</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">            } else if (clazz.equals(StringId.class)) {</span>
+<span class="nc" id="L281">                String idValue = ctxt.readValue(jsonParser, String.class);</span>
+<span class="nc" id="L282">                return (T) IdGenerator.of(idValue);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            } else if (clazz.equals(UuidId.class)) {</span>
+<span class="nc" id="L284">                UUID idValue = ctxt.readValue(jsonParser, UUID.class);</span>
+<span class="nc" id="L285">                return (T) IdGenerator.of(idValue);</span>
+            } else {
+<span class="nc bnc" id="L287" title="All 2 branches missed.">                assert clazz.equals(EdgeId.class);</span>
+<span class="nc" id="L288">                String idValue = ctxt.readValue(jsonParser, String.class);</span>
+<span class="nc" id="L289">                return (T) EdgeId.parse(idValue);</span>
+            }
+        }
+    }
+
+    private static class PropertyKeySerializer
+                   extends StdSerializer&lt;PropertyKey&gt; {
+
+        public PropertyKeySerializer() {
+<span class="nc" id="L298">            super(PropertyKey.class);</span>
+<span class="nc" id="L299">        }</span>
+
+        @Override
+        public void serialize(PropertyKey pk,
+                              JsonGenerator jsonGenerator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc" id="L306">            writeEntry(jsonGenerator, SCHEMA_SERIALIZER.writePropertyKey(pk));</span>
+<span class="nc" id="L307">        }</span>
+    }
+
+    private static class VertexLabelSerializer
+                   extends StdSerializer&lt;VertexLabel&gt; {
+
+        public VertexLabelSerializer() {
+<span class="nc" id="L314">            super(VertexLabel.class);</span>
+<span class="nc" id="L315">        }</span>
+
+        @Override
+        public void serialize(VertexLabel vl,
+                              JsonGenerator jsonGenerator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc" id="L322">            writeEntry(jsonGenerator, SCHEMA_SERIALIZER.writeVertexLabel(vl));</span>
+<span class="nc" id="L323">        }</span>
+    }
+
+    private static class EdgeLabelSerializer extends StdSerializer&lt;EdgeLabel&gt; {
+
+        public EdgeLabelSerializer() {
+<span class="nc" id="L329">            super(EdgeLabel.class);</span>
+<span class="nc" id="L330">        }</span>
+
+        @Override
+        public void serialize(EdgeLabel el,
+                              JsonGenerator jsonGenerator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc" id="L337">            writeEntry(jsonGenerator, SCHEMA_SERIALIZER.writeEdgeLabel(el));</span>
+<span class="nc" id="L338">        }</span>
+    }
+
+    private static class IndexLabelSerializer
+                   extends StdSerializer&lt;IndexLabel&gt; {
+
+        public IndexLabelSerializer() {
+<span class="nc" id="L345">            super(IndexLabel.class);</span>
+<span class="nc" id="L346">        }</span>
+
+        @Override
+        public void serialize(IndexLabel il,
+                              JsonGenerator jsonGenerator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc" id="L353">            writeEntry(jsonGenerator, SCHEMA_SERIALIZER.writeIndexLabel(il));</span>
+<span class="nc" id="L354">        }</span>
+    }
+
+    private static void writeEntry(JsonGenerator jsonGenerator,
+                                   Map&lt;HugeKeys, Object&gt; schema)
+                                   throws IOException {
+<span class="nc" id="L360">        jsonGenerator.writeStartObject();</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">        for (Map.Entry&lt;HugeKeys, Object&gt; entry : schema.entrySet()) {</span>
+<span class="nc" id="L362">            jsonGenerator.writeFieldName(entry.getKey().string());</span>
+<span class="nc" id="L363">            jsonGenerator.writeObject(entry.getValue());</span>
+<span class="nc" id="L364">        }</span>
+<span class="nc" id="L365">        jsonGenerator.writeEndObject();</span>
+<span class="nc" id="L366">    }</span>
+
+    protected abstract static class HugeElementSerializer&lt;T extends HugeElement&gt;
+                              extends StdSerializer&lt;T&gt; {
+
+        public HugeElementSerializer(Class&lt;T&gt; clazz) {
+<span class="nc" id="L372">            super(clazz);</span>
+<span class="nc" id="L373">        }</span>
+
+        public void writeIdField(String fieldName, Id id,
+                                 JsonGenerator generator)
+                                 throws IOException {
+<span class="nc" id="L378">            generator.writeFieldName(fieldName);</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">            if (id.number()) {</span>
+<span class="nc" id="L380">                generator.writeNumber(id.asLong());</span>
+            } else {
+<span class="nc" id="L382">                generator.writeString(id.asString());</span>
+            }
+<span class="nc" id="L384">        }</span>
+
+        public void writePropertiesField(Collection&lt;HugeProperty&lt;?&gt;&gt; properties,
+                                         JsonGenerator generator,
+                                         SerializerProvider provider)
+                                         throws IOException {
+            // Start write properties
+<span class="nc" id="L391">            generator.writeFieldName(&quot;properties&quot;);</span>
+<span class="nc" id="L392">            generator.writeStartObject();</span>
+
+<span class="nc bnc" id="L394" title="All 2 branches missed.">            for (HugeProperty&lt;?&gt; property : properties) {</span>
+<span class="nc" id="L395">                String key = property.key();</span>
+<span class="nc" id="L396">                Object val = property.value();</span>
+                try {
+<span class="nc" id="L398">                    generator.writeFieldName(key);</span>
+<span class="nc bnc" id="L399" title="All 2 branches missed.">                    if (val != null) {</span>
+<span class="nc" id="L400">                        JsonSerializer&lt;Object&gt; serializer =</span>
+<span class="nc" id="L401">                                provider.findValueSerializer(val.getClass());</span>
+<span class="nc" id="L402">                        serializer.serialize(val, generator, provider);</span>
+<span class="nc" id="L403">                    } else {</span>
+<span class="nc" id="L404">                        generator.writeNull();</span>
+                    }
+<span class="nc" id="L406">                } catch (IOException e) {</span>
+<span class="nc" id="L407">                    throw new HugeException(</span>
+                              &quot;Failed to serialize property(%s: %s) &quot; +
+<span class="nc" id="L409">                              &quot;for vertex '%s'&quot;, key, val, property.element());</span>
+<span class="nc" id="L410">                }</span>
+<span class="nc" id="L411">            }</span>
+            // End write properties
+<span class="nc" id="L413">            generator.writeEndObject();</span>
+<span class="nc" id="L414">        }</span>
+    }
+
+    private static class HugeVertexSerializer
+                   extends HugeElementSerializer&lt;HugeVertex&gt; {
+
+        public HugeVertexSerializer() {
+<span class="nc" id="L421">            super(HugeVertex.class);</span>
+<span class="nc" id="L422">        }</span>
+
+        @Override
+        public void serialize(HugeVertex vertex, JsonGenerator generator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc" id="L428">            vertex.forceLoad();</span>
+<span class="nc" id="L429">            generator.writeStartObject();</span>
+
+<span class="nc" id="L431">            this.writeIdField(&quot;id&quot;, vertex.id(), generator);</span>
+<span class="nc" id="L432">            generator.writeStringField(&quot;label&quot;, vertex.label());</span>
+<span class="nc" id="L433">            generator.writeStringField(&quot;type&quot;, &quot;vertex&quot;);</span>
+
+<span class="nc" id="L435">            this.writePropertiesField(vertex.getFilledProperties(),</span>
+                                      generator, provider);
+
+<span class="nc" id="L438">            generator.writeEndObject();</span>
+<span class="nc" id="L439">        }</span>
+
+        @Override
+        public void serializeWithType(HugeVertex value, JsonGenerator generator,
+                                      SerializerProvider provider,
+                                      TypeSerializer typeSer)
+                                      throws IOException {
+<span class="nc" id="L446">            WritableTypeId typeId = typeSer.typeId(value, JsonToken.VALUE_STRING);</span>
+<span class="nc" id="L447">            typeSer.writeTypePrefix(generator, typeId);</span>
+<span class="nc" id="L448">            this.serialize(value, generator, provider);</span>
+<span class="nc" id="L449">            typeSer.writeTypeSuffix(generator, typeId);</span>
+<span class="nc" id="L450">        }</span>
+    }
+
+    private static class HugeEdgeSerializer
+                   extends HugeElementSerializer&lt;HugeEdge&gt; {
+
+        public HugeEdgeSerializer() {
+<span class="nc" id="L457">            super(HugeEdge.class);</span>
+<span class="nc" id="L458">        }</span>
+
+        @Override
+        public void serialize(HugeEdge edge, JsonGenerator generator,
+                              SerializerProvider provider)
+                              throws IOException {
+<span class="nc" id="L464">            edge.forceLoad();</span>
+<span class="nc" id="L465">            generator.writeStartObject();</span>
+
+            // Write id, label, type
+<span class="nc" id="L468">            this.writeIdField(&quot;id&quot;, edge.id(), generator);</span>
+<span class="nc" id="L469">            generator.writeStringField(&quot;label&quot;, edge.label());</span>
+<span class="nc" id="L470">            generator.writeStringField(&quot;type&quot;, &quot;edge&quot;);</span>
+
+<span class="nc" id="L472">            HugeVertex outVertex = (HugeVertex) edge.outVertex();</span>
+<span class="nc" id="L473">            HugeVertex inVertex = (HugeVertex) edge.inVertex();</span>
+<span class="nc" id="L474">            this.writeIdField(&quot;outV&quot;, outVertex.id(), generator);</span>
+<span class="nc" id="L475">            generator.writeStringField(&quot;outVLabel&quot;, outVertex.label());</span>
+<span class="nc" id="L476">            this.writeIdField(&quot;inV&quot;, inVertex.id(), generator);</span>
+<span class="nc" id="L477">            generator.writeStringField(&quot;inVLabel&quot;, inVertex.label());</span>
+
+<span class="nc" id="L479">            this.writePropertiesField(edge.getFilledProperties(),</span>
+                                      generator, provider);
+
+<span class="nc" id="L482">            generator.writeEndObject();</span>
+<span class="nc" id="L483">        }</span>
+
+        @Override
+        public void serializeWithType(HugeEdge value, JsonGenerator generator,
+                                      SerializerProvider provider,
+                                      TypeSerializer typeSer)
+                                      throws IOException {
+<span class="nc" id="L490">            WritableTypeId typeId = typeSer.typeId(value, JsonToken.VALUE_STRING);</span>
+<span class="nc" id="L491">            typeSer.writeTypePrefix(generator, typeId);</span>
+<span class="nc" id="L492">            this.serialize(value, generator, provider);</span>
+<span class="nc" id="L493">            typeSer.writeTypeSuffix(generator, typeId);</span>
+<span class="nc" id="L494">        }</span>
+    }
+
+    private static class PathSerializer extends StdSerializer&lt;Path&gt; {
+
+        public PathSerializer() {
+<span class="nc" id="L500">            super(Path.class);</span>
+<span class="nc" id="L501">        }</span>
+
+        @Override
+        public void serialize(Path path, JsonGenerator jsonGenerator,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L506">            jsonGenerator.writeStartObject();</span>
+<span class="nc" id="L507">            jsonGenerator.writeObjectField(GraphSONTokens.LABELS,</span>
+<span class="nc" id="L508">                                           path.labels());</span>
+<span class="nc" id="L509">            jsonGenerator.writeObjectField(GraphSONTokens.OBJECTS,</span>
+<span class="nc" id="L510">                                           path.objects());</span>
+<span class="nc" id="L511">            jsonGenerator.writeEndObject();</span>
+<span class="nc" id="L512">        }</span>
+    }
+
+    @SuppressWarnings(&quot;rawtypes&quot;) // Tree&lt;T&gt;
+    private static class TreeSerializer extends StdSerializer&lt;Tree&gt; {
+
+        public TreeSerializer() {
+<span class="nc" id="L519">            super(Tree.class);</span>
+<span class="nc" id="L520">        }</span>
+
+        @Override
+        public void serialize(Tree tree, JsonGenerator jsonGenerator,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L525">            jsonGenerator.writeStartArray();</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L527">            Set&lt;Map.Entry&lt;Element, Tree&gt;&gt; set = tree.entrySet();</span>
+<span class="nc bnc" id="L528" title="All 2 branches missed.">            for (Map.Entry&lt;Element, Tree&gt; entry : set) {</span>
+<span class="nc" id="L529">                jsonGenerator.writeStartObject();</span>
+<span class="nc" id="L530">                jsonGenerator.writeObjectField(GraphSONTokens.KEY,</span>
+<span class="nc" id="L531">                                               entry.getKey());</span>
+<span class="nc" id="L532">                jsonGenerator.writeObjectField(GraphSONTokens.VALUE,</span>
+<span class="nc" id="L533">                                               entry.getValue());</span>
+<span class="nc" id="L534">                jsonGenerator.writeEndObject();</span>
+<span class="nc" id="L535">            }</span>
+<span class="nc" id="L536">            jsonGenerator.writeEndArray();</span>
+<span class="nc" id="L537">        }</span>
+    }
+
+    private static class ShardSerializer extends StdSerializer&lt;Shard&gt; {
+
+        public ShardSerializer() {
+<span class="nc" id="L543">            super(Shard.class);</span>
+<span class="nc" id="L544">        }</span>
+
+        @Override
+        public void serialize(Shard shard, JsonGenerator jsonGenerator,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L549">            jsonGenerator.writeStartObject();</span>
+<span class="nc" id="L550">            jsonGenerator.writeStringField(&quot;start&quot;, shard.start());</span>
+<span class="nc" id="L551">            jsonGenerator.writeStringField(&quot;end&quot;, shard.end());</span>
+<span class="nc" id="L552">            jsonGenerator.writeNumberField(&quot;length&quot;, shard.length());</span>
+<span class="nc" id="L553">            jsonGenerator.writeEndObject();</span>
+<span class="nc" id="L554">        }</span>
+    }
+
+    private static class FileSerializer extends StdSerializer&lt;File&gt; {
+
+        public FileSerializer() {
+<span class="nc" id="L560">            super(File.class);</span>
+<span class="nc" id="L561">        }</span>
+
+        @Override
+        public void serialize(File file, JsonGenerator jsonGenerator,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L566">            jsonGenerator.writeStartObject();</span>
+<span class="nc" id="L567">            jsonGenerator.writeStringField(&quot;file&quot;, file.getName());</span>
+<span class="nc" id="L568">            jsonGenerator.writeEndObject();</span>
+<span class="nc" id="L569">        }</span>
+    }
+
+    private static class BlobSerializer extends StdSerializer&lt;Blob&gt; {
+
+        public BlobSerializer() {
+<span class="nc" id="L575">            super(Blob.class);</span>
+<span class="nc" id="L576">        }</span>
+
+        @Override
+        public void serialize(Blob blob, JsonGenerator jsonGenerator,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L581">            jsonGenerator.writeBinary(blob.bytes());</span>
+<span class="nc" id="L582">        }</span>
+    }
+
+    private static class BlobDeserializer extends StdDeserializer&lt;Blob&gt; {
+
+        public BlobDeserializer() {
+<span class="nc" id="L588">            super(Blob.class);</span>
+<span class="nc" id="L589">        }</span>
+
+        @Override
+        public Blob deserialize(JsonParser jsonParser,
+                                DeserializationContext ctxt)
+                                throws IOException {
+<span class="nc" id="L595">            byte[] bytes = jsonParser.getBinaryValue();</span>
+<span class="nc" id="L596">            return Blob.wrap(bytes);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

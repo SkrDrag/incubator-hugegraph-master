@@ -1,0 +1,478 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>VertexAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.graph</a> &gt; <span class="el_source">VertexAPI.java</span></div><h1>VertexAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.graph;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.structure.T;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.UpdateStrategy;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.CompressInterceptor.Compress;
+import org.apache.hugegraph.api.filter.DecompressInterceptor.Decompress;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.SplicingIdGenerator;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.traversal.optimize.QueryHolder;
+import org.apache.hugegraph.traversal.optimize.Text;
+import org.apache.hugegraph.traversal.optimize.TraversalUtil;
+import org.apache.hugegraph.type.define.IdStrategy;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Path(&quot;graphs/{graph}/graph/vertices&quot;)
+@Singleton
+@Tag(name = &quot;VertexAPI&quot;)
+<span class="nc" id="L77">public class VertexAPI extends BatchAPI {</span>
+
+<span class="nc" id="L79">    private static final Logger LOG = Log.logger(VertexAPI.class);</span>
+
+    @POST
+    @Timed(name = &quot;single-create&quot;)
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_write&quot;})
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonVertex jsonVertex) {
+<span class="nc" id="L90">        LOG.debug(&quot;Graph [{}] create vertex: {}&quot;, graph, jsonVertex);</span>
+<span class="nc" id="L91">        checkCreatingBody(jsonVertex);</span>
+
+<span class="nc" id="L93">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L94">        Vertex vertex = commit(g, () -&gt; g.addVertex(jsonVertex.properties()));</span>
+
+<span class="nc" id="L96">        return manager.serializer(g).writeVertex(vertex);</span>
+    }
+
+    @POST
+    @Timed(name = &quot;batch-create&quot;)
+    @Decompress
+    @Path(&quot;batch&quot;)
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_write&quot;})
+    public String create(@Context HugeConfig config,
+                         @Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         List&lt;JsonVertex&gt; jsonVertices) {
+<span class="nc" id="L111">        LOG.debug(&quot;Graph [{}] create vertices: {}&quot;, graph, jsonVertices);</span>
+<span class="nc" id="L112">        checkCreatingBody(jsonVertices);</span>
+<span class="nc" id="L113">        checkBatchSize(config, jsonVertices);</span>
+
+<span class="nc" id="L115">        HugeGraph g = graph(manager, graph);</span>
+
+<span class="nc" id="L117">        return this.commit(config, g, jsonVertices.size(), () -&gt; {</span>
+<span class="nc" id="L118">            List&lt;Id&gt; ids = new ArrayList&lt;&gt;(jsonVertices.size());</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            for (JsonVertex vertex : jsonVertices) {</span>
+<span class="nc" id="L120">                ids.add((Id) g.addVertex(vertex.properties()).id());</span>
+<span class="nc" id="L121">            }</span>
+<span class="nc" id="L122">            return manager.serializer(g).writeIds(ids);</span>
+        });
+    }
+
+    /**
+     * Batch update steps like:
+     * 1. Get all newVertices' ID &amp;amp; combine first
+     * 2. Get all oldVertices &amp;amp; update
+     * 3. Add the final vertex together
+     */
+    @PUT
+    @Timed(name = &quot;batch-update&quot;)
+    @Decompress
+    @Path(&quot;batch&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_write&quot;})
+    public String update(@Context HugeConfig config,
+                         @Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         BatchVertexRequest req) {
+<span class="nc" id="L143">        BatchVertexRequest.checkUpdate(req);</span>
+<span class="nc" id="L144">        LOG.debug(&quot;Graph [{}] update vertices: {}&quot;, graph, req);</span>
+<span class="nc" id="L145">        checkUpdatingBody(req.jsonVertices);</span>
+<span class="nc" id="L146">        checkBatchSize(config, req.jsonVertices);</span>
+
+<span class="nc" id="L148">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L149">        Map&lt;Id, JsonVertex&gt; map = new HashMap&lt;&gt;(req.jsonVertices.size());</span>
+
+<span class="nc" id="L151">        return this.commit(config, g, map.size(), () -&gt; {</span>
+            /*
+             * 1.Put all newVertices' properties into map (combine first)
+             * - Consider primary-key &amp; user-define ID mode first
+             */
+<span class="nc" id="L156">            req.jsonVertices.forEach(newVertex -&gt; {</span>
+<span class="nc" id="L157">                Id newVertexId = getVertexId(g, newVertex);</span>
+<span class="nc" id="L158">                JsonVertex oldVertex = map.get(newVertexId);</span>
+<span class="nc" id="L159">                this.updateExistElement(oldVertex, newVertex,</span>
+                                        req.updateStrategies);
+<span class="nc" id="L161">                map.put(newVertexId, newVertex);</span>
+<span class="nc" id="L162">            });</span>
+
+            // 2.Get all oldVertices and update with new vertices
+<span class="nc" id="L165">            Object[] ids = map.keySet().toArray();</span>
+<span class="nc" id="L166">            Iterator&lt;Vertex&gt; oldVertices = g.vertices(ids);</span>
+<span class="nc" id="L167">            oldVertices.forEachRemaining(oldVertex -&gt; {</span>
+<span class="nc" id="L168">                JsonVertex newVertex = map.get(oldVertex.id());</span>
+<span class="nc" id="L169">                this.updateExistElement(g, oldVertex, newVertex,</span>
+                                        req.updateStrategies);
+<span class="nc" id="L171">            });</span>
+
+            // 3.Add finalVertices and return them
+<span class="nc" id="L174">            List&lt;Vertex&gt; vertices = new ArrayList&lt;&gt;(map.size());</span>
+<span class="nc" id="L175">            map.values().forEach(finalVertex -&gt; {</span>
+<span class="nc" id="L176">                vertices.add(g.addVertex(finalVertex.properties()));</span>
+<span class="nc" id="L177">            });</span>
+
+            // If return ids, the ids.size() maybe different with the origins'
+<span class="nc" id="L180">            return manager.serializer(g)</span>
+<span class="nc" id="L181">                          .writeVertices(vertices.iterator(), false);</span>
+        });
+    }
+
+    @PUT
+    @Timed(name = &quot;single-update&quot;)
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_write&quot;})
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;id&quot;) String idValue,
+                         @QueryParam(&quot;action&quot;) String action,
+                         JsonVertex jsonVertex) {
+<span class="nc" id="L196">        LOG.debug(&quot;Graph [{}] update vertex: {}&quot;, graph, jsonVertex);</span>
+<span class="nc" id="L197">        checkUpdatingBody(jsonVertex);</span>
+
+<span class="nc" id="L199">        Id id = checkAndParseVertexId(idValue);</span>
+        // Parse action param
+<span class="nc" id="L201">        boolean append = checkAndParseAction(action);</span>
+
+<span class="nc" id="L203">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L204">        HugeVertex vertex = (HugeVertex) g.vertex(id);</span>
+<span class="nc" id="L205">        VertexLabel vertexLabel = vertex.schemaLabel();</span>
+
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        for (String key : jsonVertex.properties.keySet()) {</span>
+<span class="nc" id="L208">            PropertyKey pkey = g.propertyKey(key);</span>
+<span class="nc" id="L209">            E.checkArgument(vertexLabel.properties().contains(pkey.id()),</span>
+                            &quot;Can't update property for vertex '%s' because &quot; +
+                            &quot;there is no property key '%s' in its vertex label&quot;,
+                            id, key);
+<span class="nc" id="L213">        }</span>
+
+<span class="nc" id="L215">        commit(g, () -&gt; updateProperties(vertex, jsonVertex, append));</span>
+
+<span class="nc" id="L217">        return manager.serializer(g).writeVertex(vertex);</span>
+    }
+
+    @GET
+    @Timed
+    @Compress
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_read&quot;})
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;label&quot;) String label,
+                       @QueryParam(&quot;properties&quot;) String properties,
+                       @QueryParam(&quot;keep_start_p&quot;)
+                       @DefaultValue(&quot;false&quot;) boolean keepStartP,
+                       @QueryParam(&quot;offset&quot;) @DefaultValue(&quot;0&quot;) long offset,
+                       @QueryParam(&quot;page&quot;) String page,
+                       @QueryParam(&quot;limit&quot;) @DefaultValue(&quot;100&quot;) long limit) {
+<span class="nc" id="L234">        LOG.debug(&quot;Graph [{}] query vertices by label: {}, properties: {}, &quot; +</span>
+                  &quot;offset: {}, page: {}, limit: {}&quot;,
+<span class="nc" id="L236">                  graph, label, properties, offset, page, limit);</span>
+
+<span class="nc" id="L238">        Map&lt;String, Object&gt; props = parseProperties(properties);</span>
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        if (page != null) {</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">            E.checkArgument(offset == 0,</span>
+                            &quot;Not support querying vertices based on paging &quot; +
+                            &quot;and offset together&quot;);
+        }
+
+<span class="nc" id="L245">        HugeGraph g = graph(manager, graph);</span>
+
+<span class="nc" id="L247">        GraphTraversal&lt;Vertex, Vertex&gt; traversal = g.traversal().V();</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">        if (label != null) {</span>
+<span class="nc" id="L249">            traversal = traversal.hasLabel(label);</span>
+        }
+
+        // Convert relational operator like P.gt()/P.lt()
+<span class="nc bnc" id="L253" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; prop : props.entrySet()) {</span>
+<span class="nc" id="L254">            Object value = prop.getValue();</span>
+<span class="nc bnc" id="L255" title="All 4 branches missed.">            if (!keepStartP &amp;&amp; value instanceof String &amp;&amp;</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">                ((String) value).startsWith(TraversalUtil.P_CALL)) {</span>
+<span class="nc" id="L257">                prop.setValue(TraversalUtil.parsePredicate((String) value));</span>
+            }
+<span class="nc" id="L259">        }</span>
+
+<span class="nc bnc" id="L261" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; entry : props.entrySet()) {</span>
+<span class="nc" id="L262">            traversal = traversal.has(entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L263">        }</span>
+
+<span class="nc bnc" id="L265" title="All 2 branches missed.">        if (page == null) {</span>
+<span class="nc" id="L266">            traversal = traversal.range(offset, offset + limit);</span>
+        } else {
+<span class="nc" id="L268">            traversal = traversal.has(QueryHolder.SYSPROP_PAGE, page)</span>
+<span class="nc" id="L269">                                 .limit(limit);</span>
+        }
+
+        try {
+<span class="nc bnc" id="L273" title="All 2 branches missed.">            return manager.serializer(g).writeVertices(traversal,</span>
+                                                       page != null);
+        } finally {
+<span class="nc bnc" id="L276" title="All 2 branches missed.">            if (g.tx().isOpen()) {</span>
+<span class="nc" id="L277">                g.tx().close();</span>
+            }
+        }
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_read&quot;})
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;id&quot;) String idValue) {
+<span class="nc" id="L290">        LOG.debug(&quot;Graph [{}] get vertex by id '{}'&quot;, graph, idValue);</span>
+
+<span class="nc" id="L292">        Id id = checkAndParseVertexId(idValue);</span>
+<span class="nc" id="L293">        HugeGraph g = graph(manager, graph);</span>
+        try {
+<span class="nc" id="L295">            Vertex vertex = g.vertex(id);</span>
+<span class="nc" id="L296">            return manager.serializer(g).writeVertex(vertex);</span>
+        } finally {
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            if (g.tx().isOpen()) {</span>
+<span class="nc" id="L299">                g.tx().close();</span>
+            }
+        }
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_delete&quot;})
+    public void delete(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @PathParam(&quot;id&quot;) String idValue,
+                       @QueryParam(&quot;label&quot;) String label) {
+<span class="nc" id="L313">        LOG.debug(&quot;Graph [{}] remove vertex by id '{}'&quot;, graph, idValue);</span>
+
+<span class="nc" id="L315">        Id id = checkAndParseVertexId(idValue);</span>
+<span class="nc" id="L316">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L317">        commit(g, () -&gt; {</span>
+            try {
+<span class="nc" id="L319">                g.removeVertex(label, id);</span>
+<span class="nc" id="L320">            } catch (NotFoundException e) {</span>
+<span class="nc" id="L321">                throw new IllegalArgumentException(String.format(</span>
+                          &quot;No such vertex with id: '%s', %s&quot;, id, e));
+<span class="nc" id="L323">            } catch (NoSuchElementException e) {</span>
+<span class="nc" id="L324">                throw new IllegalArgumentException(String.format(</span>
+                          &quot;No such vertex with id: '%s'&quot;, id));
+<span class="nc" id="L326">            }</span>
+<span class="nc" id="L327">        });</span>
+<span class="nc" id="L328">    }</span>
+
+    public static Id checkAndParseVertexId(String idValue) {
+<span class="nc bnc" id="L331" title="All 2 branches missed.">        if (idValue == null) {</span>
+<span class="nc" id="L332">            return null;</span>
+        }
+<span class="nc" id="L334">        boolean uuid = idValue.startsWith(&quot;U\&quot;&quot;);</span>
+<span class="nc bnc" id="L335" title="All 2 branches missed.">        if (uuid) {</span>
+<span class="nc" id="L336">            idValue = idValue.substring(1);</span>
+        }
+        try {
+<span class="nc" id="L339">            Object id = JsonUtil.fromJson(idValue, Object.class);</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">            return uuid ? Text.uuid((String) id) : HugeVertex.getIdValue(id);</span>
+<span class="nc" id="L341">        } catch (Exception e) {</span>
+<span class="nc" id="L342">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;The vertex id must be formatted as Number/String/UUID&quot; +
+                      &quot;, but got '%s'&quot;, idValue));
+        }
+    }
+
+    private static void checkBatchSize(HugeConfig config,
+                                       List&lt;JsonVertex&gt; vertices) {
+<span class="nc" id="L350">        int max = config.get(ServerOptions.MAX_VERTICES_PER_BATCH);</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">        if (vertices.size() &gt; max) {</span>
+<span class="nc" id="L352">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;Too many vertices for one time post, &quot; +
+<span class="nc" id="L354">                      &quot;the maximum number is '%s'&quot;, max));</span>
+        }
+<span class="nc bnc" id="L356" title="All 2 branches missed.">        if (vertices.size() == 0) {</span>
+<span class="nc" id="L357">            throw new IllegalArgumentException(</span>
+                      &quot;The number of vertices can't be 0&quot;);
+        }
+<span class="nc" id="L360">    }</span>
+
+    private static Id getVertexId(HugeGraph g, JsonVertex vertex) {
+<span class="nc" id="L363">        VertexLabel vertexLabel = g.vertexLabel(vertex.label);</span>
+<span class="nc" id="L364">        String labelId = vertexLabel.id().asString();</span>
+<span class="nc" id="L365">        IdStrategy idStrategy = vertexLabel.idStrategy();</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">        E.checkArgument(idStrategy != IdStrategy.AUTOMATIC,</span>
+                        &quot;Automatic Id strategy is not supported now&quot;);
+
+<span class="nc bnc" id="L369" title="All 2 branches missed.">        if (idStrategy == IdStrategy.PRIMARY_KEY) {</span>
+<span class="nc" id="L370">            List&lt;Id&gt; pkIds = vertexLabel.primaryKeys();</span>
+<span class="nc" id="L371">            List&lt;Object&gt; pkValues = new ArrayList&lt;&gt;(pkIds.size());</span>
+<span class="nc bnc" id="L372" title="All 2 branches missed.">            for (Id pkId : pkIds) {</span>
+<span class="nc" id="L373">                String propertyKey = g.propertyKey(pkId).name();</span>
+<span class="nc" id="L374">                Object propertyValue = vertex.properties.get(propertyKey);</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">                E.checkArgument(propertyValue != null,</span>
+                                &quot;The value of primary key '%s' can't be null&quot;,
+                                propertyKey);
+<span class="nc" id="L378">                pkValues.add(propertyValue);</span>
+<span class="nc" id="L379">            }</span>
+
+<span class="nc" id="L381">            String value = ConditionQuery.concatValues(pkValues);</span>
+<span class="nc" id="L382">            return SplicingIdGenerator.splicing(labelId, value);</span>
+<span class="nc bnc" id="L383" title="All 2 branches missed.">        } else if (idStrategy == IdStrategy.CUSTOMIZE_UUID) {</span>
+<span class="nc" id="L384">            return Text.uuid(String.valueOf(vertex.id));</span>
+        } else {
+<span class="nc bnc" id="L386" title="All 4 branches missed.">            assert idStrategy == IdStrategy.CUSTOMIZE_NUMBER ||</span>
+                   idStrategy == IdStrategy.CUSTOMIZE_STRING;
+<span class="nc" id="L388">            return HugeVertex.getIdValue(vertex.id);</span>
+        }
+    }
+
+<span class="nc" id="L392">    private static class BatchVertexRequest {</span>
+
+        @JsonProperty(&quot;vertices&quot;)
+        public List&lt;JsonVertex&gt; jsonVertices;
+        @JsonProperty(&quot;update_strategies&quot;)
+        public Map&lt;String, UpdateStrategy&gt; updateStrategies;
+<span class="nc" id="L398">        @JsonProperty(&quot;create_if_not_exist&quot;)</span>
+        public boolean createIfNotExist = true;
+
+        private static void checkUpdate(BatchVertexRequest req) {
+<span class="nc" id="L402">            E.checkArgumentNotNull(req, &quot;BatchVertexRequest can't be null&quot;);</span>
+<span class="nc" id="L403">            E.checkArgumentNotNull(req.jsonVertices,</span>
+                                   &quot;Parameter 'vertices' can't be null&quot;);
+<span class="nc bnc" id="L405" title="All 2 branches missed.">            E.checkArgument(req.updateStrategies != null &amp;&amp;</span>
+<span class="nc bnc" id="L406" title="All 2 branches missed.">                            !req.updateStrategies.isEmpty(),</span>
+                            &quot;Parameter 'update_strategies' can't be empty&quot;);
+<span class="nc" id="L408">            E.checkArgument(req.createIfNotExist,</span>
+                            &quot;Parameter 'create_if_not_exist' &quot; +
+                            &quot;dose not support false now&quot;);
+<span class="nc" id="L411">        }</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L415">            return String.format(&quot;BatchVertexRequest{jsonVertices=%s,&quot; +</span>
+                                 &quot;updateStrategies=%s,createIfNotExist=%s}&quot;,
+                                 this.jsonVertices, this.updateStrategies,
+<span class="nc" id="L418">                                 this.createIfNotExist);</span>
+        }
+    }
+
+    private static class JsonVertex extends JsonElement {
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L426">            this.checkUpdate();</span>
+<span class="nc" id="L427">        }</span>
+
+        @Override
+        public void checkUpdate() {
+<span class="nc" id="L431">            E.checkArgumentNotNull(this.properties,</span>
+                                   &quot;The properties of vertex can't be null&quot;);
+
+<span class="nc bnc" id="L434" title="All 2 branches missed.">            for (Map.Entry&lt;String, Object&gt; e : this.properties.entrySet()) {</span>
+<span class="nc" id="L435">                String key = e.getKey();</span>
+<span class="nc" id="L436">                Object value = e.getValue();</span>
+<span class="nc" id="L437">                E.checkArgumentNotNull(value, &quot;Not allowed to set value of &quot; +</span>
+                                       &quot;property '%s' to null for vertex '%s'&quot;,
+                                       key, this.id);
+<span class="nc" id="L440">            }</span>
+<span class="nc" id="L441">        }</span>
+
+        @Override
+        public Object[] properties() {
+<span class="nc" id="L445">            Object[] props = API.properties(this.properties);</span>
+<span class="nc" id="L446">            int newSize = props.length;</span>
+<span class="nc" id="L447">            int appendIndex = newSize;</span>
+<span class="nc bnc" id="L448" title="All 2 branches missed.">            if (this.label != null) {</span>
+<span class="nc" id="L449">                newSize += 2;</span>
+            }
+<span class="nc bnc" id="L451" title="All 2 branches missed.">            if (this.id != null) {</span>
+<span class="nc" id="L452">                newSize += 2;</span>
+            }
+<span class="nc bnc" id="L454" title="All 2 branches missed.">            if (newSize == props.length) {</span>
+<span class="nc" id="L455">                return props;</span>
+            }
+
+<span class="nc" id="L458">            Object[] newProps = Arrays.copyOf(props, newSize);</span>
+<span class="nc bnc" id="L459" title="All 2 branches missed.">            if (this.label != null) {</span>
+<span class="nc" id="L460">                newProps[appendIndex++] = T.label;</span>
+<span class="nc" id="L461">                newProps[appendIndex++] = this.label;</span>
+            }
+<span class="nc bnc" id="L463" title="All 2 branches missed.">            if (this.id != null) {</span>
+<span class="nc" id="L464">                newProps[appendIndex++] = T.id;</span>
+                // Keep value++ to avoid code trap
+<span class="nc" id="L466">                newProps[appendIndex++] = this.id;</span>
+            }
+<span class="nc" id="L468">            return newProps;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L473">            return String.format(&quot;JsonVertex{label=%s, properties=%s}&quot;,</span>
+                                 this.label, this.properties);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

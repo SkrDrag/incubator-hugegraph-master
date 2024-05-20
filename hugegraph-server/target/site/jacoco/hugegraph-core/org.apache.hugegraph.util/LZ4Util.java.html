@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LZ4Util.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util</a> &gt; <span class="el_source">LZ4Util.java</span></div><h1>LZ4Util.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util;
+
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+
+import net.jpountz.lz4.LZ4BlockInputStream;
+import net.jpountz.lz4.LZ4BlockOutputStream;
+import net.jpountz.lz4.LZ4Compressor;
+import net.jpountz.lz4.LZ4Factory;
+import net.jpountz.lz4.LZ4FastDecompressor;
+
+<span class="nc" id="L32">public class LZ4Util {</span>
+
+    protected static final float DEFAULT_BUFFER_RATIO = 1.5f;
+
+    public static BytesBuffer compress(byte[] bytes, int blockSize) {
+<span class="nc" id="L37">        return compress(bytes, blockSize, DEFAULT_BUFFER_RATIO);</span>
+    }
+
+    public static BytesBuffer compress(byte[] bytes, int blockSize, float bufferRatio) {
+<span class="nc bnc" id="L41" title="All 2 branches missed.">        float ratio = bufferRatio &lt;= 0.0F ? DEFAULT_BUFFER_RATIO : bufferRatio;</span>
+<span class="nc" id="L42">        LZ4Factory factory = LZ4Factory.fastestInstance();</span>
+<span class="nc" id="L43">        LZ4Compressor compressor = factory.fastCompressor();</span>
+<span class="nc" id="L44">        int initBufferSize = Math.round(bytes.length / ratio);</span>
+<span class="nc" id="L45">        BytesBuffer buf = new BytesBuffer(initBufferSize);</span>
+<span class="nc" id="L46">        LZ4BlockOutputStream lz4Output = new LZ4BlockOutputStream(buf, blockSize, compressor);</span>
+        try {
+<span class="nc" id="L48">            lz4Output.write(bytes);</span>
+<span class="nc" id="L49">            lz4Output.close();</span>
+<span class="nc" id="L50">        } catch (IOException e) {</span>
+<span class="nc" id="L51">            throw new BackendException(&quot;Failed to compress&quot;, e);</span>
+<span class="nc" id="L52">        }</span>
+        // If we need to perform reading outside the method, remember to call forReadWritten()
+<span class="nc" id="L54">        return buf;</span>
+    }
+
+    public static BytesBuffer decompress(byte[] bytes, int blockSize) {
+<span class="nc" id="L58">        return decompress(bytes, blockSize, DEFAULT_BUFFER_RATIO);</span>
+    }
+
+    public static BytesBuffer decompress(byte[] bytes, int blockSize, float bufferRatio) {
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        float ratio = bufferRatio &lt;= 0.0F ? DEFAULT_BUFFER_RATIO : bufferRatio;</span>
+<span class="nc" id="L63">        LZ4Factory factory = LZ4Factory.fastestInstance();</span>
+<span class="nc" id="L64">        LZ4FastDecompressor decompressor = factory.fastDecompressor();</span>
+<span class="nc" id="L65">        ByteArrayInputStream bais = new ByteArrayInputStream(bytes);</span>
+<span class="nc" id="L66">        int initBufferSize = Math.min(Math.round(bytes.length * ratio),</span>
+                                      BytesBuffer.MAX_BUFFER_CAPACITY);
+<span class="nc" id="L68">        BytesBuffer buf = new BytesBuffer(initBufferSize);</span>
+<span class="nc" id="L69">        LZ4BlockInputStream lzInput = new LZ4BlockInputStream(bais, decompressor);</span>
+        int count;
+<span class="nc" id="L71">        byte[] buffer = new byte[blockSize];</span>
+        try {
+<span class="nc bnc" id="L73" title="All 2 branches missed.">            while ((count = lzInput.read(buffer)) != -1) {</span>
+<span class="nc" id="L74">                buf.write(buffer, 0, count);</span>
+            }
+<span class="nc" id="L76">            lzInput.close();</span>
+<span class="nc" id="L77">        } catch (IOException e) {</span>
+<span class="nc" id="L78">            throw new BackendException(&quot;Failed to decompress&quot;, e);</span>
+<span class="nc" id="L79">        }</span>
+        // If we need to perform reading outside the method, remember to call forReadWritten()
+<span class="nc" id="L81">        return buf;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

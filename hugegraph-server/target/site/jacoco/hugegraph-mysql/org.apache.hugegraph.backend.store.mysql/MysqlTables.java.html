@@ -1,0 +1,665 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MysqlTables.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-mysql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.mysql</a> &gt; <span class="el_source">MysqlTables.java</span></div><h1>MysqlTables.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.mysql;
+
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.id.IdUtil;
+import org.apache.hugegraph.backend.id.SplicingIdGenerator;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntryIterator;
+import org.apache.hugegraph.backend.store.TableDefine;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.E;
+import com.google.common.collect.ImmutableMap;
+
+<span class="nc" id="L43">public class MysqlTables {</span>
+
+    public static final String BOOLEAN = &quot;BOOLEAN&quot;;
+    public static final String TINYINT = &quot;TINYINT&quot;;
+    public static final String INT = &quot;INT&quot;;
+    public static final String BIGINT = &quot;BIGINT&quot;;
+    public static final String NUMERIC = &quot;DOUBLE&quot;;
+    public static final String SMALL_TEXT = &quot;SMALL_TEXT&quot;;
+    public static final String MID_TEXT = &quot;MID_TEXT&quot;;
+    public static final String LARGE_TEXT = &quot;LARGE_TEXT&quot;;
+    // Just used for task input and result
+    public static final String HUGE_TEXT = &quot;HUGE_TEXT&quot;;
+
+    private static final String DATATYPE_PK = INT;
+    private static final String DATATYPE_SL = INT; // VL/EL
+    private static final String DATATYPE_IL = INT;
+
+    private static final String SMALL_JSON = MID_TEXT;
+    private static final String LARGE_JSON = LARGE_TEXT;
+
+<span class="nc" id="L63">    private static final Map&lt;String, String&gt; TYPES_MAPPING = ImmutableMap.of(</span>
+            SMALL_TEXT, &quot;VARCHAR(255)&quot;,
+            MID_TEXT, &quot;VARCHAR(1024)&quot;,
+            LARGE_TEXT, &quot;TEXT&quot;,
+            HUGE_TEXT, &quot;MEDIUMTEXT&quot;
+    );
+
+    public static class MysqlTableTemplate extends MysqlTable {
+
+        protected TableDefine define;
+
+        public MysqlTableTemplate(String table) {
+<span class="nc" id="L75">            super(table);</span>
+<span class="nc" id="L76">        }</span>
+
+        @Override
+        public TableDefine tableDefine() {
+<span class="nc" id="L80">            return this.define;</span>
+        }
+    }
+
+    public static class Meta extends MysqlTableTemplate {
+
+<span class="nc" id="L86">        public static final String TABLE = HugeType.META.string();</span>
+
+        public Meta() {
+<span class="nc" id="L89">            this(TYPES_MAPPING);</span>
+<span class="nc" id="L90">        }</span>
+
+        public Meta(Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L93">            super(TABLE);</span>
+
+<span class="nc" id="L95">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L96">            this.define.column(HugeKeys.NAME, SMALL_TEXT);</span>
+<span class="nc" id="L97">            this.define.column(HugeKeys.VALUE, MID_TEXT);</span>
+<span class="nc" id="L98">            this.define.keys(HugeKeys.NAME);</span>
+<span class="nc" id="L99">        }</span>
+
+        public void writeVersion(MysqlSessions.Session session, String driverVersion) {
+<span class="nc" id="L102">            String versionColumn = formatKey(HugeKeys.VERSION);</span>
+<span class="nc" id="L103">            String insert = String.format(&quot;INSERT IGNORE INTO %s VALUES &quot; +</span>
+<span class="nc" id="L104">                                          &quot;('%s', '%s')&quot;, this.table(),</span>
+                                          versionColumn, driverVersion);
+            try {
+<span class="nc" id="L107">                session.execute(insert);</span>
+<span class="nc" id="L108">            } catch (SQLException e) {</span>
+<span class="nc" id="L109">                throw new BackendException(&quot;Failed to insert driver version &quot; +</span>
+                                           &quot;with '%s'&quot;, e, insert);
+<span class="nc" id="L111">            }</span>
+<span class="nc" id="L112">        }</span>
+
+        public String readVersion(MysqlSessions.Session session) {
+<span class="nc" id="L115">            String select = String.format(&quot;SELECT %s FROM %s WHERE %s = '%s'&quot;,</span>
+<span class="nc" id="L116">                                          formatKey(HugeKeys.VALUE),</span>
+<span class="nc" id="L117">                                          this.table(), formatKey(HugeKeys.NAME),</span>
+<span class="nc" id="L118">                                          formatKey(HugeKeys.VERSION));</span>
+<span class="nc" id="L119">            try (ResultSetWrapper results = session.select(select)) {</span>
+<span class="nc" id="L120">                ResultSet rs = results.resultSet();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">                if (!rs.next()) {</span>
+<span class="nc" id="L122">                    return null;</span>
+                }
+<span class="nc" id="L124">                return rs.getString(formatKey(HugeKeys.VALUE));</span>
+<span class="nc bnc" id="L125" title="All 2 branches missed.">            } catch (SQLException e) {</span>
+<span class="nc" id="L126">                throw new BackendException(</span>
+                          &quot;Failed to get stored version with '%s'&quot;, e, select);
+            }
+        }
+    }
+
+    public static class Counters extends MysqlTableTemplate {
+
+<span class="nc" id="L134">        public static final String TABLE = HugeType.COUNTER.string();</span>
+
+        public Counters() {
+<span class="nc" id="L137">            this(TYPES_MAPPING);</span>
+<span class="nc" id="L138">        }</span>
+
+        public Counters(Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L141">            super(TABLE);</span>
+
+<span class="nc" id="L143">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L144">            this.define.column(HugeKeys.SCHEMA_TYPE, SMALL_TEXT);</span>
+<span class="nc" id="L145">            this.define.column(HugeKeys.ID, INT);</span>
+<span class="nc" id="L146">            this.define.keys(HugeKeys.SCHEMA_TYPE);</span>
+<span class="nc" id="L147">        }</span>
+
+        public long getCounter(MysqlSessions.Session session, HugeType type) {
+<span class="nc" id="L150">            String schemaCol = formatKey(HugeKeys.SCHEMA_TYPE);</span>
+<span class="nc" id="L151">            String idCol = formatKey(HugeKeys.ID);</span>
+
+<span class="nc" id="L153">            String select = String.format(&quot;SELECT ID FROM %s WHERE %s = '%s';&quot;,</span>
+<span class="nc" id="L154">                                          this.table(), schemaCol, type.name());</span>
+<span class="nc" id="L155">            try (ResultSetWrapper results = session.select(select)) {</span>
+<span class="nc" id="L156">                ResultSet rs = results.resultSet();</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">                if (rs.next()) {</span>
+<span class="nc" id="L158">                    return rs.getLong(idCol);</span>
+                } else {
+<span class="nc" id="L160">                    return 0L;</span>
+                }
+<span class="nc bnc" id="L162" title="All 2 branches missed.">            } catch (SQLException e) {</span>
+<span class="nc" id="L163">                throw new BackendException(</span>
+                          &quot;Failed to get id from counters with type '%s'&quot;,
+                          e, type);
+            }
+        }
+
+        public void increaseCounter(MysqlSessions.Session session,
+                                    HugeType type, long increment) {
+<span class="nc" id="L171">            String update = String.format(</span>
+                            &quot;INSERT INTO %s VALUES ('%s', %s) &quot; +
+                            &quot;ON DUPLICATE KEY UPDATE ID = ID + %s;&quot;,
+<span class="nc" id="L174">                            this.table(), type.name(), increment, increment);</span>
+            try {
+<span class="nc" id="L176">                session.execute(update);</span>
+<span class="nc" id="L177">            } catch (SQLException e) {</span>
+<span class="nc" id="L178">                throw new BackendException(&quot;Failed to update counters &quot; +</span>
+                                           &quot;with '%s'&quot;, e, update);
+<span class="nc" id="L180">            }</span>
+<span class="nc" id="L181">        }</span>
+    }
+
+    public static class VertexLabel extends MysqlTableTemplate {
+
+<span class="nc" id="L186">        public static final String TABLE = HugeType.VERTEX_LABEL.string();</span>
+
+        public VertexLabel() {
+<span class="nc" id="L189">            this(TYPES_MAPPING);</span>
+<span class="nc" id="L190">        }</span>
+
+        public VertexLabel(Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L193">            super(TABLE);</span>
+
+<span class="nc" id="L195">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L196">            this.define.column(HugeKeys.ID, DATATYPE_SL);</span>
+<span class="nc" id="L197">            this.define.column(HugeKeys.NAME, SMALL_TEXT);</span>
+<span class="nc" id="L198">            this.define.column(HugeKeys.ID_STRATEGY, TINYINT);</span>
+<span class="nc" id="L199">            this.define.column(HugeKeys.PRIMARY_KEYS, SMALL_JSON);</span>
+<span class="nc" id="L200">            this.define.column(HugeKeys.PROPERTIES, SMALL_JSON);</span>
+<span class="nc" id="L201">            this.define.column(HugeKeys.NULLABLE_KEYS, SMALL_JSON);</span>
+<span class="nc" id="L202">            this.define.column(HugeKeys.INDEX_LABELS, SMALL_JSON);</span>
+<span class="nc" id="L203">            this.define.column(HugeKeys.ENABLE_LABEL_INDEX, BOOLEAN);</span>
+<span class="nc" id="L204">            this.define.column(HugeKeys.USER_DATA, LARGE_JSON);</span>
+<span class="nc" id="L205">            this.define.column(HugeKeys.STATUS, TINYINT);</span>
+<span class="nc" id="L206">            this.define.column(HugeKeys.TTL, INT);</span>
+<span class="nc" id="L207">            this.define.column(HugeKeys.TTL_START_TIME, DATATYPE_PK);</span>
+<span class="nc" id="L208">            this.define.keys(HugeKeys.ID);</span>
+<span class="nc" id="L209">        }</span>
+    }
+
+    public static class EdgeLabel extends MysqlTableTemplate {
+
+<span class="nc" id="L214">        public static final String TABLE = HugeType.EDGE_LABEL.string();</span>
+
+        public EdgeLabel() {
+<span class="nc" id="L217">            this(TYPES_MAPPING);</span>
+<span class="nc" id="L218">        }</span>
+
+        public EdgeLabel(Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L221">            super(TABLE);</span>
+
+<span class="nc" id="L223">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L224">            this.define.column(HugeKeys.ID, DATATYPE_SL);</span>
+<span class="nc" id="L225">            this.define.column(HugeKeys.NAME, SMALL_TEXT);</span>
+<span class="nc" id="L226">            this.define.column(HugeKeys.FREQUENCY, TINYINT);</span>
+<span class="nc" id="L227">            this.define.column(HugeKeys.SOURCE_LABEL, DATATYPE_SL);</span>
+<span class="nc" id="L228">            this.define.column(HugeKeys.TARGET_LABEL, DATATYPE_SL);</span>
+<span class="nc" id="L229">            this.define.column(HugeKeys.SORT_KEYS, SMALL_JSON);</span>
+<span class="nc" id="L230">            this.define.column(HugeKeys.PROPERTIES, SMALL_JSON);</span>
+<span class="nc" id="L231">            this.define.column(HugeKeys.NULLABLE_KEYS, SMALL_JSON);</span>
+<span class="nc" id="L232">            this.define.column(HugeKeys.INDEX_LABELS, SMALL_JSON);</span>
+<span class="nc" id="L233">            this.define.column(HugeKeys.ENABLE_LABEL_INDEX, BOOLEAN);</span>
+<span class="nc" id="L234">            this.define.column(HugeKeys.USER_DATA, LARGE_JSON);</span>
+<span class="nc" id="L235">            this.define.column(HugeKeys.STATUS, TINYINT);</span>
+<span class="nc" id="L236">            this.define.column(HugeKeys.TTL, INT);</span>
+<span class="nc" id="L237">            this.define.column(HugeKeys.TTL_START_TIME, DATATYPE_PK);</span>
+<span class="nc" id="L238">            this.define.keys(HugeKeys.ID);</span>
+<span class="nc" id="L239">        }</span>
+    }
+
+    public static class PropertyKey extends MysqlTableTemplate {
+
+<span class="nc" id="L244">        public static final String TABLE = HugeType.PROPERTY_KEY.string();</span>
+
+        public PropertyKey() {
+<span class="nc" id="L247">            this(TYPES_MAPPING);</span>
+<span class="nc" id="L248">        }</span>
+
+        public PropertyKey(Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L251">            super(TABLE);</span>
+
+<span class="nc" id="L253">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L254">            this.define.column(HugeKeys.ID, DATATYPE_PK);</span>
+<span class="nc" id="L255">            this.define.column(HugeKeys.NAME, SMALL_TEXT);</span>
+<span class="nc" id="L256">            this.define.column(HugeKeys.DATA_TYPE, TINYINT);</span>
+<span class="nc" id="L257">            this.define.column(HugeKeys.CARDINALITY, TINYINT);</span>
+<span class="nc" id="L258">            this.define.column(HugeKeys.AGGREGATE_TYPE, TINYINT);</span>
+<span class="nc" id="L259">            this.define.column(HugeKeys.WRITE_TYPE, TINYINT);</span>
+<span class="nc" id="L260">            this.define.column(HugeKeys.PROPERTIES, SMALL_JSON);</span>
+<span class="nc" id="L261">            this.define.column(HugeKeys.USER_DATA, LARGE_JSON);</span>
+<span class="nc" id="L262">            this.define.column(HugeKeys.STATUS, TINYINT);</span>
+<span class="nc" id="L263">            this.define.keys(HugeKeys.ID);</span>
+<span class="nc" id="L264">        }</span>
+    }
+
+    public static class IndexLabel extends MysqlTableTemplate {
+
+<span class="nc" id="L269">        public static final String TABLE = HugeType.INDEX_LABEL.string();</span>
+
+        public IndexLabel() {
+<span class="nc" id="L272">            this(TYPES_MAPPING);</span>
+<span class="nc" id="L273">        }</span>
+
+        public IndexLabel(Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L276">            super(TABLE);</span>
+
+<span class="nc" id="L278">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L279">            this.define.column(HugeKeys.ID, DATATYPE_IL);</span>
+<span class="nc" id="L280">            this.define.column(HugeKeys.NAME, SMALL_TEXT);</span>
+<span class="nc" id="L281">            this.define.column(HugeKeys.BASE_TYPE, TINYINT);</span>
+<span class="nc" id="L282">            this.define.column(HugeKeys.BASE_VALUE, DATATYPE_SL);</span>
+<span class="nc" id="L283">            this.define.column(HugeKeys.INDEX_TYPE, TINYINT);</span>
+<span class="nc" id="L284">            this.define.column(HugeKeys.FIELDS, SMALL_JSON);</span>
+<span class="nc" id="L285">            this.define.column(HugeKeys.USER_DATA, LARGE_JSON);</span>
+<span class="nc" id="L286">            this.define.column(HugeKeys.STATUS, TINYINT);</span>
+<span class="nc" id="L287">            this.define.keys(HugeKeys.ID);</span>
+<span class="nc" id="L288">        }</span>
+    }
+
+    public static class Vertex extends MysqlTableTemplate {
+
+<span class="nc" id="L293">        public static final String TABLE = HugeType.VERTEX.string();</span>
+
+        public Vertex(String store) {
+<span class="nc" id="L296">            this(store, TYPES_MAPPING);</span>
+<span class="nc" id="L297">        }</span>
+
+        public Vertex(String store, Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L300">            super(joinTableName(store, TABLE));</span>
+
+<span class="nc" id="L302">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L303">            this.define.column(HugeKeys.ID, SMALL_TEXT);</span>
+<span class="nc" id="L304">            this.define.column(HugeKeys.LABEL, DATATYPE_SL);</span>
+<span class="nc" id="L305">            this.define.column(HugeKeys.PROPERTIES, HUGE_TEXT);</span>
+<span class="nc" id="L306">            this.define.column(HugeKeys.EXPIRED_TIME, BIGINT);</span>
+<span class="nc" id="L307">            this.define.keys(HugeKeys.ID);</span>
+<span class="nc" id="L308">        }</span>
+    }
+
+    public static class Edge extends MysqlTableTemplate {
+
+<span class="nc" id="L313">        public static final String TABLE_SUFFIX = HugeType.EDGE.string();</span>
+
+        private final Directions direction;
+        private final String delByLabelTemplate;
+
+        public Edge(String store, Directions direction) {
+<span class="nc" id="L319">            this(store, direction, TYPES_MAPPING);</span>
+<span class="nc" id="L320">        }</span>
+
+        public Edge(String store, Directions direction,
+                    Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L324">            super(joinTableName(store, table(direction)));</span>
+
+<span class="nc" id="L326">            this.direction = direction;</span>
+<span class="nc" id="L327">            this.delByLabelTemplate = String.format(</span>
+                                      &quot;DELETE FROM %s WHERE %s = ?;&quot;,
+<span class="nc" id="L329">                                      this.table(), formatKey(HugeKeys.LABEL));</span>
+
+<span class="nc" id="L331">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L332">            this.define.column(HugeKeys.OWNER_VERTEX, SMALL_TEXT);</span>
+<span class="nc" id="L333">            this.define.column(HugeKeys.DIRECTION, TINYINT);</span>
+<span class="nc" id="L334">            this.define.column(HugeKeys.LABEL, DATATYPE_SL);</span>
+<span class="nc" id="L335">            this.define.column(HugeKeys.SORT_VALUES, SMALL_TEXT);</span>
+<span class="nc" id="L336">            this.define.column(HugeKeys.OTHER_VERTEX, SMALL_TEXT);</span>
+<span class="nc" id="L337">            this.define.column(HugeKeys.PROPERTIES, LARGE_JSON);</span>
+<span class="nc" id="L338">            this.define.column(HugeKeys.EXPIRED_TIME, BIGINT);</span>
+<span class="nc" id="L339">            this.define.keys(HugeKeys.OWNER_VERTEX, HugeKeys.DIRECTION,</span>
+                             HugeKeys.LABEL, HugeKeys.SORT_VALUES,
+                             HugeKeys.OTHER_VERTEX);
+<span class="nc" id="L342">        }</span>
+
+        @Override
+        public List&lt;Object&gt; idColumnValue(Id id) {
+            EdgeId edgeId;
+<span class="nc bnc" id="L347" title="All 2 branches missed.">            if (id instanceof EdgeId) {</span>
+<span class="nc" id="L348">                edgeId = (EdgeId) id;</span>
+            } else {
+<span class="nc" id="L350">                String[] idParts = EdgeId.split(id);</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">                if (idParts.length == 1) {</span>
+                    // Delete edge by label
+<span class="nc" id="L353">                    return Arrays.asList((Object[]) idParts);</span>
+                }
+<span class="nc" id="L355">                id = IdUtil.readString(id.asString());</span>
+<span class="nc" id="L356">                edgeId = EdgeId.parse(id.asString());</span>
+            }
+
+<span class="nc bnc" id="L359" title="All 2 branches missed.">            E.checkState(edgeId.direction() == this.direction,</span>
+                         &quot;Can't query %s edges from %s edges table&quot;,
+<span class="nc" id="L361">                         edgeId.direction(), this.direction);</span>
+
+<span class="nc" id="L363">            List&lt;Object&gt; list = new ArrayList&lt;&gt;(5);</span>
+<span class="nc" id="L364">            list.add(IdUtil.writeStoredString(edgeId.ownerVertexId()));</span>
+<span class="nc" id="L365">            list.add(edgeId.directionCode());</span>
+<span class="nc" id="L366">            list.add(edgeId.edgeLabelId().asLong());</span>
+<span class="nc" id="L367">            list.add(edgeId.sortValues());</span>
+<span class="nc" id="L368">            list.add(IdUtil.writeStoredString(edgeId.otherVertexId()));</span>
+<span class="nc" id="L369">            return list;</span>
+        }
+
+        @Override
+        public void delete(MysqlSessions.Session session, MysqlBackendEntry.Row entry) {
+            // Let super class do delete if not deleting edge by label
+<span class="nc" id="L375">            List&lt;Object&gt; idParts = this.idColumnValue(entry.id());</span>
+<span class="nc bnc" id="L376" title="All 4 branches missed.">            if (idParts.size() &gt; 1 || entry.columns().size() &gt; 0) {</span>
+<span class="nc" id="L377">                super.delete(session, entry);</span>
+<span class="nc" id="L378">                return;</span>
+            }
+
+            // The only element is label
+<span class="nc" id="L382">            this.deleteEdgesByLabel(session, entry.id());</span>
+<span class="nc" id="L383">        }</span>
+
+        private void deleteEdgesByLabel(MysqlSessions.Session session, Id label) {
+            PreparedStatement deleteStmt;
+            try {
+                // Create or get delete prepare statement
+<span class="nc" id="L389">                deleteStmt = session.prepareStatement(this.delByLabelTemplate);</span>
+                // Delete edges
+<span class="nc" id="L391">                deleteStmt.setObject(1, label.asLong());</span>
+<span class="nc" id="L392">            } catch (SQLException e) {</span>
+<span class="nc" id="L393">                throw new BackendException(&quot;Failed to prepare statement '%s'&quot;,</span>
+                                           this.delByLabelTemplate);
+<span class="nc" id="L395">            }</span>
+<span class="nc" id="L396">            session.add(deleteStmt);</span>
+<span class="nc" id="L397">        }</span>
+
+        @Override
+        public BackendEntry mergeEntries(BackendEntry e1, BackendEntry e2) {
+            // Merge edges into vertex
+            // TODO: merge rows before calling row2Entry()
+
+<span class="nc" id="L404">            MysqlBackendEntry current = (MysqlBackendEntry) e1;</span>
+<span class="nc" id="L405">            MysqlBackendEntry next = (MysqlBackendEntry) e2;</span>
+
+<span class="nc bnc" id="L407" title="All 4 branches missed.">            E.checkState(current == null || current.type().isVertex(),</span>
+                         &quot;The current entry must be null or VERTEX&quot;);
+<span class="nc bnc" id="L409" title="All 4 branches missed.">            E.checkState(next != null &amp;&amp; next.type().isEdge(),</span>
+                         &quot;The next entry must be EDGE&quot;);
+
+<span class="nc" id="L412">            long maxSize = BackendEntryIterator.INLINE_BATCH_SIZE;</span>
+<span class="nc bnc" id="L413" title="All 4 branches missed.">            if (current != null &amp;&amp; current.subRows().size() &lt; maxSize) {</span>
+<span class="nc" id="L414">                Id nextVertexId = IdGenerator.of(</span>
+<span class="nc" id="L415">                                  next.&lt;String&gt;column(HugeKeys.OWNER_VERTEX));</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">                if (current.id().equals(nextVertexId)) {</span>
+<span class="nc" id="L417">                    current.subRow(next.row());</span>
+<span class="nc" id="L418">                    return current;</span>
+                }
+            }
+
+<span class="nc" id="L422">            return this.wrapByVertex(next);</span>
+        }
+
+        private MysqlBackendEntry wrapByVertex(MysqlBackendEntry edge) {
+<span class="nc bnc" id="L426" title="All 2 branches missed.">            assert edge.type().isEdge();</span>
+<span class="nc" id="L427">            String ownerVertex = edge.column(HugeKeys.OWNER_VERTEX);</span>
+<span class="nc bnc" id="L428" title="All 2 branches missed.">            E.checkState(ownerVertex != null, &quot;Invalid backend entry&quot;);</span>
+<span class="nc" id="L429">            Id vertexId = IdGenerator.of(ownerVertex);</span>
+<span class="nc" id="L430">            MysqlBackendEntry vertex = new MysqlBackendEntry(HugeType.VERTEX,</span>
+                                                             vertexId);
+
+<span class="nc" id="L433">            vertex.column(HugeKeys.ID, ownerVertex);</span>
+<span class="nc" id="L434">            vertex.column(HugeKeys.PROPERTIES, &quot;&quot;);</span>
+
+<span class="nc" id="L436">            vertex.subRow(edge.row());</span>
+<span class="nc" id="L437">            return vertex;</span>
+        }
+
+        public static String table(Directions direction) {
+<span class="nc bnc" id="L441" title="All 4 branches missed.">            assert direction == Directions.OUT || direction == Directions.IN;</span>
+<span class="nc" id="L442">            return direction.type().string() + TABLE_SUFFIX;</span>
+        }
+
+        public static MysqlTable out(String store) {
+<span class="nc" id="L446">            return new Edge(store, Directions.OUT);</span>
+        }
+
+        public static MysqlTable in(String store) {
+<span class="nc" id="L450">            return new Edge(store, Directions.IN);</span>
+        }
+    }
+
+    public abstract static class Index extends MysqlTableTemplate {
+
+        public Index(String table) {
+<span class="nc" id="L457">            super(table);</span>
+<span class="nc" id="L458">        }</span>
+
+        protected abstract String entryId(MysqlBackendEntry entry);
+    }
+
+    public static class SecondaryIndex extends Index {
+
+<span class="nc" id="L465">        public static final String TABLE = HugeType.SECONDARY_INDEX.string();</span>
+
+        public SecondaryIndex(String store) {
+<span class="nc" id="L468">            this(store, TABLE, TYPES_MAPPING);</span>
+<span class="nc" id="L469">        }</span>
+
+        public SecondaryIndex(String store, String table,
+                              Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L473">            super(joinTableName(store, table));</span>
+
+<span class="nc" id="L475">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L476">            this.define.column(HugeKeys.FIELD_VALUES, SMALL_TEXT);</span>
+<span class="nc" id="L477">            this.define.column(HugeKeys.INDEX_LABEL_ID, DATATYPE_IL);</span>
+<span class="nc" id="L478">            this.define.column(HugeKeys.ELEMENT_IDS, SMALL_TEXT);</span>
+<span class="nc" id="L479">            this.define.column(HugeKeys.EXPIRED_TIME, BIGINT);</span>
+<span class="nc" id="L480">            this.define.keys(HugeKeys.FIELD_VALUES,</span>
+                             HugeKeys.INDEX_LABEL_ID,
+                             HugeKeys.ELEMENT_IDS);
+<span class="nc" id="L483">        }</span>
+
+        @Override
+        public final String entryId(MysqlBackendEntry entry) {
+<span class="nc" id="L487">            String fieldValues = entry.column(HugeKeys.FIELD_VALUES);</span>
+<span class="nc" id="L488">            Integer labelId = entry.column(HugeKeys.INDEX_LABEL_ID);</span>
+<span class="nc" id="L489">            return SplicingIdGenerator.concat(fieldValues, labelId.toString());</span>
+        }
+    }
+
+    public static class SearchIndex extends SecondaryIndex {
+
+<span class="nc" id="L495">        public static final String TABLE = HugeType.SEARCH_INDEX.string();</span>
+
+        public SearchIndex(String store) {
+<span class="nc" id="L498">            super(store, TABLE, TYPES_MAPPING);</span>
+<span class="nc" id="L499">        }</span>
+    }
+
+    /**
+     * TODO: set field value as key and set element id as value
+     */
+    public static class UniqueIndex extends SecondaryIndex {
+
+<span class="nc" id="L507">        public static final String TABLE = HugeType.UNIQUE_INDEX.string();</span>
+
+        public UniqueIndex(String store) {
+<span class="nc" id="L510">            super(store, TABLE, TYPES_MAPPING);</span>
+<span class="nc" id="L511">        }</span>
+    }
+
+    public static class RangeIndex extends Index {
+
+        public RangeIndex(String store, String table) {
+<span class="nc" id="L517">            this(store, table, TYPES_MAPPING);</span>
+<span class="nc" id="L518">        }</span>
+
+        public RangeIndex(String store, String table,
+                          Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L522">            super(joinTableName(store, table));</span>
+
+<span class="nc" id="L524">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L525">            this.define.column(HugeKeys.INDEX_LABEL_ID, DATATYPE_IL);</span>
+<span class="nc" id="L526">            this.define.column(HugeKeys.FIELD_VALUES, NUMERIC);</span>
+<span class="nc" id="L527">            this.define.column(HugeKeys.ELEMENT_IDS, SMALL_TEXT);</span>
+<span class="nc" id="L528">            this.define.column(HugeKeys.EXPIRED_TIME, BIGINT);</span>
+<span class="nc" id="L529">            this.define.keys(HugeKeys.INDEX_LABEL_ID,</span>
+                             HugeKeys.FIELD_VALUES,
+                             HugeKeys.ELEMENT_IDS);
+<span class="nc" id="L532">        }</span>
+
+        @Override
+        public final String entryId(MysqlBackendEntry entry) {
+<span class="nc" id="L536">            Double fieldValue = entry.&lt;Double&gt;column(HugeKeys.FIELD_VALUES);</span>
+<span class="nc" id="L537">            Integer labelId = entry.column(HugeKeys.INDEX_LABEL_ID);</span>
+<span class="nc" id="L538">            return SplicingIdGenerator.concat(labelId.toString(),</span>
+<span class="nc" id="L539">                                              fieldValue.toString());</span>
+        }
+    }
+
+    public static class RangeIntIndex extends RangeIndex {
+
+<span class="nc" id="L545">        public static final String TABLE = HugeType.RANGE_INT_INDEX.string();</span>
+
+        public RangeIntIndex(String store) {
+<span class="nc" id="L548">            this(store, TABLE, TYPES_MAPPING);</span>
+<span class="nc" id="L549">        }</span>
+
+        public RangeIntIndex(String store, String table,
+                             Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L553">            super(store, table);</span>
+
+<span class="nc" id="L555">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L556">            this.define.column(HugeKeys.INDEX_LABEL_ID, DATATYPE_IL);</span>
+<span class="nc" id="L557">            this.define.column(HugeKeys.FIELD_VALUES, INT);</span>
+<span class="nc" id="L558">            this.define.column(HugeKeys.ELEMENT_IDS, SMALL_TEXT);</span>
+<span class="nc" id="L559">            this.define.column(HugeKeys.EXPIRED_TIME, BIGINT);</span>
+<span class="nc" id="L560">            this.define.keys(HugeKeys.INDEX_LABEL_ID,</span>
+                             HugeKeys.FIELD_VALUES,
+                             HugeKeys.ELEMENT_IDS);
+<span class="nc" id="L563">        }</span>
+    }
+
+    public static class RangeFloatIndex extends RangeIndex {
+
+<span class="nc" id="L568">        public static final String TABLE = HugeType.RANGE_FLOAT_INDEX.string();</span>
+
+        public RangeFloatIndex(String store) {
+<span class="nc" id="L571">            this(store, TABLE, TYPES_MAPPING);</span>
+<span class="nc" id="L572">        }</span>
+
+        public RangeFloatIndex(String store, String table,
+                               Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L576">            super(store, table);</span>
+
+<span class="nc" id="L578">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L579">            this.define.column(HugeKeys.INDEX_LABEL_ID, DATATYPE_IL);</span>
+<span class="nc" id="L580">            this.define.column(HugeKeys.FIELD_VALUES, NUMERIC);</span>
+<span class="nc" id="L581">            this.define.column(HugeKeys.ELEMENT_IDS, SMALL_TEXT);</span>
+<span class="nc" id="L582">            this.define.column(HugeKeys.EXPIRED_TIME, BIGINT);</span>
+<span class="nc" id="L583">            this.define.keys(HugeKeys.INDEX_LABEL_ID,</span>
+                             HugeKeys.FIELD_VALUES,
+                             HugeKeys.ELEMENT_IDS);
+<span class="nc" id="L586">        }</span>
+    }
+
+    public static class RangeLongIndex extends RangeIndex {
+
+<span class="nc" id="L591">        public static final String TABLE = HugeType.RANGE_LONG_INDEX.string();</span>
+
+        public RangeLongIndex(String store) {
+<span class="nc" id="L594">            this(store, TABLE, TYPES_MAPPING);</span>
+<span class="nc" id="L595">        }</span>
+
+        public RangeLongIndex(String store, String table,
+                              Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L599">            super(store, table);</span>
+
+<span class="nc" id="L601">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L602">            this.define.column(HugeKeys.INDEX_LABEL_ID, DATATYPE_IL);</span>
+<span class="nc" id="L603">            this.define.column(HugeKeys.FIELD_VALUES, BIGINT);</span>
+<span class="nc" id="L604">            this.define.column(HugeKeys.ELEMENT_IDS, SMALL_TEXT);</span>
+<span class="nc" id="L605">            this.define.column(HugeKeys.EXPIRED_TIME, BIGINT);</span>
+<span class="nc" id="L606">            this.define.keys(HugeKeys.INDEX_LABEL_ID,</span>
+                             HugeKeys.FIELD_VALUES,
+                             HugeKeys.ELEMENT_IDS);
+<span class="nc" id="L609">        }</span>
+    }
+
+    public static class RangeDoubleIndex extends RangeIndex {
+
+<span class="nc" id="L614">        public static final String TABLE = HugeType.RANGE_DOUBLE_INDEX.string();</span>
+
+        public RangeDoubleIndex(String store) {
+<span class="nc" id="L617">            this(store, TABLE, TYPES_MAPPING);</span>
+<span class="nc" id="L618">        }</span>
+
+        public RangeDoubleIndex(String store, String table,
+                                Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L622">            super(store, table);</span>
+
+<span class="nc" id="L624">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L625">            this.define.column(HugeKeys.INDEX_LABEL_ID, DATATYPE_IL);</span>
+<span class="nc" id="L626">            this.define.column(HugeKeys.FIELD_VALUES, NUMERIC);</span>
+<span class="nc" id="L627">            this.define.column(HugeKeys.ELEMENT_IDS, SMALL_TEXT);</span>
+<span class="nc" id="L628">            this.define.column(HugeKeys.EXPIRED_TIME, BIGINT);</span>
+<span class="nc" id="L629">            this.define.keys(HugeKeys.INDEX_LABEL_ID,</span>
+                             HugeKeys.FIELD_VALUES,
+                             HugeKeys.ELEMENT_IDS);
+<span class="nc" id="L632">        }</span>
+    }
+
+    public static class ShardIndex extends Index {
+
+<span class="nc" id="L637">        public static final String TABLE = HugeType.SHARD_INDEX.string();</span>
+
+        public ShardIndex(String store) {
+<span class="nc" id="L640">            this(store, TYPES_MAPPING);</span>
+<span class="nc" id="L641">        }</span>
+
+        public ShardIndex(String store, Map&lt;String, String&gt; typesMapping) {
+<span class="nc" id="L644">            super(joinTableName(store, TABLE));</span>
+
+<span class="nc" id="L646">            this.define = new TableDefine(typesMapping);</span>
+<span class="nc" id="L647">            this.define.column(HugeKeys.INDEX_LABEL_ID, DATATYPE_IL);</span>
+<span class="nc" id="L648">            this.define.column(HugeKeys.FIELD_VALUES, SMALL_TEXT);</span>
+<span class="nc" id="L649">            this.define.column(HugeKeys.ELEMENT_IDS, SMALL_TEXT);</span>
+<span class="nc" id="L650">            this.define.column(HugeKeys.EXPIRED_TIME, BIGINT);</span>
+<span class="nc" id="L651">            this.define.keys(HugeKeys.INDEX_LABEL_ID,</span>
+                             HugeKeys.FIELD_VALUES,
+                             HugeKeys.ELEMENT_IDS);
+<span class="nc" id="L654">        }</span>
+
+        @Override
+        public final String entryId(MysqlBackendEntry entry) {
+<span class="nc" id="L658">            Double fieldValue = entry.&lt;Double&gt;column(HugeKeys.FIELD_VALUES);</span>
+<span class="nc" id="L659">            Integer labelId = entry.column(HugeKeys.INDEX_LABEL_ID);</span>
+<span class="nc" id="L660">            return SplicingIdGenerator.concat(labelId.toString(),</span>
+<span class="nc" id="L661">                                              fieldValue.toString());</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

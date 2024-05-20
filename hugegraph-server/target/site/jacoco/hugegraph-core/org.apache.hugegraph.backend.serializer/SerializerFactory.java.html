@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SerializerFactory.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.serializer</a> &gt; <span class="el_source">SerializerFactory.java</span></div><h1>SerializerFactory.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.serializer;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.config.HugeConfig;
+
+<span class="nc" id="L26">public class SerializerFactory {</span>
+
+    private static final Map&lt;String, Class&lt;? extends AbstractSerializer&gt;&gt; serializers;
+
+    static {
+<span class="nc" id="L31">        serializers = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L32">    }</span>
+
+    public static AbstractSerializer serializer(HugeConfig config, String name) {
+<span class="nc" id="L35">        name = name.toLowerCase();</span>
+<span class="nc bnc" id="L36" title="All 4 branches missed.">        switch (name) {</span>
+            case &quot;binary&quot;:
+<span class="nc" id="L38">                return new BinarySerializer(config);</span>
+            case &quot;binaryscatter&quot;:
+<span class="nc" id="L40">                return new BinaryScatterSerializer(config);</span>
+            case &quot;text&quot;:
+<span class="nc" id="L42">                return new TextSerializer(config);</span>
+            default:
+        }
+
+<span class="nc" id="L46">        Class&lt;? extends AbstractSerializer&gt; clazz = serializers.get(name);</span>
+<span class="nc bnc" id="L47" title="All 2 branches missed.">        if (clazz == null) {</span>
+<span class="nc" id="L48">            throw new BackendException(&quot;Not exists serializer: '%s'&quot;, name);</span>
+        }
+
+<span class="nc bnc" id="L51" title="All 2 branches missed.">        assert AbstractSerializer.class.isAssignableFrom(clazz);</span>
+        try {
+<span class="nc" id="L53">            return clazz.getConstructor(HugeConfig.class).newInstance(config);</span>
+<span class="nc" id="L54">        } catch (Exception e) {</span>
+<span class="nc" id="L55">            throw new BackendException(e);</span>
+        }
+    }
+
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+    public static void register(String name, String classPath) {
+<span class="nc" id="L61">        ClassLoader classLoader = SerializerFactory.class.getClassLoader();</span>
+        Class&lt;?&gt; clazz;
+        try {
+<span class="nc" id="L64">            clazz = classLoader.loadClass(classPath);</span>
+<span class="nc" id="L65">        } catch (Exception e) {</span>
+<span class="nc" id="L66">            throw new BackendException(&quot;Invalid class: '%s'&quot;, e, classPath);</span>
+<span class="nc" id="L67">        }</span>
+
+        // Check subclass
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (!AbstractSerializer.class.isAssignableFrom(clazz)) {</span>
+<span class="nc" id="L71">            throw new BackendException(&quot;Class is not a subclass of class &quot; +</span>
+                                       &quot;AbstractSerializer: '%s'&quot;, classPath);
+        }
+
+        // Check exists
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        if (serializers.containsKey(name)) {</span>
+<span class="nc" id="L77">            throw new BackendException(&quot;Exists serializer: %s(Class '%s')&quot;,</span>
+<span class="nc" id="L78">                                       name, serializers.get(name).getName());</span>
+        }
+
+        // Register class
+<span class="nc" id="L82">        serializers.put(name, (Class) clazz);</span>
+<span class="nc" id="L83">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

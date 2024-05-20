@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IntIterator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util.collection</a> &gt; <span class="el_source">IntIterator.java</span></div><h1>IntIterator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util.collection;
+
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.NoSuchElementException;
+
+public interface IntIterator {
+
+<span class="nc" id="L27">    int[] EMPTY_INTS = new int[0];</span>
+<span class="nc" id="L28">    IntIterator EMPTY = new EmptyIntIterator();</span>
+
+    boolean hasNext();
+
+    int next();
+
+    default Iterator&lt;Integer&gt; asIterator() {
+<span class="nc" id="L35">        return new Iterator&lt;Integer&gt;() {</span>
+
+            @Override
+            public boolean hasNext() {
+<span class="nc" id="L39">                return IntIterator.this.hasNext();</span>
+            }
+
+            @Override
+            public Integer next() {
+<span class="nc" id="L44">                return IntIterator.this.next();</span>
+            }
+        };
+    }
+
+    static IntIterator wrap(
+                  org.eclipse.collections.api.iterator.IntIterator iter) {
+<span class="nc" id="L51">        return new EcIntIterator(iter);</span>
+    }
+
+    static IntIterator wrap(int[] values) {
+<span class="nc" id="L55">        return new ArrayIntIterator(values);</span>
+    }
+
+    static IntIterator wrap(int value) {
+<span class="nc" id="L59">        return new ArrayIntIterator(new int[]{value});</span>
+    }
+
+    final class EcIntIterator implements IntIterator {
+
+        private final org.eclipse.collections.api.iterator.IntIterator iterator;
+
+        public EcIntIterator(org.eclipse.collections.api.iterator.IntIterator
+<span class="nc" id="L67">                             iterator) {</span>
+<span class="nc" id="L68">            this.iterator = iterator;</span>
+<span class="nc" id="L69">        }</span>
+
+        @Override
+        public int next() {
+<span class="nc" id="L73">            return this.iterator.next();</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="nc" id="L78">            return this.iterator.hasNext();</span>
+        }
+    }
+
+    final class ArrayIntIterator implements IntIterator {
+
+        private final int[] array;
+        private int index;
+
+<span class="nc" id="L87">        public ArrayIntIterator(int[] array) {</span>
+<span class="nc" id="L88">            this.array = array;</span>
+<span class="nc" id="L89">            this.index = 0;</span>
+<span class="nc" id="L90">        }</span>
+
+        @Override
+        public int next() {
+<span class="nc" id="L94">            return this.array[this.index++];</span>
+        }
+
+        @Override
+        public boolean hasNext() {
+<span class="nc bnc" id="L99" title="All 2 branches missed.">            return this.index &lt; this.array.length;</span>
+        }
+    }
+
+<span class="nc" id="L103">    final class EmptyIntIterator implements IntIterator {</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="nc" id="L107">            return false;</span>
+        }
+
+        @Override
+        public int next() {
+<span class="nc" id="L112">            throw new NoSuchElementException();</span>
+        }
+    }
+
+<span class="nc" id="L116">    final class IntIterators implements IntIterator {</span>
+
+        private final List&lt;IntIterator&gt; iters;
+        private int currentIndex;
+        private IntIterator currentIter;
+
+<span class="nc" id="L122">        public IntIterators(int size) {</span>
+<span class="nc" id="L123">            this.iters = new ArrayList&lt;&gt;(size);</span>
+<span class="nc" id="L124">            this.currentIndex = 0;</span>
+<span class="nc" id="L125">            this.currentIter = null;</span>
+<span class="nc" id="L126">        }</span>
+
+        public void extend(IntIterator iter) {
+<span class="nc" id="L129">            this.iters.add(iter);</span>
+<span class="nc" id="L130">        }</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="nc bnc" id="L134" title="All 4 branches missed.">            if (this.currentIter == null || !this.currentIter.hasNext()) {</span>
+<span class="nc" id="L135">                IntIterator iter = null;</span>
+                do {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">                    if (this.currentIndex &gt;= this.iters.size()) {</span>
+<span class="nc" id="L138">                        return false;</span>
+                    }
+<span class="nc" id="L140">                    iter = this.iters.get(this.currentIndex++);</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">                } while (!iter.hasNext());</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                assert iter.hasNext();</span>
+<span class="nc" id="L143">                this.currentIter = iter;</span>
+            }
+<span class="nc" id="L145">            return true;</span>
+        }
+
+        @Override
+        public int next() {
+<span class="nc bnc" id="L150" title="All 2 branches missed.">            if (this.currentIter == null) {</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">                if (!this.hasNext()) {</span>
+<span class="nc" id="L152">                    throw new NoSuchElementException();</span>
+                }
+            }
+<span class="nc" id="L155">            return this.currentIter.next();</span>
+        }
+    }
+
+    final class MapperInt2IntIterator implements IntIterator {
+
+        private final IntIterator originIter;
+        private final IntMapper intMapper;
+
+<span class="nc" id="L164">        public MapperInt2IntIterator(IntIterator iter, IntMapper intMapper) {</span>
+<span class="nc" id="L165">            this.originIter = iter;</span>
+<span class="nc" id="L166">            this.intMapper = intMapper;</span>
+<span class="nc" id="L167">        }</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="nc" id="L171">            return this.originIter.hasNext();</span>
+        }
+
+        @Override
+        public int next() {
+<span class="nc" id="L176">            return intMapper.map(this.originIter.next());</span>
+        }
+
+        public interface IntMapper {
+
+            int map(int key);
+        }
+    }
+
+    final class MapperInt2ObjectIterator&lt;T&gt; implements Iterator&lt;T&gt; {
+
+        private final IntIterator originIter;
+        private final IntMapper&lt;T&gt; intMapper;
+
+        public MapperInt2ObjectIterator(IntIterator iter,
+<span class="nc" id="L191">                                        IntMapper&lt;T&gt; intMapper) {</span>
+<span class="nc" id="L192">            this.originIter = iter;</span>
+<span class="nc" id="L193">            this.intMapper = intMapper;</span>
+<span class="nc" id="L194">        }</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="nc" id="L198">            return this.originIter.hasNext();</span>
+        }
+
+        @Override
+        public T next() {
+<span class="nc" id="L203">            return intMapper.map(this.originIter.next());</span>
+        }
+
+        public interface IntMapper&lt;T&gt; {
+
+            T map(int key);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

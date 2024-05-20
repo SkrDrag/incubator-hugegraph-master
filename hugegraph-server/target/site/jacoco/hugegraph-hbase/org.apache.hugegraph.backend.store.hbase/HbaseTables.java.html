@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HbaseTables.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-hbase</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.hbase</a> &gt; <span class="el_source">HbaseTables.java</span></div><h1>HbaseTables.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.hbase;
+
+import java.io.IOException;
+import java.util.Arrays;
+
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hadoop.hbase.Cell;
+import org.apache.hadoop.hbase.CellScanner;
+import org.apache.hadoop.hbase.CellUtil;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.util.Bytes;
+
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.serializer.BinaryBackendEntry;
+import org.apache.hugegraph.backend.serializer.BinaryEntryIterator;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumn;
+import org.apache.hugegraph.backend.store.BackendEntryIterator;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.NumericUtil;
+import org.apache.hugegraph.util.StringEncoding;
+
+<span class="nc" id="L41">public class HbaseTables {</span>
+
+    public static class Meta extends HbaseTable {
+
+<span class="nc" id="L45">        private static final String TABLE = HugeType.META.string();</span>
+<span class="nc" id="L46">        private static final byte[] COL = Bytes.toBytes(TABLE);</span>
+
+        public Meta() {
+<span class="nc" id="L49">            super(TABLE);</span>
+<span class="nc" id="L50">        }</span>
+
+        public void writeVersion(HbaseSessions.Session session, String version) {
+<span class="nc" id="L53">            byte[] key = new byte[]{HugeKeys.VERSION.code()};</span>
+<span class="nc" id="L54">            byte[] value = StringEncoding.encode(version);</span>
+<span class="nc" id="L55">            session.put(this.table(), CF, key, COL, value);</span>
+            try {
+<span class="nc" id="L57">                session.commit();</span>
+<span class="nc" id="L58">            } catch (Exception e) {</span>
+<span class="nc" id="L59">                session.rollback();</span>
+<span class="nc" id="L60">            }</span>
+<span class="nc" id="L61">        }</span>
+
+        public String readVersion(HbaseSessions.Session session) {
+<span class="nc" id="L64">            byte[] key = new byte[]{HugeKeys.VERSION.code()};</span>
+<span class="nc" id="L65">            HbaseSessions.RowIterator results = session.get(this.table(), CF, key);</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">            if (!results.hasNext()) {</span>
+<span class="nc" id="L67">                return null;</span>
+            }
+<span class="nc" id="L69">            Result row = results.next();</span>
+<span class="nc" id="L70">            return StringEncoding.decode(row.getValue(CF, COL));</span>
+        }
+    }
+
+    public static class Counters extends HbaseTable {
+
+<span class="nc" id="L76">        private static final String TABLE = HugeType.COUNTER.string();</span>
+<span class="nc" id="L77">        private static final byte[] COL = Bytes.toBytes(TABLE);</span>
+
+        public Counters() {
+<span class="nc" id="L80">            super(TABLE);</span>
+<span class="nc" id="L81">        }</span>
+
+        public long getCounter(HbaseSessions.Session session, HugeType type) {
+<span class="nc" id="L84">            byte[] key = new byte[]{type.code()};</span>
+<span class="nc" id="L85">            HbaseSessions.RowIterator results = session.get(this.table(), CF, key);</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">            if (results.hasNext()) {</span>
+<span class="nc" id="L87">                Result row = results.next();</span>
+<span class="nc" id="L88">                return NumericUtil.bytesToLong(row.getValue(CF, COL));</span>
+            } else {
+<span class="nc" id="L90">                return 0L;</span>
+            }
+        }
+
+        public void increaseCounter(HbaseSessions.Session session, HugeType type,
+                                    long increment) {
+<span class="nc" id="L96">            byte[] key = new byte[]{type.code()};</span>
+<span class="nc" id="L97">            session.increase(this.table(), CF, key, COL, increment);</span>
+<span class="nc" id="L98">        }</span>
+    }
+
+    public static class VertexLabel extends HbaseTable {
+
+<span class="nc" id="L103">        public static final String TABLE = HugeType.VERTEX_LABEL.string();</span>
+
+        public VertexLabel() {
+<span class="nc" id="L106">            super(TABLE);</span>
+<span class="nc" id="L107">        }</span>
+    }
+
+    public static class EdgeLabel extends HbaseTable {
+
+<span class="nc" id="L112">        public static final String TABLE = HugeType.EDGE_LABEL.string();</span>
+
+        public EdgeLabel() {
+<span class="nc" id="L115">            super(TABLE);</span>
+<span class="nc" id="L116">        }</span>
+    }
+
+    public static class PropertyKey extends HbaseTable {
+
+<span class="nc" id="L121">        public static final String TABLE = HugeType.PROPERTY_KEY.string();</span>
+
+        public PropertyKey() {
+<span class="nc" id="L124">            super(TABLE);</span>
+<span class="nc" id="L125">        }</span>
+    }
+
+    public static class IndexLabel extends HbaseTable {
+
+<span class="nc" id="L130">        public static final String TABLE = HugeType.INDEX_LABEL.string();</span>
+
+        public IndexLabel() {
+<span class="nc" id="L133">            super(TABLE);</span>
+<span class="nc" id="L134">        }</span>
+    }
+
+    public static class Vertex extends HbaseTable {
+
+<span class="nc" id="L139">        public static final String TABLE = HugeType.VERTEX.string();</span>
+
+        public Vertex(String store, boolean enablePartition) {
+<span class="nc" id="L142">            super(joinTableName(store, TABLE), enablePartition);</span>
+<span class="nc" id="L143">        }</span>
+
+        @Override
+        public void insert(HbaseSessions.Session session, BackendEntry entry) {
+<span class="nc" id="L147">            long ttl = entry.ttl();</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">            if (ttl == 0L) {</span>
+<span class="nc" id="L149">                session.put(this.table(), CF, entry.id().asBytes(),</span>
+<span class="nc" id="L150">                            entry.columns());</span>
+            } else {
+<span class="nc" id="L152">                session.put(this.table(), CF, entry.id().asBytes(),</span>
+<span class="nc" id="L153">                            entry.columns(), ttl);</span>
+            }
+<span class="nc" id="L155">        }</span>
+    }
+
+    public static class Edge extends HbaseTable {
+
+<span class="nc" id="L160">        public static final String TABLE_SUFFIX = HugeType.EDGE.string();</span>
+
+        public Edge(String store, boolean out, boolean enablePartition) {
+<span class="nc" id="L163">            super(joinTableName(store, table(out)), enablePartition);</span>
+<span class="nc" id="L164">        }</span>
+
+        private static String table(boolean out) {
+            // Edge out/in table
+<span class="nc bnc" id="L168" title="All 2 branches missed.">            return (out ? 'o' : 'i') + TABLE_SUFFIX;</span>
+        }
+
+        public static Edge out(String store, boolean enablePartition) {
+<span class="nc" id="L172">            return new Edge(store, true, enablePartition);</span>
+        }
+
+        public static Edge in(String store, boolean enablePartition) {
+<span class="nc" id="L176">            return new Edge(store, false, enablePartition);</span>
+        }
+
+        @Override
+        public void insert(HbaseSessions.Session session, BackendEntry entry) {
+<span class="nc" id="L181">            long ttl = entry.ttl();</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">            if (ttl == 0L) {</span>
+<span class="nc" id="L183">                session.put(this.table(), CF, entry.id().asBytes(),</span>
+<span class="nc" id="L184">                            entry.columns());</span>
+            } else {
+<span class="nc" id="L186">                session.put(this.table(), CF, entry.id().asBytes(),</span>
+<span class="nc" id="L187">                            entry.columns(), ttl);</span>
+            }
+<span class="nc" id="L189">        }</span>
+
+        @Override
+        protected void parseRowColumns(Result row, BackendEntry entry,
+                                       Query query, boolean enablePartition) throws IOException {
+            /*
+             * Collapse owner-vertex id from edge id, NOTE: unneeded to
+             * collapse if BinarySerializer.keyWithIdPrefix set to true
+             */
+<span class="nc" id="L198">            byte[] key = row.getRow();</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">            if (enablePartition) {</span>
+<span class="nc" id="L200">                key = Arrays.copyOfRange(key, entry.id().length() + 2, key.length);</span>
+            } else {
+<span class="nc" id="L202">                key = Arrays.copyOfRange(key, entry.id().length(), key.length);</span>
+            }
+
+<span class="nc" id="L205">            long total = query.total();</span>
+<span class="nc" id="L206">            CellScanner cellScanner = row.cellScanner();</span>
+<span class="nc bnc" id="L207" title="All 4 branches missed.">            while (cellScanner.advance() &amp;&amp; total-- &gt; 0) {</span>
+<span class="nc" id="L208">                Cell cell = cellScanner.current();</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">                assert CellUtil.cloneQualifier(cell).length == 0;</span>
+<span class="nc" id="L210">                entry.columns(BackendColumn.of(key, CellUtil.cloneValue(cell)));</span>
+<span class="nc" id="L211">            }</span>
+<span class="nc" id="L212">        }</span>
+    }
+
+<span class="nc" id="L215">    public static class IndexTable extends HbaseTable {</span>
+
+        private static final long INDEX_DELETE_BATCH = Query.COMMIT_BATCH;
+        protected final HugeType type;
+
+        public IndexTable(String table, HugeType type) {
+<span class="nc" id="L221">            super(table);</span>
+<span class="nc" id="L222">            this.type = type;</span>
+<span class="nc" id="L223">        }</span>
+
+        public HugeType type() {
+<span class="nc" id="L226">            return this.type;</span>
+        }
+
+        @Override
+        public void insert(HbaseSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L231" title="All 2 branches missed.">            assert entry.columns().size() == 1;</span>
+<span class="nc" id="L232">            BackendColumn col = entry.columns().iterator().next();</span>
+<span class="nc" id="L233">            long ttl = entry.ttl();</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">            if (ttl == 0L) {</span>
+<span class="nc" id="L235">                session.put(this.table(), CF, col.name,</span>
+                            BytesBuffer.BYTES_EMPTY, col.value);
+            } else {
+<span class="nc" id="L238">                session.put(this.table(), CF, col.name,</span>
+                            BytesBuffer.BYTES_EMPTY, col.value, ttl);
+            }
+<span class="nc" id="L241">        }</span>
+
+        @Override
+        public void eliminate(HbaseSessions.Session session, BackendEntry entry) {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            assert entry.columns().size() == 1;</span>
+<span class="nc" id="L246">            BackendColumn col = entry.columns().iterator().next();</span>
+<span class="nc" id="L247">            session.delete(this.table(), CF, col.name);</span>
+<span class="nc" id="L248">        }</span>
+
+        @Override
+        public void delete(HbaseSessions.Session session, BackendEntry entry) {
+            /*
+             * Only delete index by label will come here
+             * Regular index delete will call eliminate()
+             */
+<span class="nc" id="L256">            long count = 0L;</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">            for (BackendColumn column : entry.columns()) {</span>
+<span class="nc" id="L258">                session.commit();</span>
+                // Prefix query index label related indexes
+<span class="nc" id="L260">                HbaseSessions.RowIterator iter = session.scan(this.table(), column.name);</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">                while (iter.hasNext()) {</span>
+<span class="nc" id="L262">                    session.delete(this.table(), CF, iter.next().getRow());</span>
+                    // Commit once reaching batch size
+<span class="nc bnc" id="L264" title="All 2 branches missed.">                    if (++count &gt;= INDEX_DELETE_BATCH) {</span>
+<span class="nc" id="L265">                        session.commit();</span>
+<span class="nc" id="L266">                        count = 0L;</span>
+                    }
+                }
+<span class="nc" id="L269">            }</span>
+<span class="nc bnc" id="L270" title="All 2 branches missed.">            if (count &gt; 0L) {</span>
+<span class="nc" id="L271">                session.commit();</span>
+            }
+<span class="nc" id="L273">        }</span>
+
+        @Override
+        protected BackendEntryIterator newEntryIterator(Query query,
+                                                        HbaseSessions.RowIterator rows) {
+<span class="nc" id="L278">            return new BinaryEntryIterator&lt;&gt;(rows, query, (entry, row) -&gt; {</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                assert row.size() == 1;</span>
+<span class="nc" id="L280">                BackendColumn col = BackendColumn.of(row.getRow(), row.value());</span>
+<span class="nc" id="L281">                entry = new BinaryBackendEntry(query.resultType(), col.name);</span>
+<span class="nc" id="L282">                entry.columns(col);</span>
+<span class="nc" id="L283">                return entry;</span>
+            });
+        }
+    }
+
+    public static class VertexLabelIndex extends IndexTable {
+
+<span class="nc" id="L290">        public static final String TABLE = HugeType.VERTEX_LABEL_INDEX.string();</span>
+
+        public VertexLabelIndex(String store) {
+<span class="nc" id="L293">            super(joinTableName(store, TABLE), HugeType.SECONDARY_INDEX);</span>
+<span class="nc" id="L294">        }</span>
+    }
+
+    public static class EdgeLabelIndex extends IndexTable {
+
+<span class="nc" id="L299">        public static final String TABLE = HugeType.EDGE_LABEL_INDEX.string();</span>
+
+        public EdgeLabelIndex(String store) {
+<span class="nc" id="L302">            super(joinTableName(store, TABLE), HugeType.SECONDARY_INDEX);</span>
+<span class="nc" id="L303">        }</span>
+    }
+
+    public static class SecondaryIndex extends IndexTable {
+
+<span class="nc" id="L308">        public static final String TABLE = HugeType.SECONDARY_INDEX.string();</span>
+
+        public SecondaryIndex(String store) {
+<span class="nc" id="L311">            super(joinTableName(store, TABLE), HugeType.SECONDARY_INDEX);</span>
+<span class="nc" id="L312">        }</span>
+    }
+
+    public static class SearchIndex extends IndexTable {
+
+<span class="nc" id="L317">        public static final String TABLE = HugeType.SEARCH_INDEX.string();</span>
+
+        public SearchIndex(String store) {
+<span class="nc" id="L320">            super(joinTableName(store, TABLE), HugeType.SECONDARY_INDEX);</span>
+<span class="nc" id="L321">        }</span>
+    }
+
+    public static class UniqueIndex extends IndexTable {
+
+<span class="nc" id="L326">        public static final String TABLE = HugeType.UNIQUE_INDEX.string();</span>
+
+        public UniqueIndex(String store) {
+<span class="nc" id="L329">            super(joinTableName(store, TABLE), HugeType.SECONDARY_INDEX);</span>
+<span class="nc" id="L330">        }</span>
+    }
+
+    public static class RangeIndex extends IndexTable {
+
+        public RangeIndex(String store, HugeType type) {
+<span class="nc" id="L336">            super(joinTableName(store, type.string()), type);</span>
+<span class="nc" id="L337">        }</span>
+
+        public static RangeIndex rangeInt(String store) {
+<span class="nc" id="L340">            return new RangeIndex(store, HugeType.RANGE_INT_INDEX);</span>
+        }
+
+        public static RangeIndex rangeFloat(String store) {
+<span class="nc" id="L344">            return new RangeIndex(store, HugeType.RANGE_FLOAT_INDEX);</span>
+        }
+
+        public static RangeIndex rangeLong(String store) {
+<span class="nc" id="L348">            return new RangeIndex(store, HugeType.RANGE_LONG_INDEX);</span>
+        }
+
+        public static RangeIndex rangeDouble(String store) {
+<span class="nc" id="L352">            return new RangeIndex(store, HugeType.RANGE_DOUBLE_INDEX);</span>
+        }
+    }
+
+    public static class ShardIndex extends IndexTable {
+
+<span class="nc" id="L358">        public static final String TABLE = HugeType.SHARD_INDEX.string();</span>
+
+        public ShardIndex(String store) {
+<span class="nc" id="L361">            super(joinTableName(store, TABLE), HugeType.SECONDARY_INDEX);</span>
+<span class="nc" id="L362">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

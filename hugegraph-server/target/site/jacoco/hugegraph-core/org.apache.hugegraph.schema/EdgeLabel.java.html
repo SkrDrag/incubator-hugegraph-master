@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EdgeLabel.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.schema</a> &gt; <span class="el_source">EdgeLabel.java</span></div><h1>EdgeLabel.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.schema;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.schema.builder.SchemaBuilder;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Frequency;
+import org.apache.hugegraph.util.E;
+import com.google.common.base.Objects;
+
+public class EdgeLabel extends SchemaLabel {
+
+<span class="nc" id="L36">    public static final EdgeLabel NONE = new EdgeLabel(null, NONE_ID, UNDEF);</span>
+
+<span class="nc" id="L38">    private Id sourceLabel = NONE_ID;</span>
+<span class="nc" id="L39">    private Id targetLabel = NONE_ID;</span>
+    private Frequency frequency;
+    private List&lt;Id&gt; sortKeys;
+
+    public EdgeLabel(final HugeGraph graph, Id id, String name) {
+<span class="nc" id="L44">        super(graph, id, name);</span>
+<span class="nc" id="L45">        this.frequency = Frequency.DEFAULT;</span>
+<span class="nc" id="L46">        this.sortKeys = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L47">    }</span>
+
+    @Override
+    public HugeType type() {
+<span class="nc" id="L51">        return HugeType.EDGE_LABEL;</span>
+    }
+
+    public Frequency frequency() {
+<span class="nc" id="L55">        return this.frequency;</span>
+    }
+
+    public void frequency(Frequency frequency) {
+<span class="nc" id="L59">        this.frequency = frequency;</span>
+<span class="nc" id="L60">    }</span>
+
+    public boolean directed() {
+        // TODO: implement (do we need this method?)
+<span class="nc" id="L64">        return true;</span>
+    }
+
+    public String sourceLabelName() {
+<span class="nc" id="L68">        return this.graph.vertexLabelOrNone(this.sourceLabel).name();</span>
+    }
+
+    public Id sourceLabel() {
+<span class="nc" id="L72">        return this.sourceLabel;</span>
+    }
+
+    public void sourceLabel(Id id) {
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        E.checkArgument(this.sourceLabel == NONE_ID,</span>
+                        &quot;Not allowed to set source label multi times &quot; +
+<span class="nc" id="L78">                        &quot;of edge label '%s'&quot;, this.name());</span>
+<span class="nc" id="L79">        this.sourceLabel = id;</span>
+<span class="nc" id="L80">    }</span>
+
+    public String targetLabelName() {
+<span class="nc" id="L83">        return this.graph.vertexLabelOrNone(this.targetLabel).name();</span>
+    }
+
+    public Id targetLabel() {
+<span class="nc" id="L87">        return this.targetLabel;</span>
+    }
+
+    public void targetLabel(Id id) {
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        E.checkArgument(this.targetLabel == NONE_ID,</span>
+                        &quot;Not allowed to set target label multi times &quot; +
+<span class="nc" id="L93">                        &quot;of edge label '%s'&quot;, this.name());</span>
+<span class="nc" id="L94">        this.targetLabel = id;</span>
+<span class="nc" id="L95">    }</span>
+
+    public boolean linkWithLabel(Id id) {
+<span class="nc bnc" id="L98" title="All 4 branches missed.">        return this.sourceLabel.equals(id) || this.targetLabel.equals(id);</span>
+    }
+
+    public boolean checkLinkEqual(Id sourceLabel, Id targetLabel) {
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        return this.sourceLabel.equals(sourceLabel) &amp;&amp;</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">               this.targetLabel.equals(targetLabel);</span>
+    }
+
+    public boolean existSortKeys() {
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        return this.sortKeys.size() &gt; 0;</span>
+    }
+
+    public List&lt;Id&gt; sortKeys() {
+<span class="nc" id="L111">        return Collections.unmodifiableList(this.sortKeys);</span>
+    }
+
+    public void sortKey(Id id) {
+<span class="nc" id="L115">        this.sortKeys.add(id);</span>
+<span class="nc" id="L116">    }</span>
+
+    public void sortKeys(Id... ids) {
+<span class="nc" id="L119">        this.sortKeys.addAll(Arrays.asList(ids));</span>
+<span class="nc" id="L120">    }</span>
+
+    public boolean hasSameContent(EdgeLabel other) {
+<span class="nc bnc" id="L123" title="All 4 branches missed.">        return super.hasSameContent(other) &amp;&amp;</span>
+               this.frequency == other.frequency &amp;&amp;
+<span class="nc bnc" id="L125" title="All 2 branches missed.">               Objects.equal(this.sourceLabelName(), other.sourceLabelName()) &amp;&amp;</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">               Objects.equal(this.targetLabelName(), other.targetLabelName()) &amp;&amp;</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">               Objects.equal(this.graph.mapPkId2Name(this.sortKeys),</span>
+<span class="nc" id="L128">                             other.graph.mapPkId2Name(other.sortKeys));</span>
+    }
+
+    public static EdgeLabel undefined(HugeGraph graph, Id id) {
+<span class="nc" id="L132">        return new EdgeLabel(graph, id, UNDEF);</span>
+    }
+
+    public interface Builder extends SchemaBuilder&lt;EdgeLabel&gt; {
+
+        Id rebuildIndex();
+
+        Builder link(String sourceLabel, String targetLabel);
+
+        Builder sourceLabel(String label);
+
+        Builder targetLabel(String label);
+
+        Builder singleTime();
+
+        Builder multiTimes();
+
+        Builder sortKeys(String... keys);
+
+        Builder properties(String... properties);
+
+        Builder nullableKeys(String... keys);
+
+        Builder frequency(Frequency frequency);
+
+        Builder ttl(long ttl);
+
+        Builder ttlStartTime(String ttlStartTime);
+
+        Builder enableLabelIndex(boolean enable);
+
+        Builder userdata(String key, Object value);
+
+        Builder userdata(Map&lt;String, Object&gt; userdata);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

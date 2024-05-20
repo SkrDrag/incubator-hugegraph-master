@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RedirectFilter.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.filter</a> &gt; <span class="el_source">RedirectFilter.java</span></div><h1>RedirectFilter.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.filter;
+
+import java.io.IOException;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.masterelection.GlobalMasterInfo;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.glassfish.hk2.api.IterableProvider;
+import org.glassfish.hk2.api.ServiceHandle;
+import org.glassfish.jersey.message.internal.HeaderUtils;
+import org.slf4j.Logger;
+
+import jakarta.ws.rs.NameBinding;
+import jakarta.ws.rs.client.Client;
+import jakarta.ws.rs.client.ClientBuilder;
+import jakarta.ws.rs.client.Entity;
+import jakarta.ws.rs.client.Invocation;
+import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.container.ContainerRequestFilter;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MultivaluedMap;
+import jakarta.ws.rs.core.Response;
+
+<span class="nc" id="L53">public class RedirectFilter implements ContainerRequestFilter {</span>
+
+<span class="nc" id="L55">    private static final Logger LOG = Log.logger(RedirectFilter.class);</span>
+
+    private static final String X_HG_REDIRECT = &quot;x-hg-redirect&quot;;
+
+<span class="nc" id="L59">    private static volatile Client client = null;</span>
+
+    @Context
+    private IterableProvider&lt;GraphManager&gt; managerProvider;
+
+<span class="nc" id="L64">    private static final Set&lt;String&gt; MUST_BE_NULL = new HashSet&lt;&gt;();</span>
+
+    static {
+<span class="nc" id="L67">        MUST_BE_NULL.add(&quot;DELETE&quot;);</span>
+<span class="nc" id="L68">        MUST_BE_NULL.add(&quot;GET&quot;);</span>
+<span class="nc" id="L69">        MUST_BE_NULL.add(&quot;HEAD&quot;);</span>
+<span class="nc" id="L70">        MUST_BE_NULL.add(&quot;TRACE&quot;);</span>
+<span class="nc" id="L71">    }</span>
+
+    @Override
+    public void filter(ContainerRequestContext context) throws IOException {
+<span class="nc" id="L75">        ServiceHandle&lt;GraphManager&gt; handle = this.managerProvider.getHandle();</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        E.checkState(handle != null, &quot;Context GraphManager is absent&quot;);</span>
+<span class="nc" id="L77">        GraphManager manager = handle.getService();</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        E.checkState(manager != null, &quot;Context GraphManager is absent&quot;);</span>
+
+<span class="nc" id="L80">        String redirectTag = context.getHeaderString(X_HG_REDIRECT);</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(redirectTag)) {</span>
+<span class="nc" id="L82">            return;</span>
+        }
+
+<span class="nc" id="L85">        GlobalMasterInfo globalNodeInfo = manager.globalNodeRoleInfo();</span>
+<span class="nc bnc" id="L86" title="All 4 branches missed.">        if (globalNodeInfo == null || !globalNodeInfo.supportElection()) {</span>
+<span class="nc" id="L87">            return;</span>
+        }
+<span class="nc" id="L89">        GlobalMasterInfo.NodeInfo masterInfo = globalNodeInfo.masterInfo();</span>
+<span class="nc bnc" id="L90" title="All 4 branches missed.">        if (masterInfo == null || masterInfo.isMaster() ||</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">            StringUtils.isEmpty(masterInfo.nodeUrl())) {</span>
+<span class="nc" id="L92">            return;</span>
+        }
+<span class="nc" id="L94">        String url = masterInfo.nodeUrl();</span>
+
+        URI redirectUri;
+        try {
+<span class="nc" id="L98">            URIBuilder redirectURIBuilder = new URIBuilder(context.getUriInfo().getRequestUri());</span>
+<span class="nc" id="L99">            URI masterURI = URI.create(url);</span>
+<span class="nc" id="L100">            redirectURIBuilder.setHost(masterURI.getHost());</span>
+<span class="nc" id="L101">            redirectURIBuilder.setPort(masterURI.getPort());</span>
+<span class="nc" id="L102">            redirectURIBuilder.setScheme(masterURI.getScheme());</span>
+
+<span class="nc" id="L104">            redirectUri = redirectURIBuilder.build();</span>
+<span class="nc" id="L105">        } catch (URISyntaxException e) {</span>
+<span class="nc" id="L106">            LOG.error(&quot;Redirect request exception occurred&quot;, e);</span>
+<span class="nc" id="L107">            return;</span>
+<span class="nc" id="L108">        }</span>
+<span class="nc" id="L109">        this.initClientIfNeeded();</span>
+<span class="nc" id="L110">        Response response = this.forwardRequest(context, redirectUri);</span>
+<span class="nc" id="L111">        context.abortWith(response);</span>
+<span class="nc" id="L112">    }</span>
+
+    private Response forwardRequest(ContainerRequestContext requestContext, URI redirectUri) {
+<span class="nc" id="L115">        MultivaluedMap&lt;String, String&gt; headers = requestContext.getHeaders();</span>
+<span class="nc" id="L116">        MultivaluedMap&lt;String, Object&gt; newHeaders = HeaderUtils.createOutbound();</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        if (headers != null) {</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">            for (Map.Entry&lt;String, List&lt;String&gt;&gt; entry : headers.entrySet()) {</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">                for (String value : entry.getValue()) {</span>
+<span class="nc" id="L120">                    newHeaders.add(entry.getKey(), value);</span>
+<span class="nc" id="L121">                }</span>
+<span class="nc" id="L122">            }</span>
+        }
+<span class="nc" id="L124">        newHeaders.add(X_HG_REDIRECT, new Date().getTime());</span>
+<span class="nc" id="L125">        Invocation.Builder builder = client.target(redirectUri)</span>
+<span class="nc" id="L126">                                           .request()</span>
+<span class="nc" id="L127">                                           .headers(newHeaders);</span>
+        Response response;
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (MUST_BE_NULL.contains(requestContext.getMethod())) {</span>
+<span class="nc" id="L130">            response = builder.method(requestContext.getMethod());</span>
+        } else {
+<span class="nc" id="L132">            response = builder.method(requestContext.getMethod(),</span>
+<span class="nc" id="L133">                                      Entity.json(requestContext.getEntityStream()));</span>
+        }
+<span class="nc" id="L135">        return response;</span>
+    }
+
+    private void initClientIfNeeded() {
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        if (client != null) {</span>
+<span class="nc" id="L140">            return;</span>
+        }
+
+<span class="nc" id="L143">        synchronized (RedirectFilter.class) {</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">            if (client != null) {</span>
+<span class="nc" id="L145">                return;</span>
+            }
+<span class="nc" id="L147">            client = ClientBuilder.newClient();</span>
+<span class="nc" id="L148">        }</span>
+<span class="nc" id="L149">    }</span>
+
+    @NameBinding
+    @Retention(RetentionPolicy.RUNTIME)
+    public @interface RedirectMasterRole {
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,317 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ServerOptions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.config</a> &gt; <span class="el_source">ServerOptions.java</span></div><h1>ServerOptions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.config;
+
+import static org.apache.hugegraph.config.OptionChecker.allowValues;
+import static org.apache.hugegraph.config.OptionChecker.disallowEmpty;
+import static org.apache.hugegraph.config.OptionChecker.nonNegativeInt;
+import static org.apache.hugegraph.config.OptionChecker.positiveInt;
+import static org.apache.hugegraph.config.OptionChecker.rangeInt;
+
+public class ServerOptions extends OptionHolder {
+
+    private ServerOptions() {
+        super();
+    }
+
+    private static volatile ServerOptions instance;
+
+    public static synchronized ServerOptions instance() {
+<span class="nc bnc" id="L35" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L36">            instance = new ServerOptions();</span>
+<span class="nc" id="L37">            instance.registerOptions();</span>
+        }
+<span class="nc" id="L39">        return instance;</span>
+    }
+
+<span class="nc" id="L42">    public static final ConfigOption&lt;String&gt; REST_SERVER_URL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;restserver.url&quot;,
+                    &quot;The url for listening of hugeserver.&quot;,
+<span class="nc" id="L46">                    disallowEmpty(),</span>
+                    &quot;http://127.0.0.1:8080&quot;
+            );
+
+<span class="nc" id="L50">    public static final ConfigOption&lt;String&gt; SERVER_ID =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;server.id&quot;,
+                    &quot;The id of hugegraph-server.&quot;,
+<span class="nc" id="L54">                    disallowEmpty(),</span>
+                    &quot;server-1&quot;
+            );
+
+<span class="nc" id="L58">    public static final ConfigOption&lt;String&gt; SERVER_ROLE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;server.role&quot;,
+                    &quot;The role of nodes in the cluster, available types are &quot; +
+                    &quot;[master, worker, computer]&quot;,
+<span class="nc" id="L63">                    allowValues(&quot;master&quot;, &quot;worker&quot;, &quot;computer&quot;),</span>
+                    &quot;master&quot;
+            );
+
+<span class="nc" id="L67">    public static final ConfigOption&lt;Integer&gt; MAX_WORKER_THREADS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;restserver.max_worker_threads&quot;,
+                    &quot;The maximum worker threads of rest server.&quot;,
+<span class="nc" id="L71">                    rangeInt(2, Integer.MAX_VALUE),</span>
+<span class="nc" id="L72">                    2 * CoreOptions.CPUS</span>
+            );
+
+<span class="nc" id="L75">    public static final ConfigOption&lt;Integer&gt; MIN_FREE_MEMORY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;restserver.min_free_memory&quot;,
+                    &quot;The minimum free memory(MB) of rest server, requests &quot; +
+                    &quot;will be rejected when the available memory of system &quot; +
+                    &quot;is lower than this value.&quot;,
+<span class="nc" id="L81">                    nonNegativeInt(),</span>
+<span class="nc" id="L82">                    64</span>
+            );
+
+<span class="nc" id="L85">    public static final ConfigOption&lt;Integer&gt; REQUEST_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;restserver.request_timeout&quot;,
+                    &quot;The time in seconds within which a request must complete, &quot; +
+                    &quot;-1 means no timeout.&quot;,
+<span class="nc" id="L90">                    rangeInt(-1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L91">                    30</span>
+            );
+
+<span class="nc" id="L94">    public static final ConfigOption&lt;Integer&gt; CONN_IDLE_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;restserver.connection_idle_timeout&quot;,
+                    &quot;The time in seconds to keep an inactive connection &quot; +
+                    &quot;alive, -1 means no timeout.&quot;,
+<span class="nc" id="L99">                    rangeInt(-1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L100">                    30</span>
+            );
+
+<span class="nc" id="L103">    public static final ConfigOption&lt;Integer&gt; CONN_MAX_REQUESTS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;restserver.connection_max_requests&quot;,
+                    &quot;The max number of HTTP requests allowed to be processed &quot; +
+                    &quot;on one keep-alive connection, -1 means unlimited.&quot;,
+<span class="nc" id="L108">                    rangeInt(-1, Integer.MAX_VALUE),</span>
+<span class="nc" id="L109">                    256</span>
+            );
+
+<span class="nc" id="L112">    public static final ConfigOption&lt;String&gt; GREMLIN_SERVER_URL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;gremlinserver.url&quot;,
+                    &quot;The url of gremlin server.&quot;,
+<span class="nc" id="L116">                    disallowEmpty(),</span>
+                    &quot;http://127.0.0.1:8182&quot;
+            );
+
+<span class="nc" id="L120">    public static final ConfigOption&lt;Integer&gt; GREMLIN_SERVER_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;gremlinserver.timeout&quot;,
+                    &quot;The timeout in seconds of waiting for gremlin server.&quot;,
+<span class="nc" id="L124">                    positiveInt(),</span>
+<span class="nc" id="L125">                    30</span>
+            );
+
+<span class="nc" id="L128">    public static final ConfigOption&lt;Integer&gt; GREMLIN_SERVER_MAX_ROUTE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;gremlinserver.max_route&quot;,
+                    &quot;The max route number for gremlin server.&quot;,
+<span class="nc" id="L132">                    positiveInt(),</span>
+<span class="nc" id="L133">                    2 * CoreOptions.CPUS</span>
+            );
+
+<span class="nc" id="L136">    public static final ConfigOption&lt;String&gt; GRAPHS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;graphs&quot;,
+                    &quot;The directory store graphs' config file.&quot;,
+<span class="nc" id="L140">                    disallowEmpty(),</span>
+                    &quot;./conf/graphs&quot;
+            );
+
+<span class="nc" id="L144">    public static final ConfigOption&lt;Integer&gt; MAX_VERTICES_PER_BATCH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;batch.max_vertices_per_batch&quot;,
+                    &quot;The maximum number of vertices submitted per batch.&quot;,
+<span class="nc" id="L148">                    positiveInt(),</span>
+<span class="nc" id="L149">                    500</span>
+            );
+
+<span class="nc" id="L152">    public static final ConfigOption&lt;Integer&gt; MAX_EDGES_PER_BATCH =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;batch.max_edges_per_batch&quot;,
+                    &quot;The maximum number of edges submitted per batch.&quot;,
+<span class="nc" id="L156">                    positiveInt(),</span>
+<span class="nc" id="L157">                    500</span>
+            );
+
+<span class="nc" id="L160">    public static final ConfigOption&lt;Integer&gt; MAX_WRITE_RATIO =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;batch.max_write_ratio&quot;,
+                    &quot;The maximum thread ratio for batch writing, &quot; +
+                    &quot;only take effect if the batch.max_write_threads is 0.&quot;,
+<span class="nc" id="L165">                    rangeInt(0, 100),</span>
+<span class="nc" id="L166">                    50</span>
+            );
+
+<span class="nc" id="L169">    public static final ConfigOption&lt;Integer&gt; MAX_WRITE_THREADS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;batch.max_write_threads&quot;,
+                    &quot;The maximum threads for batch writing, &quot; +
+                    &quot;if the value is 0, the actual value will be set to &quot; +
+                    &quot;batch.max_write_ratio * restserver.max_worker_threads.&quot;,
+<span class="nc" id="L175">                    nonNegativeInt(),</span>
+<span class="nc" id="L176">                    0);</span>
+
+<span class="nc" id="L178">    public static final ConfigOption&lt;String&gt; RAFT_GROUP_PEERS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;raft.group_peers&quot;,
+                    &quot;The rpc address of raft group initial peers.&quot;,
+<span class="nc" id="L182">                    disallowEmpty(),</span>
+                    &quot;127.0.0.1:8090&quot;
+            );
+
+<span class="nc" id="L186">    public static final ConfigOption&lt;Boolean&gt; ALLOW_TRACE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;exception.allow_trace&quot;,
+                    &quot;Whether to allow exception trace stack.&quot;,
+<span class="nc" id="L190">                    disallowEmpty(),</span>
+<span class="nc" id="L191">                    false</span>
+            );
+
+<span class="nc" id="L194">    public static final ConfigOption&lt;String&gt; AUTHENTICATOR =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.authenticator&quot;,
+                    &quot;The class path of authenticator implementation. &quot; +
+                    &quot;e.g., org.apache.hugegraph.auth.StandardAuthenticator, &quot; +
+                    &quot;or org.apache.hugegraph.auth.ConfigAuthenticator.&quot;,
+                    null,
+                    &quot;&quot;
+            );
+
+<span class="nc" id="L204">    public static final ConfigOption&lt;String&gt; AUTH_GRAPH_STORE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.graph_store&quot;,
+                    &quot;The name of graph used to store authentication information, &quot; +
+                    &quot;like users, only for org.apache.hugegraph.auth.StandardAuthenticator.&quot;,
+<span class="nc" id="L209">                    disallowEmpty(),</span>
+                    &quot;hugegraph&quot;
+            );
+
+<span class="nc" id="L213">    public static final ConfigOption&lt;String&gt; AUTH_ADMIN_TOKEN =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.admin_token&quot;,
+                    &quot;Token for administrator operations, &quot; +
+                    &quot;only for org.apache.hugegraph.auth.ConfigAuthenticator.&quot;,
+<span class="nc" id="L218">                    disallowEmpty(),</span>
+                    &quot;162f7848-0b6d-4faf-b557-3a0797869c55&quot;
+            );
+
+<span class="nc" id="L222">    public static final ConfigListOption&lt;String&gt; AUTH_USER_TOKENS =</span>
+            new ConfigListOption&lt;&gt;(
+                    &quot;auth.user_tokens&quot;,
+                    &quot;The map of user tokens with name and password, &quot; +
+                    &quot;only for org.apache.hugegraph.auth.ConfigAuthenticator.&quot;,
+<span class="nc" id="L227">                    disallowEmpty(),</span>
+                    &quot;hugegraph:9fd95c9c-711b-415b-b85f-d4df46ba5c31&quot;
+            );
+
+<span class="nc" id="L231">    public static final ConfigOption&lt;String&gt; AUTH_REMOTE_URL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;auth.remote_url&quot;,
+                    &quot;If the address is empty, it provide auth service, &quot; +
+                    &quot;otherwise it is auth client and also provide auth service &quot; +
+                    &quot;through rpc forwarding. The remote url can be set to &quot; +
+                    &quot;multiple addresses, which are concat by ','.&quot;,
+                    null,
+                    &quot;&quot;
+            );
+
+<span class="nc" id="L242">    public static final ConfigOption&lt;String&gt; SSL_KEYSTORE_FILE =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;ssl.keystore_file&quot;,
+                    &quot;The path of server keystore file used when https &quot; +
+                    &quot;protocol is enabled.&quot;,
+<span class="nc" id="L247">                    disallowEmpty(),</span>
+                    &quot;conf/hugegraph-server.keystore&quot;
+            );
+
+<span class="nc" id="L251">    public static final ConfigOption&lt;String&gt; SSL_KEYSTORE_PASSWORD =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;ssl.keystore_password&quot;,
+                    &quot;The password of the server keystore file &quot; +
+                    &quot;when the https protocol is enabled.&quot;,
+                    null,
+                    &quot;hugegraph&quot;
+            );
+
+<span class="nc" id="L260">    public static final ConfigOption&lt;Boolean&gt; ENABLE_DYNAMIC_CREATE_DROP =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;graphs.enable_dynamic_create_drop&quot;,
+                    &quot;Whether to enable create or drop graph dynamically.&quot;,
+<span class="nc" id="L264">                    disallowEmpty(),</span>
+<span class="nc" id="L265">                    true</span>
+            );
+
+<span class="nc" id="L268">    public static final ConfigOption&lt;String&gt; WHITE_IP_STATUS =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;white_ip.status&quot;,
+                    &quot;The status of whether enable white ip.&quot;,
+<span class="nc" id="L272">                    disallowEmpty(),</span>
+                    &quot;disable&quot;
+            );
+
+<span class="nc" id="L276">    public static final ConfigOption&lt;String&gt; ARTHAS_TELNET_PORT =</span>
+        new ConfigOption&lt;&gt;(
+            &quot;arthas.telnet_port&quot;,
+            &quot;The telnet port provided by Arthas, it can be accessible from the outside.&quot;,
+<span class="nc" id="L280">            disallowEmpty(),</span>
+            &quot;8562&quot;
+        );
+
+<span class="nc" id="L284">    public static final ConfigOption&lt;String&gt; ARTHAS_HTTP_PORT =</span>
+        new ConfigOption&lt;&gt;(
+            &quot;arthas.http_port&quot;,
+            &quot;The HTTP port provided by Arthas, it can be accessible from the outside.&quot;,
+<span class="nc" id="L288">            disallowEmpty(),</span>
+            &quot;8561&quot;
+        );
+
+<span class="nc" id="L292">    public static final ConfigOption&lt;String&gt; ARTHAS_IP =</span>
+        new ConfigOption&lt;&gt;(
+            &quot;arthas.ip&quot;,
+            &quot;The IP provided by Arthas, it can be accessible from the outside.&quot;,
+<span class="nc" id="L296">            disallowEmpty(),</span>
+            &quot;0.0.0.0&quot;
+        );
+
+<span class="nc" id="L300">    public static final ConfigOption&lt;String&gt; ARTHAS_DISABLED_COMMANDS =</span>
+        new ConfigOption&lt;&gt;(
+            &quot;arthas.disabled_commands&quot;,
+            &quot;The disabled Arthas commands due to high risk.&quot;,
+            null,
+            &quot;jad&quot;
+        );
+
+<span class="nc" id="L308">    public static final ConfigOption&lt;Long&gt; SLOW_QUERY_LOG_TIME_THRESHOLD =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;log.slow_query_threshold&quot;,
+                    &quot;The threshold time(ms) of logging slow query, &quot; +
+                    &quot;0 means logging slow query is disabled.&quot;,
+<span class="nc" id="L313">                    nonNegativeInt(),</span>
+<span class="nc" id="L314">                    1000L</span>
+            );
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,395 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TaskManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.task</a> &gt; <span class="el_source">TaskManager.java</span></div><h1>TaskManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.task;
+
+import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.concurrent.PausableScheduledThreadPool;
+import org.apache.hugegraph.type.define.NodeRole;
+import org.apache.hugegraph.util.Consumers;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.ExecutorUtil;
+import org.apache.hugegraph.util.LockUtil;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+public final class TaskManager {
+
+<span class="nc" id="L42">    private static final Logger LOG = Log.logger(TaskManager.class);</span>
+
+    public static final String TASK_WORKER_PREFIX = &quot;task-worker&quot;;
+    public static final String TASK_WORKER = TASK_WORKER_PREFIX + &quot;-%d&quot;;
+    public static final String TASK_DB_WORKER = &quot;task-db-worker-%d&quot;;
+    public static final String SERVER_INFO_DB_WORKER =
+                               &quot;server-info-db-worker-%d&quot;;
+    public static final String TASK_SCHEDULER = &quot;task-scheduler-%d&quot;;
+
+    protected static final long SCHEDULE_PERIOD = 1000L; // unit ms
+    private static final long TX_CLOSE_TIMEOUT = 30L; // unit s
+    private static final int THREADS = 4;
+<span class="nc" id="L54">    private static final TaskManager MANAGER = new TaskManager(THREADS);</span>
+
+    private final Map&lt;HugeGraphParams, TaskScheduler&gt; schedulers;
+
+    private final ExecutorService taskExecutor;
+    private final ExecutorService taskDbExecutor;
+    private final ExecutorService serverInfoDbExecutor;
+    private final PausableScheduledThreadPool schedulerExecutor;
+
+<span class="nc" id="L63">    private boolean enableRoleElected = false;</span>
+
+    public static TaskManager instance() {
+<span class="nc" id="L66">        return MANAGER;</span>
+    }
+
+<span class="nc" id="L69">    private TaskManager(int pool) {</span>
+<span class="nc" id="L70">        this.schedulers = new ConcurrentHashMap&lt;&gt;();</span>
+
+        // For execute tasks
+<span class="nc" id="L73">        this.taskExecutor = ExecutorUtil.newFixedThreadPool(pool, TASK_WORKER);</span>
+        // For save/query task state, just one thread is ok
+<span class="nc" id="L75">        this.taskDbExecutor = ExecutorUtil.newFixedThreadPool(</span>
+                              1, TASK_DB_WORKER);
+<span class="nc" id="L77">        this.serverInfoDbExecutor = ExecutorUtil.newFixedThreadPool(</span>
+                                    1, SERVER_INFO_DB_WORKER);
+        // For schedule task to run, just one thread is ok
+<span class="nc" id="L80">        this.schedulerExecutor = ExecutorUtil.newPausableScheduledThreadPool(</span>
+                                 1, TASK_SCHEDULER);
+        // Start after 10x period time waiting for HugeGraphServer startup
+<span class="nc" id="L83">        this.schedulerExecutor.scheduleWithFixedDelay(this::scheduleOrExecuteJob,</span>
+                                                      10 * SCHEDULE_PERIOD,
+                                                      SCHEDULE_PERIOD,
+                                                      TimeUnit.MILLISECONDS);
+<span class="nc" id="L87">    }</span>
+
+    public void addScheduler(HugeGraphParams graph) {
+<span class="nc" id="L90">        E.checkArgumentNotNull(graph, &quot;The graph can't be null&quot;);</span>
+
+<span class="nc" id="L92">        TaskScheduler scheduler = new StandardTaskScheduler(graph,</span>
+                                  this.taskExecutor, this.taskDbExecutor,
+                                  this.serverInfoDbExecutor);
+<span class="nc" id="L95">        this.schedulers.put(graph, scheduler);</span>
+<span class="nc" id="L96">    }</span>
+
+    public void closeScheduler(HugeGraphParams graph) {
+<span class="nc" id="L99">        TaskScheduler scheduler = this.schedulers.get(graph);</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (scheduler != null) {</span>
+            /*
+             * Synch close+remove scheduler and iterate scheduler, details:
+             * 'closeScheduler' should sync with 'scheduleOrExecuteJob'.
+             * Because 'closeScheduler' will be called by 'graph.close()' in
+             * main thread and there is gap between 'scheduler.close()'
+             * (will close graph tx) and 'this.schedulers.remove(graph)'.
+             * In this gap 'scheduleOrExecuteJob' may be run in
+             * scheduler-db-thread and 'scheduleOrExecuteJob' will reopen
+             * graph tx. As a result, graph tx will mistakenly not be closed
+             * after 'graph.close()'.
+             */
+<span class="nc" id="L112">            synchronized (scheduler) {</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">                if (scheduler.close()) {</span>
+<span class="nc" id="L114">                    this.schedulers.remove(graph);</span>
+                }
+<span class="nc" id="L116">            }</span>
+        }
+
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        if (!this.taskExecutor.isTerminated()) {</span>
+<span class="nc" id="L120">            this.closeTaskTx(graph);</span>
+        }
+
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (!this.schedulerExecutor.isTerminated()) {</span>
+<span class="nc" id="L124">            this.closeSchedulerTx(graph);</span>
+        }
+<span class="nc" id="L126">    }</span>
+
+    private void closeTaskTx(HugeGraphParams graph) {
+<span class="nc" id="L129">        final boolean selfIsTaskWorker = Thread.currentThread().getName()</span>
+<span class="nc" id="L130">                                               .startsWith(TASK_WORKER_PREFIX);</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        final int totalThreads = selfIsTaskWorker ? THREADS - 1 : THREADS;</span>
+        try {
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            if (selfIsTaskWorker) {</span>
+                // Call closeTx directly if myself is task thread(ignore others)
+<span class="nc" id="L135">                graph.closeTx();</span>
+            } else {
+<span class="nc" id="L137">                Consumers.executeOncePerThread(this.taskExecutor, totalThreads,</span>
+<span class="nc" id="L138">                                               graph::closeTx, TX_CLOSE_TIMEOUT);</span>
+            }
+<span class="nc" id="L140">        } catch (Exception e) {</span>
+<span class="nc" id="L141">            throw new HugeException(&quot;Exception when closing task tx&quot;, e);</span>
+<span class="nc" id="L142">        }</span>
+<span class="nc" id="L143">    }</span>
+
+    private void closeSchedulerTx(HugeGraphParams graph) {
+<span class="nc" id="L146">        final Callable&lt;Void&gt; closeTx = () -&gt; {</span>
+            // Do close-tx for current thread
+<span class="nc" id="L148">            graph.closeTx();</span>
+            // Let other threads run
+<span class="nc" id="L150">            Thread.yield();</span>
+<span class="nc" id="L151">            return null;</span>
+        };
+        try {
+<span class="nc" id="L154">            this.schedulerExecutor.submit(closeTx).get();</span>
+<span class="nc" id="L155">        } catch (Exception e) {</span>
+<span class="nc" id="L156">            throw new HugeException(&quot;Exception when closing scheduler tx&quot;, e);</span>
+<span class="nc" id="L157">        }</span>
+<span class="nc" id="L158">    }</span>
+
+    public void pauseScheduledThreadPool() {
+<span class="nc" id="L161">        this.schedulerExecutor.pauseSchedule();</span>
+<span class="nc" id="L162">    }</span>
+
+    public void resumeScheduledThreadPool() {
+<span class="nc" id="L165">        this.schedulerExecutor.resumeSchedule();</span>
+<span class="nc" id="L166">    }</span>
+
+    public TaskScheduler getScheduler(HugeGraphParams graph) {
+<span class="nc" id="L169">        return this.schedulers.get(graph);</span>
+    }
+
+    public ServerInfoManager getServerInfoManager(HugeGraphParams graph) {
+<span class="nc" id="L173">        StandardTaskScheduler scheduler = (StandardTaskScheduler)</span>
+<span class="nc" id="L174">                                          this.getScheduler(graph);</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (scheduler == null) {</span>
+<span class="nc" id="L176">            return null;</span>
+        }
+<span class="nc" id="L178">        return scheduler.serverManager();</span>
+    }
+
+    public void shutdown(long timeout) {
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        assert this.schedulers.isEmpty() : this.schedulers.size();</span>
+
+<span class="nc" id="L184">        Throwable ex = null;</span>
+<span class="nc" id="L185">        boolean terminated = this.schedulerExecutor.isTerminated();</span>
+<span class="nc" id="L186">        final TimeUnit unit = TimeUnit.SECONDS;</span>
+
+<span class="nc bnc" id="L188" title="All 2 branches missed.">        if (!this.schedulerExecutor.isShutdown()) {</span>
+<span class="nc" id="L189">            this.schedulerExecutor.shutdown();</span>
+            try {
+<span class="nc" id="L191">                terminated = this.schedulerExecutor.awaitTermination(timeout,</span>
+                                                                     unit);
+<span class="nc" id="L193">            } catch (Throwable e) {</span>
+<span class="nc" id="L194">                ex = e;</span>
+<span class="nc" id="L195">            }</span>
+        }
+
+<span class="nc bnc" id="L198" title="All 4 branches missed.">        if (terminated &amp;&amp; !this.taskExecutor.isShutdown()) {</span>
+<span class="nc" id="L199">            this.taskExecutor.shutdown();</span>
+            try {
+<span class="nc" id="L201">                terminated = this.taskExecutor.awaitTermination(timeout, unit);</span>
+<span class="nc" id="L202">            } catch (Throwable e) {</span>
+<span class="nc" id="L203">                ex = e;</span>
+<span class="nc" id="L204">            }</span>
+        }
+
+<span class="nc bnc" id="L207" title="All 4 branches missed.">        if (terminated &amp;&amp; !this.serverInfoDbExecutor.isShutdown()) {</span>
+<span class="nc" id="L208">            this.serverInfoDbExecutor.shutdown();</span>
+            try {
+<span class="nc" id="L210">                terminated = this.serverInfoDbExecutor.awaitTermination(timeout,</span>
+                                                                        unit);
+<span class="nc" id="L212">            } catch (Throwable e) {</span>
+<span class="nc" id="L213">                ex = e;</span>
+<span class="nc" id="L214">            }</span>
+        }
+
+<span class="nc bnc" id="L217" title="All 4 branches missed.">        if (terminated &amp;&amp; !this.taskDbExecutor.isShutdown()) {</span>
+<span class="nc" id="L218">            this.taskDbExecutor.shutdown();</span>
+            try {
+<span class="nc" id="L220">                terminated = this.taskDbExecutor.awaitTermination(timeout, unit);</span>
+<span class="nc" id="L221">            } catch (Throwable e) {</span>
+<span class="nc" id="L222">                ex = e;</span>
+<span class="nc" id="L223">            }</span>
+        }
+
+<span class="nc bnc" id="L226" title="All 2 branches missed.">        if (!terminated) {</span>
+<span class="nc" id="L227">            ex = new TimeoutException(timeout + &quot;s&quot;);</span>
+        }
+<span class="nc bnc" id="L229" title="All 2 branches missed.">        if (ex != null) {</span>
+<span class="nc" id="L230">            throw new HugeException(&quot;Failed to wait for TaskScheduler&quot;, ex);</span>
+        }
+<span class="nc" id="L232">    }</span>
+
+    public int workerPoolSize() {
+<span class="nc" id="L235">        return ((ThreadPoolExecutor) this.taskExecutor).getCorePoolSize();</span>
+    }
+
+    public int pendingTasks() {
+<span class="nc" id="L239">        int size = 0;</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">        for (TaskScheduler scheduler : this.schedulers.values()) {</span>
+<span class="nc" id="L241">            size += scheduler.pendingTasks();</span>
+<span class="nc" id="L242">        }</span>
+<span class="nc" id="L243">        return size;</span>
+    }
+
+    public void enableRoleElection() {
+<span class="nc" id="L247">        this.enableRoleElected = true;</span>
+<span class="nc" id="L248">    }</span>
+
+    public void onAsRoleMaster() {
+        try {
+<span class="nc bnc" id="L252" title="All 2 branches missed.">            for (TaskScheduler entry : this.schedulers.values()) {</span>
+<span class="nc" id="L253">                StandardTaskScheduler scheduler = (StandardTaskScheduler) entry;</span>
+<span class="nc" id="L254">                ServerInfoManager serverInfoManager = scheduler.serverManager();</span>
+<span class="nc" id="L255">                serverInfoManager.changeServerRole(NodeRole.MASTER);</span>
+<span class="nc" id="L256">            }</span>
+<span class="nc" id="L257">        } catch (Throwable e) {</span>
+<span class="nc" id="L258">            LOG.error(&quot;Exception occurred when change to master role&quot;, e);</span>
+<span class="nc" id="L259">            throw e;</span>
+<span class="nc" id="L260">        }</span>
+<span class="nc" id="L261">    }</span>
+
+    public void onAsRoleWorker() {
+        try {
+<span class="nc bnc" id="L265" title="All 2 branches missed.">            for (TaskScheduler entry : this.schedulers.values()) {</span>
+<span class="nc" id="L266">                StandardTaskScheduler scheduler = (StandardTaskScheduler) entry;</span>
+<span class="nc" id="L267">                ServerInfoManager serverInfoManager = scheduler.serverManager();</span>
+<span class="nc" id="L268">                serverInfoManager.changeServerRole(NodeRole.WORKER);</span>
+<span class="nc" id="L269">            }</span>
+<span class="nc" id="L270">        } catch (Throwable e) {</span>
+<span class="nc" id="L271">            LOG.error(&quot;Exception occurred when change to worker role&quot;, e);</span>
+<span class="nc" id="L272">            throw e;</span>
+<span class="nc" id="L273">        }</span>
+<span class="nc" id="L274">    }</span>
+
+    protected void notifyNewTask(HugeTask&lt;?&gt; task) {
+<span class="nc" id="L277">        Queue&lt;Runnable&gt; queue = ((ThreadPoolExecutor) this.schedulerExecutor)</span>
+<span class="nc" id="L278">                                                          .getQueue();</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">        if (queue.size() &lt;= 1) {</span>
+            /*
+             * Notify to schedule tasks initiatively when have new task
+             * It's OK to not notify again if there are more than one task in
+             * queue(like two, one is timer task, one is immediate task),
+             * we don't want too many immediate tasks to be inserted into queue,
+             * one notify will cause all the tasks to be processed.
+             */
+<span class="nc" id="L287">            this.schedulerExecutor.submit(this::scheduleOrExecuteJob);</span>
+        }
+<span class="nc" id="L289">    }</span>
+
+    private void scheduleOrExecuteJob() {
+        // Called by scheduler timer
+        try {
+<span class="nc bnc" id="L294" title="All 2 branches missed.">            for (TaskScheduler entry : this.schedulers.values()) {</span>
+<span class="nc" id="L295">                StandardTaskScheduler scheduler = (StandardTaskScheduler) entry;</span>
+                // Maybe other thread close&amp;remove scheduler at the same time
+<span class="nc" id="L297">                synchronized (scheduler) {</span>
+<span class="nc" id="L298">                    this.scheduleOrExecuteJobForGraph(scheduler);</span>
+<span class="nc" id="L299">                }</span>
+<span class="nc" id="L300">            }</span>
+<span class="nc" id="L301">        } catch (Throwable e) {</span>
+<span class="nc" id="L302">            LOG.error(&quot;Exception occurred when schedule job&quot;, e);</span>
+<span class="nc" id="L303">        }</span>
+<span class="nc" id="L304">    }</span>
+
+    private void scheduleOrExecuteJobForGraph(StandardTaskScheduler scheduler) {
+<span class="nc" id="L307">        E.checkNotNull(scheduler, &quot;scheduler&quot;);</span>
+
+<span class="nc" id="L309">        ServerInfoManager serverManager = scheduler.serverManager();</span>
+<span class="nc" id="L310">        String graph = scheduler.graphName();</span>
+
+<span class="nc" id="L312">        LockUtil.lock(graph, LockUtil.GRAPH_LOCK);</span>
+        try {
+            /*
+             * Skip if:
+             * graph is closed (iterate schedulers before graph is closing)
+             *  or
+             * graph is not initialized(maybe truncated or cleared).
+             *
+             * If graph is closing by other thread, current thread get
+             * serverManager and try lock graph, at the same time other
+             * thread deleted the lock-group, current thread would get
+             * exception 'LockGroup xx does not exists'.
+             * If graph is closed, don't call serverManager.initialized()
+             * due to it will reopen graph tx.
+             */
+<span class="nc bnc" id="L327" title="All 2 branches missed.">            if (!serverManager.graphIsReady()) {</span>
+<span class="nc" id="L328">                return;</span>
+            }
+
+            // Update server heartbeat
+<span class="nc" id="L332">            serverManager.heartbeat();</span>
+
+            /*
+             * Master will schedule tasks to suitable servers.
+             * Note a Worker may become to a Master, so elected-Master also needs to
+             * execute tasks assigned by previous Master when enableRoleElected=true.
+             * However, when enableRoleElected=false, a Master is only set by the
+             * config assignment, assigned-Master always stays the same state.
+             */
+<span class="nc bnc" id="L341" title="All 2 branches missed.">            if (serverManager.selfIsMaster()) {</span>
+<span class="nc" id="L342">                scheduler.scheduleTasksOnMaster();</span>
+<span class="nc bnc" id="L343" title="All 4 branches missed.">                if (!this.enableRoleElected &amp;&amp; !serverManager.onlySingleNode()) {</span>
+                    // assigned-Master + non-single-node don't need to execute tasks
+<span class="nc" id="L345">                    return;</span>
+                }
+            }
+
+            // Execute queued tasks scheduled to current server
+<span class="nc" id="L350">            scheduler.executeTasksOnWorker(serverManager.selfNodeId());</span>
+
+            // Cancel tasks scheduled to current server
+<span class="nc" id="L353">            scheduler.cancelTasksOnWorker(serverManager.selfNodeId());</span>
+        } finally {
+<span class="nc" id="L355">            LockUtil.unlock(graph, LockUtil.GRAPH_LOCK);</span>
+        }
+<span class="nc" id="L357">    }</span>
+
+<span class="nc" id="L359">    private static final ThreadLocal&lt;String&gt; CONTEXTS = new ThreadLocal&lt;&gt;();</span>
+
+    protected static void setContext(String context) {
+<span class="nc" id="L362">        CONTEXTS.set(context);</span>
+<span class="nc" id="L363">    }</span>
+
+    protected static void resetContext() {
+<span class="nc" id="L366">        CONTEXTS.remove();</span>
+<span class="nc" id="L367">    }</span>
+
+    public static String getContext() {
+<span class="nc" id="L370">        return CONTEXTS.get();</span>
+    }
+
+    public static class ContextCallable&lt;V&gt; implements Callable&lt;V&gt; {
+
+        private final Callable&lt;V&gt; callable;
+        private final String context;
+
+<span class="nc" id="L378">        public ContextCallable(Callable&lt;V&gt; callable) {</span>
+<span class="nc" id="L379">            E.checkNotNull(callable, &quot;callable&quot;);</span>
+<span class="nc" id="L380">            this.context = getContext();</span>
+<span class="nc" id="L381">            this.callable = callable;</span>
+<span class="nc" id="L382">        }</span>
+
+        @Override
+        public V call() throws Exception {
+<span class="nc" id="L386">            setContext(this.context);</span>
+            try {
+<span class="nc" id="L388">                return this.callable.call();</span>
+            } finally {
+<span class="nc" id="L390">                resetContext();</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

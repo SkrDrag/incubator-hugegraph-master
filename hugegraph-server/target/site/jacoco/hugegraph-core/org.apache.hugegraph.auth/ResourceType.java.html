@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ResourceType.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">ResourceType.java</span></div><h1>ResourceType.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import org.apache.hugegraph.type.HugeType;
+
+<span class="nc" id="L22">public enum ResourceType {</span>
+
+<span class="nc" id="L24">    NONE,</span>
+
+<span class="nc" id="L26">    STATUS,</span>
+
+<span class="nc" id="L28">    VERTEX,</span>
+
+<span class="nc" id="L30">    EDGE,</span>
+
+<span class="nc" id="L32">    VERTEX_AGGR,</span>
+
+<span class="nc" id="L34">    EDGE_AGGR,</span>
+
+<span class="nc" id="L36">    VAR,</span>
+
+<span class="nc" id="L38">    GREMLIN,</span>
+
+<span class="nc" id="L40">    TASK,</span>
+
+<span class="nc" id="L42">    PROPERTY_KEY,</span>
+
+<span class="nc" id="L44">    VERTEX_LABEL,</span>
+
+<span class="nc" id="L46">    EDGE_LABEL,</span>
+
+<span class="nc" id="L48">    INDEX_LABEL, // include create/rebuild/delete index</span>
+
+<span class="nc" id="L50">    SCHEMA,</span>
+
+<span class="nc" id="L52">    META,</span>
+
+<span class="nc" id="L54">    ALL,</span>
+
+<span class="nc" id="L56">    GRANT,</span>
+
+<span class="nc" id="L58">    USER_GROUP,</span>
+
+<span class="nc" id="L60">    PROJECT,</span>
+
+<span class="nc" id="L62">    TARGET,</span>
+
+<span class="nc" id="L64">    METRICS,</span>
+
+<span class="nc" id="L66">    ROOT;</span>
+
+    public boolean match(ResourceType required) {
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (this == required) {</span>
+<span class="nc" id="L70">            return true;</span>
+        }
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">        switch (required) {</span>
+            case NONE:
+<span class="nc bnc" id="L75" title="All 2 branches missed.">                return this != NONE;</span>
+            default:
+                break;
+        }
+
+<span class="nc bnc" id="L80" title="All 3 branches missed.">        switch (this) {</span>
+            case ROOT:
+            case ALL:
+<span class="nc bnc" id="L83" title="All 2 branches missed.">                return this.ordinal() &gt;= required.ordinal();</span>
+            case SCHEMA:
+<span class="nc" id="L85">                return required.isSchema();</span>
+            default:
+                break;
+        }
+
+<span class="nc" id="L90">        return false;</span>
+    }
+
+    public boolean isGraph() {
+<span class="nc" id="L94">        int ord = this.ordinal();</span>
+<span class="nc bnc" id="L95" title="All 4 branches missed.">        return VERTEX.ordinal() &lt;= ord &amp;&amp; ord &lt;= EDGE.ordinal();</span>
+    }
+
+    public boolean isSchema() {
+<span class="nc" id="L99">        int ord = this.ordinal();</span>
+<span class="nc bnc" id="L100" title="All 4 branches missed.">        return PROPERTY_KEY.ordinal() &lt;= ord &amp;&amp; ord &lt;= SCHEMA.ordinal();</span>
+    }
+
+    public boolean isAuth() {
+<span class="nc" id="L104">        int ord = this.ordinal();</span>
+<span class="nc bnc" id="L105" title="All 4 branches missed.">        return GRANT.ordinal() &lt;= ord &amp;&amp; ord &lt;= TARGET.ordinal();</span>
+    }
+
+    public boolean isGrantOrUser() {
+<span class="nc bnc" id="L109" title="All 4 branches missed.">        return this == GRANT || this == USER_GROUP;</span>
+    }
+
+    public boolean isRepresentative() {
+<span class="nc bnc" id="L113" title="All 6 branches missed.">        return this == ROOT || this == ALL || this == SCHEMA;</span>
+    }
+
+    public static ResourceType from(HugeType type) {
+<span class="nc bnc" id="L117" title="All 7 branches missed.">        switch (type) {</span>
+            case VERTEX:
+<span class="nc" id="L119">                return VERTEX;</span>
+            case EDGE:
+            case EDGE_OUT:
+            case EDGE_IN:
+<span class="nc" id="L123">                return EDGE;</span>
+            case PROPERTY_KEY:
+<span class="nc" id="L125">                return PROPERTY_KEY;</span>
+            case VERTEX_LABEL:
+<span class="nc" id="L127">                return VERTEX_LABEL;</span>
+            case EDGE_LABEL:
+<span class="nc" id="L129">                return EDGE_LABEL;</span>
+            case INDEX_LABEL:
+<span class="nc" id="L131">                return INDEX_LABEL;</span>
+            default:
+                // pass
+                break;
+        }
+<span class="nc" id="L136">        return NONE;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

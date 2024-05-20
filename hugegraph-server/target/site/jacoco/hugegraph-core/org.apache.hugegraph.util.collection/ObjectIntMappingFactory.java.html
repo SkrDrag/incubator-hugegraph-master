@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ObjectIntMappingFactory.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util.collection</a> &gt; <span class="el_source">ObjectIntMappingFactory.java</span></div><h1>ObjectIntMappingFactory.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util.collection;
+
+import org.eclipse.collections.impl.map.mutable.primitive.IntObjectHashMap;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+
+<span class="nc" id="L25">public class ObjectIntMappingFactory {</span>
+
+    public static &lt;V&gt; ObjectIntMapping&lt;V&gt; newObjectIntMapping() {
+<span class="nc" id="L28">        return newObjectIntMapping(false);</span>
+    }
+
+    public static &lt;V&gt; ObjectIntMapping&lt;V&gt; newObjectIntMapping(
+                                          boolean concurrent) {
+<span class="nc bnc" id="L33" title="All 2 branches missed.">        return concurrent ? new ConcurrentObjectIntMapping&lt;&gt;() :</span>
+<span class="nc" id="L34">                            new SingleThreadObjectIntMapping&lt;&gt;();</span>
+    }
+
+<span class="nc" id="L37">    public static final class SingleThreadObjectIntMapping&lt;V&gt;</span>
+                        implements ObjectIntMapping&lt;V&gt; {
+
+        private static final int MAGIC = 1 &lt;&lt; 16;
+        private static final int MAX_OFFSET = 10;
+
+        private final IntObjectHashMap&lt;V&gt; int2IdMap;
+
+<span class="nc" id="L45">        public SingleThreadObjectIntMapping() {</span>
+<span class="nc" id="L46">            this.int2IdMap = new IntObjectHashMap&lt;&gt;();</span>
+<span class="nc" id="L47">        }</span>
+
+        @Watched
+        @SuppressWarnings(&quot;unchecked&quot;)
+        @Override
+        public int object2Code(Object object) {
+<span class="nc" id="L53">            int code = object.hashCode();</span>
+            // TODO: improve hash algorithm
+<span class="nc bnc" id="L55" title="All 2 branches missed.">            for (int i = 1; i &gt; 0; i &lt;&lt;= 1) {</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">                for (int j = 0; j &lt; MAX_OFFSET; j++) {</span>
+<span class="nc bnc" id="L57" title="All 2 branches missed.">                    if (code &lt;= 0) {</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">                        if (code == 0) {</span>
+<span class="nc" id="L59">                            code = 1;</span>
+                        } else {
+<span class="nc" id="L61">                            code = -code;</span>
+                        }
+                    }
+<span class="nc bnc" id="L64" title="All 2 branches missed.">                    assert code &gt; 0;</span>
+<span class="nc" id="L65">                    V existed = this.int2IdMap.get(code);</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">                    if (existed == null) {</span>
+<span class="nc" id="L67">                        this.int2IdMap.put(code, (V) object);</span>
+<span class="nc" id="L68">                        return code;</span>
+                    }
+<span class="nc bnc" id="L70" title="All 2 branches missed.">                    if (existed.equals(object)) {</span>
+<span class="nc" id="L71">                        return code;</span>
+                    }
+<span class="nc" id="L73">                    code = code + i + j;</span>
+                    /*
+                     * If i &lt; MAGIC, try (i * 2) to reduce conflicts, otherwise
+                     * try (i + 1), (i + 2), ..., (i + 10) to try more times
+                     * before try (i * 2).
+                     */
+<span class="nc bnc" id="L79" title="All 2 branches missed.">                    if (i &lt; MAGIC) {</span>
+<span class="nc" id="L80">                        break;</span>
+                    }
+                }
+            }
+<span class="nc" id="L84">            throw new HugeException(&quot;Failed to get code for object: %s&quot;, object);</span>
+        }
+
+        @Watched
+        @Override
+        public V code2Object(int code) {
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            assert code &gt; 0;</span>
+<span class="nc" id="L91">            return this.int2IdMap.get(code);</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="nc" id="L96">            this.int2IdMap.clear();</span>
+<span class="nc" id="L97">        }</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L101">            return this.int2IdMap.toString();</span>
+        }
+    }
+
+    public static final class ConcurrentObjectIntMapping&lt;V&gt;
+                        implements ObjectIntMapping&lt;V&gt; {
+
+        private final SingleThreadObjectIntMapping&lt;V&gt; objectIntMapping;
+
+<span class="nc" id="L110">        public ConcurrentObjectIntMapping() {</span>
+<span class="nc" id="L111">            this.objectIntMapping = new SingleThreadObjectIntMapping&lt;&gt;();</span>
+<span class="nc" id="L112">        }</span>
+
+        @Override
+        @Watched
+        public synchronized int object2Code(Object object) {
+<span class="nc" id="L117">            return this.objectIntMapping.object2Code(object);</span>
+        }
+
+        @Override
+        @Watched
+        public synchronized V code2Object(int code) {
+<span class="nc" id="L123">            return this.objectIntMapping.code2Object(code);</span>
+        }
+
+        @Override
+        public synchronized void clear() {
+<span class="nc" id="L128">            this.objectIntMapping.clear();</span>
+<span class="nc" id="L129">        }</span>
+
+        @Override
+        public synchronized String toString() {
+<span class="nc" id="L133">            return this.objectIntMapping.toString();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

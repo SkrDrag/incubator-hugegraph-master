@@ -1,0 +1,309 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CypherOpProcessor.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.opencypher</a> &gt; <span class="el_source">CypherOpProcessor.java</span></div><h1>CypherOpProcessor.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2018-2019 &quot;Neo4j, Inc.&quot; [https://neo4j.com]
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.opencypher;
+
+import io.netty.channel.ChannelHandlerContext;
+
+import org.apache.tinkerpop.gremlin.driver.Tokens;
+import org.apache.tinkerpop.gremlin.driver.message.RequestMessage;
+import org.apache.tinkerpop.gremlin.driver.message.ResponseMessage;
+import org.apache.tinkerpop.gremlin.driver.message.ResponseStatusCode;
+import org.apache.tinkerpop.gremlin.process.traversal.P;
+import org.apache.tinkerpop.gremlin.process.traversal.TraversalSource;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.DefaultGraphTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
+import org.apache.tinkerpop.gremlin.process.traversal.util.TraversalInterruptedException;
+import org.apache.tinkerpop.gremlin.server.Context;
+import org.apache.tinkerpop.gremlin.server.GraphManager;
+import org.apache.tinkerpop.gremlin.server.OpProcessor;
+import org.apache.tinkerpop.gremlin.server.op.AbstractEvalOpProcessor;
+import org.apache.tinkerpop.gremlin.server.op.OpProcessorException;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.util.function.ThrowingConsumer;
+import org.opencypher.gremlin.translation.CypherAst;
+import org.opencypher.gremlin.translation.groovy.GroovyPredicate;
+import org.opencypher.gremlin.translation.ir.TranslationWriter;
+import org.opencypher.gremlin.translation.ir.model.GremlinStep;
+import org.opencypher.gremlin.translation.translator.Translator;
+import org.opencypher.gremlin.traversal.ParameterNormalizer;
+import org.opencypher.gremlin.traversal.ProcedureContext;
+import org.opencypher.gremlin.traversal.ReturnNormalizer;
+import org.slf4j.Logger;
+
+import scala.collection.Seq;
+
+import java.util.*;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+
+import static java.util.Collections.emptyMap;
+import static java.util.Collections.singletonList;
+import static java.util.Optional.empty;
+import static org.apache.tinkerpop.gremlin.driver.message.ResponseStatusCode.SERVER_ERROR;
+import static org.opencypher.gremlin.translation.StatementOption.EXPLAIN;
+import static org.slf4j.LoggerFactory.getLogger;
+
+/**
+ * Description of the modifications:
+ * &lt;p&gt;
+ * 1) Changed the method signature to adopt the gremlin-server 3.5.1.
+ * &lt;pre&gt;
+ * public Optional&lt;ThrowingConsumer&lt;Context&gt;&gt; selectOther(RequestMessage requestMessage)
+ * --&gt;
+ * public Optional&lt;ThrowingConsumer&lt;Context&gt;&gt; selectOther(Context ctx)
+ * &lt;/pre&gt;
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * 2) Changed the package name.
+ * &lt;pre&gt;
+ * org.opencypher.gremlin.server.op.cypher
+ * --&gt;
+ * org.apache.hugegraph.opencypher
+ * &lt;/pre&gt;
+ * &lt;/p&gt;
+ * &lt;p&gt;
+ * 3) Set the logger level from info to trace
+ * &lt;/p&gt;
+ *
+ * {@link OpProcessor} implementation for processing Cypher {@link RequestMessage}s:
+ * &lt;pre&gt;
+ * {
+ *   &quot;requestId&quot;: &quot;&amp;lt;some UUID&amp;gt;&quot;,
+ *   &quot;op&quot;: &quot;eval&quot;,
+ *   &quot;processor&quot;: &quot;cypher&quot;,
+ *   &quot;args&quot;: { &quot;gremlin&quot;: &quot;&amp;lt;CYPHER QUERY&amp;gt;&quot; }
+ * }
+ * &lt;/pre&gt;
+ */
+public class CypherOpProcessor extends AbstractEvalOpProcessor {
+
+    private static final String DEFAULT_TRANSLATOR_DEFINITION =
+        &quot;gremlin+cfog_server_extensions+inline_parameters&quot;;
+
+<span class="nc" id="L99">    private static final Logger logger = getLogger(CypherOpProcessor.class);</span>
+
+    public CypherOpProcessor() {
+<span class="nc" id="L102">        super(true);</span>
+<span class="nc" id="L103">    }</span>
+
+    @Override
+    public String getName() {
+<span class="nc" id="L107">        return &quot;cypher&quot;;</span>
+    }
+
+    @Override
+    public ThrowingConsumer&lt;Context&gt; getEvalOp() {
+<span class="nc" id="L112">        return this::evalCypher;</span>
+    }
+
+    @Override
+    public Optional&lt;ThrowingConsumer&lt;Context&gt;&gt; selectOther(Context ctx) {
+<span class="nc" id="L117">        return empty();</span>
+    }
+
+    private void evalCypher(Context context) throws OpProcessorException {
+<span class="nc" id="L121">        Map&lt;String, Object&gt; args = context.getRequestMessage().getArgs();</span>
+<span class="nc" id="L122">        String cypher = (String) args.get(Tokens.ARGS_GREMLIN);</span>
+<span class="nc" id="L123">        logger.trace(&quot;Cypher: {}&quot;, cypher.replaceAll(&quot;\n&quot;, &quot; &quot;));</span>
+
+<span class="nc" id="L125">        GraphTraversalSource gts = traversal(context);</span>
+<span class="nc" id="L126">        DefaultGraphTraversal g = new DefaultGraphTraversal(gts.clone());</span>
+<span class="nc" id="L127">        Map&lt;String, Object&gt; parameters = ParameterNormalizer.normalize(getParameters(args));</span>
+<span class="nc" id="L128">        ProcedureContext procedureContext = ProcedureContext.global();</span>
+<span class="nc" id="L129">        CypherAst ast = CypherAst.parse(cypher, parameters, procedureContext.getSignatures());</span>
+
+<span class="nc" id="L131">        String translatorDefinition = getTranslatorDefinition(context);</span>
+
+<span class="nc" id="L133">        Translator&lt;String, GroovyPredicate&gt; strTranslator = Translator.builder()</span>
+<span class="nc" id="L134">                                                                      .gremlinGroovy()</span>
+<span class="nc" id="L135">                                                                      .build(translatorDefinition);</span>
+
+<span class="nc" id="L137">        Translator&lt;GraphTraversal, P&gt; traversalTranslator = Translator.builder()</span>
+<span class="nc" id="L138">                                                                      .traversal(g)</span>
+<span class="nc" id="L139">                                                                      .build(translatorDefinition);</span>
+
+<span class="nc" id="L141">        Seq&lt;GremlinStep&gt; ir = ast.translate(strTranslator.flavor(),</span>
+<span class="nc" id="L142">                                            strTranslator.features(), procedureContext);</span>
+
+<span class="nc" id="L144">        String gremlin = TranslationWriter.write(ir, strTranslator, parameters);</span>
+<span class="nc" id="L145">        logger.trace(&quot;Gremlin: {}&quot;, gremlin);</span>
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        if (ast.getOptions().contains(EXPLAIN)) {</span>
+<span class="nc" id="L148">            explainQuery(context, ast, gremlin);</span>
+<span class="nc" id="L149">            return;</span>
+        }
+
+<span class="nc" id="L152">        GraphTraversal&lt;?, ?&gt; traversal = TranslationWriter.write(ir, traversalTranslator,</span>
+                                                                 parameters);
+<span class="nc" id="L154">        ReturnNormalizer returnNormalizer = ReturnNormalizer.create(ast.getReturnTypes());</span>
+<span class="nc" id="L155">        Iterator normalizedTraversal = returnNormalizer.normalize(traversal);</span>
+<span class="nc" id="L156">        inTransaction(gts, () -&gt; handleIterator(context, normalizedTraversal));</span>
+<span class="nc" id="L157">    }</span>
+
+    private void inTransaction(GraphTraversalSource gts, Runnable runnable) {
+<span class="nc" id="L160">        Graph graph = gts.getGraph();</span>
+<span class="nc" id="L161">        boolean supportsTransactions = graph.features().graph().supportsTransactions();</span>
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (!supportsTransactions) {</span>
+<span class="nc" id="L163">            runnable.run();</span>
+<span class="nc" id="L164">            return;</span>
+        }
+
+        try {
+<span class="nc" id="L168">            graph.tx().open();</span>
+<span class="nc" id="L169">            runnable.run();</span>
+<span class="nc" id="L170">            graph.tx().commit();</span>
+<span class="nc" id="L171">        } catch (Exception e) {</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">            if (graph.tx().isOpen()) {</span>
+<span class="nc" id="L173">                graph.tx().rollback();</span>
+            }
+<span class="nc" id="L175">        }</span>
+<span class="nc" id="L176">    }</span>
+
+    private GraphTraversalSource traversal(Context context) throws OpProcessorException {
+<span class="nc" id="L179">        RequestMessage msg = context.getRequestMessage();</span>
+<span class="nc" id="L180">        GraphManager graphManager = context.getGraphManager();</span>
+
+<span class="nc" id="L182">        Optional&lt;Map&lt;String, String&gt;&gt; aliasesOptional = msg.optionalArgs(Tokens.ARGS_ALIASES);</span>
+<span class="nc" id="L183">        String gAlias = aliasesOptional.map(alias -&gt; alias.get(Tokens.VAL_TRAVERSAL_SOURCE_ALIAS))</span>
+<span class="nc" id="L184">                                       .orElse(null);</span>
+
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (gAlias == null) {</span>
+<span class="nc" id="L187">            return graphManager.getGraphNames().stream()</span>
+<span class="nc" id="L188">                               .sorted()</span>
+<span class="nc" id="L189">                               .findFirst()</span>
+<span class="nc" id="L190">                               .map(graphManager::getGraph)</span>
+<span class="nc" id="L191">                               .map(Graph::traversal)</span>
+<span class="nc" id="L192">                               .orElseThrow(() -&gt; opProcessorException(msg, &quot;No graphs found on &quot; +</span>
+                                                                            &quot;the server&quot;));
+        }
+
+<span class="nc" id="L196">        Graph graph = graphManager.getGraph(gAlias);</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        if (graph != null) {</span>
+<span class="nc" id="L198">            return graph.traversal();</span>
+        }
+
+<span class="nc" id="L201">        TraversalSource traversalSource = graphManager.getTraversalSource(gAlias);</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (traversalSource instanceof GraphTraversalSource) {</span>
+<span class="nc" id="L203">            return (GraphTraversalSource) traversalSource;</span>
+        }
+
+<span class="nc" id="L206">        throw opProcessorException(msg, &quot;Traversable alias '&quot; + gAlias + &quot;' not found&quot;);</span>
+    }
+
+    private OpProcessorException opProcessorException(RequestMessage msg, String errorMessage) {
+<span class="nc" id="L210">        return new OpProcessorException(errorMessage, ResponseMessage.build(msg)</span>
+<span class="nc" id="L211">                                                                     .code(SERVER_ERROR)</span>
+<span class="nc" id="L212">                                                                     .statusMessage(errorMessage)</span>
+<span class="nc" id="L213">                                                                     .create());</span>
+    }
+
+    @Override
+    protected void handleIterator(Context context, Iterator traversal) {
+<span class="nc" id="L218">        RequestMessage msg = context.getRequestMessage();</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">        final long timeout = msg.getArgs().containsKey(Tokens.ARGS_EVAL_TIMEOUT)</span>
+<span class="nc" id="L220">                             ? ((Number) msg.getArgs().get(Tokens.ARGS_EVAL_TIMEOUT)).longValue()</span>
+<span class="nc" id="L221">                             : context.getSettings().evaluationTimeout;</span>
+
+<span class="nc" id="L223">        FutureTask&lt;Void&gt; evalFuture = new FutureTask&lt;&gt;(() -&gt; {</span>
+            try {
+<span class="nc" id="L225">                super.handleIterator(context, traversal);</span>
+<span class="nc" id="L226">            } catch (Exception ex) {</span>
+<span class="nc" id="L227">                String errorMessage = getErrorMessage(msg, ex);</span>
+
+<span class="nc" id="L229">                logger.error(&quot;Error during traversal iteration&quot;, ex);</span>
+<span class="nc" id="L230">                ChannelHandlerContext ctx = context.getChannelHandlerContext();</span>
+<span class="nc" id="L231">                ctx.writeAndFlush(ResponseMessage.build(msg)</span>
+<span class="nc" id="L232">                                                 .code(SERVER_ERROR)</span>
+<span class="nc" id="L233">                                                 .statusMessage(errorMessage)</span>
+<span class="nc" id="L234">                                                 .statusAttributeException(ex)</span>
+<span class="nc" id="L235">                                                 .create());</span>
+<span class="nc" id="L236">            }</span>
+<span class="nc" id="L237">            return null;</span>
+        }
+        );
+
+<span class="nc" id="L241">        final Future&lt;?&gt; executionFuture = context.getGremlinExecutor()</span>
+<span class="nc" id="L242">                                                 .getExecutorService().submit(evalFuture);</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        if (timeout &gt; 0) {</span>
+<span class="nc" id="L244">            context.getScheduledExecutorService().schedule(</span>
+<span class="nc" id="L245">                () -&gt; executionFuture.cancel(true)</span>
+                , timeout, TimeUnit.MILLISECONDS);
+        }
+
+<span class="nc" id="L249">    }</span>
+
+    private String getErrorMessage(RequestMessage msg, Exception ex) {
+<span class="nc bnc" id="L252" title="All 4 branches missed.">        if (ex instanceof InterruptedException || ex instanceof TraversalInterruptedException) {</span>
+<span class="nc" id="L253">            return String.format(&quot;A timeout occurred during traversal evaluation of [%s] &quot; +</span>
+                                 &quot;- consider increasing the limit given to scriptEvaluationTimeout&quot;,
+                                 msg);
+        } else {
+<span class="nc" id="L257">            return ex.getMessage();</span>
+        }
+    }
+
+    private void explainQuery(Context context, CypherAst ast, String gremlin) {
+<span class="nc" id="L262">        Map&lt;String, Object&gt; explanation = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L263">        explanation.put(&quot;translation&quot;, gremlin);</span>
+<span class="nc" id="L264">        explanation.put(&quot;options&quot;, ast.getOptions().toString());</span>
+
+<span class="nc" id="L266">        ResponseMessage explainMsg = ResponseMessage.build(context.getRequestMessage())</span>
+<span class="nc" id="L267">                                                    .code(ResponseStatusCode.SUCCESS)</span>
+<span class="nc" id="L268">                                                    .statusMessage(&quot;OK&quot;)</span>
+<span class="nc" id="L269">                                                    .result(singletonList(explanation))</span>
+<span class="nc" id="L270">                                                    .create();</span>
+
+<span class="nc" id="L272">        ChannelHandlerContext ctx = context.getChannelHandlerContext();</span>
+<span class="nc" id="L273">        ctx.writeAndFlush(explainMsg);</span>
+<span class="nc" id="L274">    }</span>
+
+    @Override
+    public void close() {
+        // do nothing = no resources to release
+<span class="nc" id="L279">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private Map&lt;String, Object&gt; getParameters(Map&lt;String, Object&gt; args) {
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if (args.containsKey(Tokens.ARGS_BINDINGS)) {</span>
+<span class="nc" id="L284">            return (Map&lt;String, Object&gt;) args.get(Tokens.ARGS_BINDINGS);</span>
+        } else {
+<span class="nc" id="L286">            return new HashMap&lt;&gt;();</span>
+        }
+    }
+
+    private String getTranslatorDefinition(Context context) {
+<span class="nc" id="L291">        Map&lt;String, Object&gt; config = context.getSettings()</span>
+<span class="nc" id="L292">                                            .optionalProcessor(CypherOpProcessor.class)</span>
+<span class="nc" id="L293">                                            .map(p -&gt; p.config)</span>
+<span class="nc" id="L294">                                            .orElse(emptyMap());</span>
+
+<span class="nc" id="L296">        HashSet&lt;String&gt; properties = new HashSet&lt;&gt;(config.keySet());</span>
+<span class="nc" id="L297">        properties.remove(&quot;translatorDefinition&quot;);</span>
+<span class="nc" id="L298">        properties.remove(&quot;translatorFeatures&quot;);</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">        if (!properties.isEmpty()) {</span>
+<span class="nc" id="L300">            throw new IllegalStateException(&quot;Unknown configuration parameters &quot; +</span>
+                                            &quot;found for CypherOpProcessor: &quot; + properties);
+        }
+
+<span class="nc" id="L304">        return config.getOrDefault(&quot;translatorDefinition&quot;, DEFAULT_TRANSLATOR_DEFINITION)</span>
+<span class="nc" id="L305">               + &quot;+&quot; + config.getOrDefault(&quot;translatorFeatures&quot;, &quot;&quot;);</span>
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

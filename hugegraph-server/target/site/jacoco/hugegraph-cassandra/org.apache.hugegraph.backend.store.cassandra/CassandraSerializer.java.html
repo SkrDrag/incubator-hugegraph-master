@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CassandraSerializer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-cassandra</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.cassandra</a> &gt; <span class="el_source">CassandraSerializer.java</span></div><h1>CassandraSerializer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.cassandra;
+
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.id.IdUtil;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.backend.serializer.TableBackendEntry;
+import org.apache.hugegraph.backend.serializer.TableSerializer;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeIndex;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.JsonUtil;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L51">public class CassandraSerializer extends TableSerializer {</span>
+
+    public CassandraSerializer(HugeConfig config) {
+<span class="nc" id="L54">        super(config);</span>
+<span class="nc" id="L55">    }</span>
+
+    @Override
+    public CassandraBackendEntry newBackendEntry(HugeType type, Id id) {
+<span class="nc" id="L59">        return new CassandraBackendEntry(type, id);</span>
+    }
+
+    @Override
+    protected TableBackendEntry newBackendEntry(TableBackendEntry.Row row) {
+<span class="nc" id="L64">        return new CassandraBackendEntry(row);</span>
+    }
+
+    @Override
+    protected TableBackendEntry newBackendEntry(HugeIndex index) {
+<span class="nc" id="L69">        TableBackendEntry backendEntry = newBackendEntry(index.type(),</span>
+<span class="nc" id="L70">                                                         index.id());</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (index.indexLabel().olap()) {</span>
+<span class="nc" id="L72">            backendEntry.olap(true);</span>
+        }
+<span class="nc" id="L74">        return backendEntry;</span>
+    }
+
+    @Override
+    protected CassandraBackendEntry convertEntry(BackendEntry backendEntry) {
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (!(backendEntry instanceof CassandraBackendEntry)) {</span>
+<span class="nc" id="L80">            throw new BackendException(&quot;Not supported by CassandraSerializer&quot;);</span>
+        }
+<span class="nc" id="L82">        return (CassandraBackendEntry) backendEntry;</span>
+    }
+
+    @Override
+    protected Set&lt;Object&gt; parseIndexElemIds(TableBackendEntry entry) {
+<span class="nc" id="L87">        return ImmutableSet.of(entry.column(HugeKeys.ELEMENT_IDS));</span>
+    }
+
+    @Override
+    protected Id toId(Number number) {
+<span class="nc" id="L92">        return IdGenerator.of(number.longValue());</span>
+    }
+
+    @Override
+    protected Id[] toIdArray(Object object) {
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        assert object instanceof Collection;</span>
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L99">        Collection&lt;Number&gt; numbers = (Collection&lt;Number&gt;) object;</span>
+<span class="nc" id="L100">        Id[] ids = new Id[numbers.size()];</span>
+<span class="nc" id="L101">        int i = 0;</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        for (Number number : numbers) {</span>
+<span class="nc" id="L103">            ids[i++] = toId(number);</span>
+<span class="nc" id="L104">        }</span>
+<span class="nc" id="L105">        return ids;</span>
+    }
+
+    @Override
+    protected Object toLongSet(Collection&lt;Id&gt; ids) {
+<span class="nc" id="L110">        Set&lt;Long&gt; results = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L112">            results.add(id.asLong());</span>
+<span class="nc" id="L113">        }</span>
+<span class="nc" id="L114">        return results;</span>
+    }
+
+    @Override
+    protected Object toLongList(Collection&lt;Id&gt; ids) {
+<span class="nc" id="L119">        List&lt;Long&gt; results = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L121">            results.add(id.asLong());</span>
+<span class="nc" id="L122">        }</span>
+<span class="nc" id="L123">        return results;</span>
+    }
+
+    @Override
+    protected void formatProperties(HugeElement element,
+                                    TableBackendEntry.Row row) {
+<span class="nc bnc" id="L129" title="All 4 branches missed.">        if (!element.hasProperties() &amp;&amp; !element.removed()) {</span>
+<span class="nc" id="L130">            row.column(HugeKeys.PROPERTIES, ImmutableMap.of());</span>
+        } else {
+            // Format properties
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            for (HugeProperty&lt;?&gt; prop : element.getProperties()) {</span>
+<span class="nc" id="L134">                this.formatProperty(prop, row);</span>
+<span class="nc" id="L135">            }</span>
+        }
+<span class="nc" id="L137">    }</span>
+
+    @Override
+    protected void parseProperties(HugeElement element,
+                                   TableBackendEntry.Row row) {
+<span class="nc" id="L142">        Map&lt;Number, Object&gt; props = row.column(HugeKeys.PROPERTIES);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        for (Map.Entry&lt;Number, Object&gt; prop : props.entrySet()) {</span>
+<span class="nc" id="L144">            Id pkeyId = this.toId(prop.getKey());</span>
+<span class="nc" id="L145">            this.parseProperty(pkeyId, prop.getValue(), element);</span>
+<span class="nc" id="L146">        }</span>
+<span class="nc" id="L147">    }</span>
+
+    @Override
+    public BackendEntry writeOlapVertex(HugeVertex vertex) {
+<span class="nc" id="L151">        CassandraBackendEntry entry = newBackendEntry(HugeType.OLAP,</span>
+<span class="nc" id="L152">                                                      vertex.id());</span>
+<span class="nc" id="L153">        entry.column(HugeKeys.ID, this.writeId(vertex.id()));</span>
+
+<span class="nc" id="L155">        Collection&lt;HugeProperty&lt;?&gt;&gt; properties = vertex.getProperties();</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        E.checkArgument(properties.size() == 1,</span>
+                        &quot;Expect only 1 property for olap vertex, but got %s&quot;,
+<span class="nc" id="L158">                        properties.size());</span>
+<span class="nc" id="L159">        HugeProperty&lt;?&gt; property = properties.iterator().next();</span>
+<span class="nc" id="L160">        PropertyKey pk = property.propertyKey();</span>
+<span class="nc" id="L161">        entry.subId(pk.id());</span>
+<span class="nc" id="L162">        entry.column(HugeKeys.PROPERTY_VALUE,</span>
+<span class="nc" id="L163">                     this.writeProperty(pk, property.value()));</span>
+<span class="nc" id="L164">        entry.olap(true);</span>
+<span class="nc" id="L165">        return entry;</span>
+    }
+
+    @Override
+    protected Object writeProperty(PropertyKey propertyKey, Object value) {
+<span class="nc" id="L170">        BytesBuffer buffer = BytesBuffer.allocate(BytesBuffer.BUF_PROPERTY);</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        if (propertyKey == null) {</span>
+            /*
+             * Since we can't know the type of the property value in some
+             * scenarios so need to construct a fake property key to
+             * serialize to reuse code.
+             */
+<span class="nc" id="L177">            propertyKey = new PropertyKey(null, IdGenerator.of(0L), &quot;fake&quot;);</span>
+<span class="nc" id="L178">            propertyKey.dataType(DataType.fromClass(value.getClass()));</span>
+        }
+<span class="nc" id="L180">        buffer.writeProperty(propertyKey, value);</span>
+<span class="nc" id="L181">        buffer.forReadWritten();</span>
+<span class="nc" id="L182">        return buffer.asByteBuffer();</span>
+    }
+
+    @Override
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected &lt;T&gt; T readProperty(PropertyKey pkey, Object value) {
+<span class="nc" id="L188">        BytesBuffer buffer = BytesBuffer.wrap((ByteBuffer) value);</span>
+<span class="nc" id="L189">        return (T) buffer.readProperty(pkey);</span>
+    }
+
+    @Override
+    protected Object writeId(Id id) {
+<span class="nc" id="L194">        return IdUtil.writeBinString(id);</span>
+    }
+
+    @Override
+    protected Id readId(Object id) {
+<span class="nc" id="L199">        return IdUtil.readBinString(id);</span>
+    }
+
+    @Override
+    protected void writeUserdata(SchemaElement schema,
+                                 TableBackendEntry entry) {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        assert entry instanceof CassandraBackendEntry;</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; e : schema.userdata().entrySet()) {</span>
+<span class="nc" id="L207">            entry.column(HugeKeys.USER_DATA, e.getKey(),</span>
+<span class="nc" id="L208">                         JsonUtil.toJson(e.getValue()));</span>
+<span class="nc" id="L209">        }</span>
+<span class="nc" id="L210">    }</span>
+
+    @Override
+    protected void readUserdata(SchemaElement schema,
+                                TableBackendEntry entry) {
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        assert entry instanceof CassandraBackendEntry;</span>
+        // Parse all user data of a schema element
+<span class="nc" id="L217">        Map&lt;String, String&gt; userdata = entry.column(HugeKeys.USER_DATA);</span>
+<span class="nc bnc" id="L218" title="All 2 branches missed.">        for (Map.Entry&lt;String, String&gt; e : userdata.entrySet()) {</span>
+<span class="nc" id="L219">            String key = e.getKey();</span>
+<span class="nc" id="L220">            Object value = JsonUtil.fromJson(e.getValue(), Object.class);</span>
+<span class="nc" id="L221">            schema.userdata(key, value);</span>
+<span class="nc" id="L222">        }</span>
+<span class="nc" id="L223">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

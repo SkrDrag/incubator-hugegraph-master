@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SchemaLabel.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.schema</a> &gt; <span class="el_source">SchemaLabel.java</span></div><h1>SchemaLabel.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.schema;
+
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.Indexable;
+import org.apache.hugegraph.type.Propertiable;
+import org.apache.hugegraph.util.E;
+import com.google.common.base.Objects;
+
+<span class="nc" id="L35">public abstract class SchemaLabel extends SchemaElement</span>
+                                  implements Indexable, Propertiable {
+
+    private final Set&lt;Id&gt; properties;
+    private final Set&lt;Id&gt; nullableKeys;
+    private final Set&lt;Id&gt; indexLabels;
+    private boolean enableLabelIndex;
+    private long ttl;
+    private Id ttlStartTime;
+
+    public SchemaLabel(final HugeGraph graph, Id id, String name) {
+<span class="nc" id="L46">        super(graph, id, name);</span>
+<span class="nc" id="L47">        this.properties = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L48">        this.nullableKeys = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L49">        this.indexLabels = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L50">        this.enableLabelIndex = true;</span>
+<span class="nc" id="L51">        this.ttl = 0L;</span>
+<span class="nc" id="L52">        this.ttlStartTime = NONE_ID;</span>
+<span class="nc" id="L53">    }</span>
+
+    @Override
+    public Set&lt;Id&gt; properties() {
+<span class="nc" id="L57">        return Collections.unmodifiableSet(this.properties);</span>
+    }
+
+    public void properties(Set&lt;Id&gt; properties) {
+<span class="nc" id="L61">        this.properties.addAll(properties);</span>
+<span class="nc" id="L62">    }</span>
+
+    public SchemaLabel properties(Id... ids) {
+<span class="nc" id="L65">        this.properties.addAll(Arrays.asList(ids));</span>
+<span class="nc" id="L66">        return this;</span>
+    }
+
+    public void property(Id id) {
+<span class="nc" id="L70">        this.properties.add(id);</span>
+<span class="nc" id="L71">    }</span>
+
+    public Set&lt;Id&gt; nullableKeys() {
+<span class="nc" id="L74">        return Collections.unmodifiableSet(this.nullableKeys);</span>
+    }
+
+    public void nullableKey(Id id) {
+<span class="nc" id="L78">        this.nullableKeys.add(id);</span>
+<span class="nc" id="L79">    }</span>
+
+    public void nullableKeys(Id... ids) {
+<span class="nc" id="L82">        this.nullableKeys.addAll(Arrays.asList(ids));</span>
+<span class="nc" id="L83">    }</span>
+
+    public void nullableKeys(Set&lt;Id&gt; nullableKeys) {
+<span class="nc" id="L86">        this.nullableKeys.addAll(nullableKeys);</span>
+<span class="nc" id="L87">    }</span>
+
+    @Override
+    public Set&lt;Id&gt; indexLabels() {
+<span class="nc" id="L91">        return Collections.unmodifiableSet(this.indexLabels);</span>
+    }
+
+    public void addIndexLabel(Id id) {
+<span class="nc" id="L95">        this.indexLabels.add(id);</span>
+<span class="nc" id="L96">    }</span>
+
+    public void addIndexLabels(Id... ids) {
+<span class="nc" id="L99">        this.indexLabels.addAll(Arrays.asList(ids));</span>
+<span class="nc" id="L100">    }</span>
+
+    public boolean existsIndexLabel() {
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        return !this.indexLabels().isEmpty();</span>
+    }
+
+    public void removeIndexLabel(Id id) {
+<span class="nc" id="L107">        this.indexLabels.remove(id);</span>
+<span class="nc" id="L108">    }</span>
+
+    public boolean enableLabelIndex() {
+<span class="nc" id="L111">        return this.enableLabelIndex;</span>
+    }
+
+    public void enableLabelIndex(boolean enable) {
+<span class="nc" id="L115">        this.enableLabelIndex = enable;</span>
+<span class="nc" id="L116">    }</span>
+
+    public boolean undefined() {
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        return this.name() == UNDEF;</span>
+    }
+
+    public void ttl(long ttl) {
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        assert ttl &gt;= 0L;</span>
+<span class="nc" id="L124">        this.ttl = ttl;</span>
+<span class="nc" id="L125">    }</span>
+
+    public long ttl() {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        assert this.ttl &gt;= 0L;</span>
+<span class="nc" id="L129">        return this.ttl;</span>
+    }
+
+    public void ttlStartTime(Id id) {
+<span class="nc" id="L133">        this.ttlStartTime = id;</span>
+<span class="nc" id="L134">    }</span>
+
+    public Id ttlStartTime() {
+<span class="nc" id="L137">        return this.ttlStartTime;</span>
+    }
+
+    public String ttlStartTimeName() {
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        return NONE_ID.equals(this.ttlStartTime) ? null :</span>
+<span class="nc" id="L142">               this.graph.propertyKey(this.ttlStartTime).name();</span>
+    }
+
+    public boolean hasSameContent(SchemaLabel other) {
+<span class="nc bnc" id="L146" title="All 6 branches missed.">        return super.hasSameContent(other) &amp;&amp; this.ttl == other.ttl &amp;&amp;</span>
+               this.enableLabelIndex == other.enableLabelIndex &amp;&amp;
+<span class="nc bnc" id="L148" title="All 2 branches missed.">               Objects.equal(this.graph.mapPkId2Name(this.properties),</span>
+<span class="nc" id="L149">                             other.graph.mapPkId2Name(other.properties)) &amp;&amp;</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">               Objects.equal(this.graph.mapPkId2Name(this.nullableKeys),</span>
+<span class="nc" id="L151">                             other.graph.mapPkId2Name(other.nullableKeys)) &amp;&amp;</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">               Objects.equal(this.graph.mapIlId2Name(this.indexLabels),</span>
+<span class="nc" id="L153">                             other.graph.mapIlId2Name(other.indexLabels)) &amp;&amp;</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">               Objects.equal(this.ttlStartTimeName(), other.ttlStartTimeName());</span>
+    }
+
+    public static Id getLabelId(HugeGraph graph, HugeType type, Object label) {
+<span class="nc" id="L158">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+<span class="nc" id="L159">        E.checkNotNull(type, &quot;type&quot;);</span>
+<span class="nc" id="L160">        E.checkNotNull(label, &quot;label&quot;);</span>
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        if (label instanceof Number) {</span>
+<span class="nc" id="L162">            return IdGenerator.of(((Number) label).longValue());</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        } else if (label instanceof String) {</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">            if (type.isVertex()) {</span>
+<span class="nc" id="L165">                return graph.vertexLabel((String) label).id();</span>
+<span class="nc bnc" id="L166" title="All 2 branches missed.">            } else if (type.isEdge()) {</span>
+<span class="nc" id="L167">                return graph.edgeLabel((String) label).id();</span>
+            } else {
+<span class="nc" id="L169">                throw new HugeException(</span>
+                          &quot;Not support query from '%s' with label '%s'&quot;,
+                          type, label);
+            }
+        } else {
+<span class="nc" id="L174">            throw new HugeException(</span>
+                      &quot;The label type must be number or string, but got '%s'&quot;,
+<span class="nc" id="L176">                      label.getClass());</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

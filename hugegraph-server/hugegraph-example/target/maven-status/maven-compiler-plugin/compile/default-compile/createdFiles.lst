@@ -1,0 +1,14 @@
+org\apache\hugegraph\example\Example1.class
+org\apache\hugegraph\example\PerfExample1.class
+org\apache\hugegraph\example\GraphOfTheMoviesExample.class
+org\apache\hugegraph\example\Example2.class
+org\apache\hugegraph\example\PerfExampleBase.class
+org\apache\hugegraph\example\ThreadRangePerfTest.class
+org\apache\hugegraph\example\Example3.class
+org\apache\hugegraph\example\PerfExample4.class
+org\apache\hugegraph\example\TaskExample$TestTask.class
+org\apache\hugegraph\example\ExampleUtil.class
+org\apache\hugegraph\example\PerfExample3.class
+org\apache\hugegraph\example\PerfExampleBase$GraphManager.class
+org\apache\hugegraph\example\TaskExample.class
+org\apache\hugegraph\example\PerfExample2.class

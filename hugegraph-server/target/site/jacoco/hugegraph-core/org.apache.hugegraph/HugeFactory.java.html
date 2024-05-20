@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeFactory.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph</a> &gt; <span class="el_source">HugeFactory.java</span></div><h1>HugeFactory.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph;
+
+import java.io.File;
+import java.net.URL;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.apache.commons.configuration2.Configuration;
+import org.apache.commons.configuration2.PropertiesConfiguration;
+import org.apache.commons.configuration2.builder.fluent.Configurations;
+import org.apache.commons.configuration2.ex.ConfigurationException;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.task.TaskManager;
+import org.apache.hugegraph.traversal.algorithm.OltpTraverser;
+import org.apache.hugegraph.type.define.SerialEnum;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+<span class="nc" id="L41">public class HugeFactory {</span>
+
+<span class="nc" id="L43">    private static final Logger LOG = Log.logger(HugeFactory.class);</span>
+
+<span class="nc" id="L45">    private static final Thread SHUT_DOWN_HOOK = new Thread(() -&gt; {</span>
+<span class="nc" id="L46">        LOG.info(&quot;HugeGraph is shutting down&quot;);</span>
+<span class="nc" id="L47">        HugeFactory.shutdown(30L, true);</span>
+<span class="nc" id="L48">    }, &quot;hugegraph-shutdown&quot;);</span>
+
+    static {
+<span class="nc" id="L51">        SerialEnum.registerInternalEnums();</span>
+<span class="nc" id="L52">        HugeGraph.registerTraversalStrategies(StandardHugeGraph.class);</span>
+
+<span class="nc" id="L54">        Runtime.getRuntime().addShutdownHook(SHUT_DOWN_HOOK);</span>
+    }
+
+    private static final String NAME_REGEX = &quot;^[A-Za-z][A-Za-z0-9_]{0,47}$&quot;;
+
+<span class="nc" id="L59">    private static final Map&lt;String, HugeGraph&gt; GRAPHS = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L61">    private static final AtomicBoolean SHUT_DOWN = new AtomicBoolean(false);</span>
+
+    public static synchronized HugeGraph open(Configuration config) {
+<span class="nc bnc" id="L64" title="All 2 branches missed.">        HugeConfig conf = config instanceof HugeConfig ?</span>
+<span class="nc" id="L65">                          (HugeConfig) config : new HugeConfig(config);</span>
+<span class="nc" id="L66">        return open(conf);</span>
+    }
+
+    public static synchronized HugeGraph open(HugeConfig config) {
+<span class="nc" id="L70">        SecurityManager sm = System.getSecurityManager();</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        if (sm != null) {</span>
+            // Not allowed to read file via Gremlin when SecurityManager enabled
+            String configFileName;
+<span class="nc" id="L74">            File configFile = config.file();</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">            if (configFile == null) {</span>
+<span class="nc" id="L76">                configFileName = config.toString();</span>
+            } else {
+<span class="nc" id="L78">                configFileName = configFile.getName();</span>
+            }
+<span class="nc" id="L80">            sm.checkRead(configFileName);</span>
+        }
+
+<span class="nc" id="L83">        String name = config.get(CoreOptions.STORE);</span>
+<span class="nc" id="L84">        checkGraphName(name, &quot;graph config(like hugegraph.properties)&quot;);</span>
+<span class="nc" id="L85">        name = name.toLowerCase();</span>
+<span class="nc" id="L86">        HugeGraph graph = GRAPHS.get(name);</span>
+<span class="nc bnc" id="L87" title="All 4 branches missed.">        if (graph == null || graph.closed()) {</span>
+<span class="nc" id="L88">            graph = new StandardHugeGraph(config);</span>
+<span class="nc" id="L89">            GRAPHS.put(name, graph);</span>
+        } else {
+<span class="nc" id="L91">            String backend = config.get(CoreOptions.BACKEND);</span>
+<span class="nc" id="L92">            E.checkState(backend.equalsIgnoreCase(graph.backend()),</span>
+                         &quot;Graph name '%s' has been used by backend '%s'&quot;,
+<span class="nc" id="L94">                         name, graph.backend());</span>
+        }
+<span class="nc" id="L96">        return graph;</span>
+    }
+
+    public static HugeGraph open(String path) {
+<span class="nc" id="L100">        return open(getLocalConfig(path));</span>
+    }
+
+    public static HugeGraph open(URL url) {
+<span class="nc" id="L104">        return open(getRemoteConfig(url));</span>
+    }
+
+    public static void remove(HugeGraph graph) {
+<span class="nc" id="L108">        String name = graph.option(CoreOptions.STORE);</span>
+<span class="nc" id="L109">        GRAPHS.remove(name);</span>
+<span class="nc" id="L110">    }</span>
+
+    public static void checkGraphName(String name, String configFile) {
+<span class="nc" id="L113">        E.checkArgument(name.matches(NAME_REGEX),</span>
+                        &quot;Invalid graph name '%s' in %s, &quot; +
+                        &quot;valid graph name is up to 48 alpha-numeric &quot; +
+                        &quot;characters and underscores and only letters are &quot; +
+                        &quot;supported as first letter. &quot; +
+                        &quot;Note: letter is case insensitive&quot;, name, configFile);
+<span class="nc" id="L119">    }</span>
+
+    public static PropertiesConfiguration getLocalConfig(String path) {
+<span class="nc" id="L122">        File file = new File(path);</span>
+<span class="nc bnc" id="L123" title="All 6 branches missed.">        E.checkArgument(file.exists() &amp;&amp; file.isFile() &amp;&amp; file.canRead(),</span>
+                        &quot;Please specify a proper config file rather than: %s&quot;,
+<span class="nc" id="L125">                        file.toString());</span>
+        try {
+<span class="nc" id="L127">            return new Configurations().properties(file);</span>
+<span class="nc" id="L128">        } catch (ConfigurationException e) {</span>
+<span class="nc" id="L129">            throw new HugeException(&quot;Unable to load config file: %s&quot;, e, path);</span>
+        }
+    }
+
+    public static PropertiesConfiguration getRemoteConfig(URL url) {
+        try {
+<span class="nc" id="L135">            return new Configurations().properties(url);</span>
+<span class="nc" id="L136">        } catch (ConfigurationException e) {</span>
+<span class="nc" id="L137">            throw new HugeException(&quot;Unable to load remote config file: %s&quot;,</span>
+                                    e, url);
+        }
+    }
+
+    public static void shutdown(long timeout) {
+<span class="nc" id="L143">        shutdown(timeout, false);</span>
+<span class="nc" id="L144">    }</span>
+
+    /**
+     * Stop all the daemon threads
+     * @param timeout wait in seconds
+     * @param ignoreException don't throw exception if true
+     */
+    public static void shutdown(long timeout, boolean ignoreException) {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (!SHUT_DOWN.compareAndSet(false, true)) {</span>
+<span class="nc" id="L153">            return;</span>
+        }
+        try {
+<span class="nc bnc" id="L156" title="All 2 branches missed.">            if (!EventHub.destroy(timeout)) {</span>
+<span class="nc" id="L157">                throw new TimeoutException(timeout + &quot;s&quot;);</span>
+            }
+<span class="nc" id="L159">            TaskManager.instance().shutdown(timeout);</span>
+<span class="nc" id="L160">            OltpTraverser.destroy();</span>
+<span class="nc" id="L161">        } catch (Throwable e) {</span>
+<span class="nc" id="L162">            LOG.error(&quot;Error while shutdown&quot;, e);</span>
+<span class="nc" id="L163">            SHUT_DOWN.compareAndSet(true, false);</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">            if (ignoreException) {</span>
+<span class="nc" id="L165">                return;</span>
+            } else {
+<span class="nc" id="L167">                throw new HugeException(&quot;Failed to shutdown&quot;, e);</span>
+            }
+<span class="nc" id="L169">        }</span>
+
+<span class="nc" id="L171">        LOG.info(&quot;HugeFactory shutdown&quot;);</span>
+<span class="nc" id="L172">    }</span>
+
+    public static void removeShutdownHook() {
+<span class="nc" id="L175">        Runtime.getRuntime().removeShutdownHook(SHUT_DOWN_HOOK);</span>
+<span class="nc" id="L176">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,256 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>KoutAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">KoutAPI.java</span></div><h1>KoutAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_CAPACITY;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_ELEMENTS_LIMIT;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.NO_LIMIT;
+
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.graph.EdgeAPI;
+import org.apache.hugegraph.api.graph.VertexAPI;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.traversal.algorithm.KoutTraverser;
+import org.apache.hugegraph.traversal.algorithm.records.KoutRecords;
+import org.apache.hugegraph.traversal.algorithm.steps.Steps;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/traversers/kout&quot;)
+@Singleton
+@Tag(name = &quot;KoutAPI&quot;)
+<span class="nc" id="L68">public class KoutAPI extends TraverserAPI {</span>
+
+<span class="nc" id="L70">    private static final Logger LOG = Log.logger(KoutAPI.class);</span>
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @QueryParam(&quot;source&quot;) String source,
+                      @QueryParam(&quot;direction&quot;) String direction,
+                      @QueryParam(&quot;label&quot;) String edgeLabel,
+                      @QueryParam(&quot;max_depth&quot;) int depth,
+                      @QueryParam(&quot;nearest&quot;)
+                      @DefaultValue(&quot;true&quot;) boolean nearest,
+                      @QueryParam(&quot;count_only&quot;)
+                      @DefaultValue(&quot;false&quot;) boolean count_only,
+                      @QueryParam(&quot;max_degree&quot;)
+                      @DefaultValue(DEFAULT_MAX_DEGREE) long maxDegree,
+                      @QueryParam(&quot;capacity&quot;)
+                      @DefaultValue(DEFAULT_CAPACITY) long capacity,
+                      @QueryParam(&quot;limit&quot;)
+                      @DefaultValue(DEFAULT_ELEMENTS_LIMIT) int limit) {
+<span class="nc" id="L91">        LOG.debug(&quot;Graph [{}] get k-out from '{}' with &quot; +</span>
+                  &quot;direction '{}', edge label '{}', max depth '{}', nearest &quot; +
+                  &quot;'{}', max degree '{}', capacity '{}' and limit '{}'&quot;,
+<span class="nc" id="L94">                  graph, source, direction, edgeLabel, depth,</span>
+<span class="nc" id="L95">                  nearest, maxDegree, capacity, limit);</span>
+
+<span class="nc" id="L97">        ApiMeasurer measure = new ApiMeasurer();</span>
+
+<span class="nc" id="L99">        Id sourceId = VertexAPI.checkAndParseVertexId(source);</span>
+<span class="nc" id="L100">        Directions dir = Directions.convert(EdgeAPI.parseDirection(direction));</span>
+
+<span class="nc" id="L102">        HugeGraph g = graph(manager, graph);</span>
+
+        Set&lt;Id&gt; ids;
+<span class="nc" id="L105">        try (KoutTraverser traverser = new KoutTraverser(g)) {</span>
+<span class="nc" id="L106">            ids = traverser.kout(sourceId, dir, edgeLabel, depth,</span>
+                                 nearest, maxDegree, capacity, limit);
+<span class="nc" id="L108">            measure.addIterCount(traverser.vertexIterCounter.get(),</span>
+<span class="nc" id="L109">                                 traverser.edgeIterCounter.get());</span>
+        }
+
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (count_only) {</span>
+<span class="nc" id="L113">            return manager.serializer(g, measure.measures())</span>
+<span class="nc" id="L114">                          .writeMap(ImmutableMap.of(&quot;vertices_size&quot;, ids.size()));</span>
+        }
+<span class="nc" id="L116">        return manager.serializer(g, measure.measures()).writeList(&quot;vertices&quot;, ids);</span>
+    }
+
+    @POST
+    @Timed
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String post(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       Request request) {
+<span class="nc" id="L126">        E.checkArgumentNotNull(request, &quot;The request body can't be null&quot;);</span>
+<span class="nc" id="L127">        E.checkArgumentNotNull(request.source,</span>
+                               &quot;The source of request can't be null&quot;);
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        E.checkArgument(request.steps != null,</span>
+                        &quot;The steps of request can't be null&quot;);
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        if (request.countOnly) {</span>
+<span class="nc bnc" id="L132" title="All 6 branches missed.">            E.checkArgument(!request.withVertex &amp;&amp; !request.withPath &amp;&amp; !request.withEdge,</span>
+                            &quot;Can't return vertex, edge or path when count only&quot;);
+        }
+<span class="nc" id="L135">        HugeTraverser.checkTraverseMode(request.traverseMode);</span>
+
+<span class="nc" id="L137">        LOG.debug(&quot;Graph [{}] get customized kout from source vertex '{}', &quot; +</span>
+                  &quot;with steps '{}', max_depth '{}', nearest '{}', &quot; +
+                  &quot;count_only '{}', capacity '{}', limit '{}', &quot; +
+                  &quot;with_vertex '{}', with_path '{}' and with_edge '{}'&quot;,
+<span class="nc" id="L141">                  graph, request.source, request.steps, request.maxDepth,</span>
+<span class="nc" id="L142">                  request.nearest, request.countOnly, request.capacity,</span>
+<span class="nc" id="L143">                  request.limit, request.withVertex, request.withPath,</span>
+<span class="nc" id="L144">                  request.withEdge);</span>
+
+<span class="nc" id="L146">        ApiMeasurer measure = new ApiMeasurer();</span>
+
+<span class="nc" id="L148">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L149">        Id sourceId = HugeVertex.getIdValue(request.source);</span>
+
+<span class="nc" id="L151">        Steps steps = steps(g, request.steps);</span>
+        KoutRecords results;
+<span class="nc" id="L153">        try (KoutTraverser traverser = new KoutTraverser(g)) {</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            if (HugeTraverser.isTraverseModeDFS(request.traverseMode)) {</span>
+<span class="nc" id="L155">                results = traverser.dfsKout(sourceId, steps,</span>
+                                            request.maxDepth,
+                                            request.nearest,
+                                            request.capacity,
+                                            request.limit);
+            } else {
+<span class="nc" id="L161">                results = traverser.customizedKout(sourceId, steps,</span>
+                                                   request.maxDepth,
+                                                   request.nearest,
+                                                   request.capacity,
+                                                   request.limit);
+            }
+<span class="nc" id="L167">            measure.addIterCount(traverser.vertexIterCounter.get(),</span>
+<span class="nc" id="L168">                                 traverser.edgeIterCounter.get());</span>
+        }
+<span class="nc" id="L170">        long size = results.size();</span>
+<span class="nc bnc" id="L171" title="All 4 branches missed.">        if (request.limit != NO_LIMIT &amp;&amp; size &gt; request.limit) {</span>
+<span class="nc" id="L172">            size = request.limit;</span>
+        }
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        List&lt;Id&gt; neighbors = request.countOnly ?</span>
+<span class="nc" id="L175">                             ImmutableList.of() : results.ids(request.limit);</span>
+
+<span class="nc" id="L177">        HugeTraverser.PathSet paths = new HugeTraverser.PathSet();</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (request.withPath) {</span>
+<span class="nc" id="L179">            paths.addAll(results.paths(request.limit));</span>
+        }
+
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        if (request.countOnly) {</span>
+<span class="nc" id="L183">            return manager.serializer(g, measure.measures())</span>
+<span class="nc" id="L184">                          .writeNodesWithPath(&quot;kout&quot;, neighbors, size, paths,</span>
+<span class="nc" id="L185">                                              QueryResults.emptyIterator(),</span>
+<span class="nc" id="L186">                                              QueryResults.emptyIterator());</span>
+        }
+
+        Iterator&lt;?&gt; iterVertex;
+<span class="nc" id="L190">        Set&lt;Id&gt; vertexIds = new HashSet&lt;&gt;(neighbors);</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        if (request.withPath) {</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">            for (HugeTraverser.Path p : results.paths(request.limit)) {</span>
+<span class="nc" id="L193">                vertexIds.addAll(p.vertices());</span>
+<span class="nc" id="L194">            }</span>
+        }
+<span class="nc bnc" id="L196" title="All 4 branches missed.">        if (request.withVertex &amp;&amp; !vertexIds.isEmpty()) {</span>
+<span class="nc" id="L197">            iterVertex = g.vertices(vertexIds.toArray());</span>
+<span class="nc" id="L198">            measure.addIterCount(vertexIds.size(), 0L);</span>
+        } else {
+<span class="nc" id="L200">            iterVertex = vertexIds.iterator();</span>
+        }
+
+<span class="nc" id="L203">        Iterator&lt;?&gt; iterEdge = Collections.emptyIterator();</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (request.withPath) {</span>
+<span class="nc" id="L205">            Set&lt;Edge&gt; edges = results.edgeResults().getEdges(paths);</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">            if (request.withEdge) {</span>
+<span class="nc" id="L207">                iterEdge = edges.iterator();</span>
+            } else {
+<span class="nc" id="L209">                iterEdge = HugeTraverser.EdgeRecord.getEdgeIds(edges).iterator();</span>
+            }
+        }
+
+<span class="nc" id="L213">        return manager.serializer(g, measure.measures())</span>
+<span class="nc" id="L214">                      .writeNodesWithPath(&quot;kout&quot;, neighbors, size, paths,</span>
+                                          iterVertex, iterEdge);
+    }
+
+<span class="nc" id="L218">    private static class Request {</span>
+
+        @JsonProperty(&quot;source&quot;)
+        public Object source;
+        @JsonProperty(&quot;steps&quot;)
+        public TraverserAPI.VESteps steps;
+        @JsonProperty(&quot;max_depth&quot;)
+        public int maxDepth;
+<span class="nc" id="L226">        @JsonProperty(&quot;nearest&quot;)</span>
+        public boolean nearest = true;
+<span class="nc" id="L228">        @JsonProperty(&quot;count_only&quot;)</span>
+        public boolean countOnly = false;
+<span class="nc" id="L230">        @JsonProperty(&quot;capacity&quot;)</span>
+<span class="nc" id="L231">        public long capacity = Long.parseLong(DEFAULT_CAPACITY);</span>
+<span class="nc" id="L232">        @JsonProperty(&quot;limit&quot;)</span>
+<span class="nc" id="L233">        public int limit = Integer.parseInt(DEFAULT_ELEMENTS_LIMIT);</span>
+<span class="nc" id="L234">        @JsonProperty(&quot;with_vertex&quot;)</span>
+        public boolean withVertex = false;
+<span class="nc" id="L236">        @JsonProperty(&quot;with_path&quot;)</span>
+        public boolean withPath = false;
+<span class="nc" id="L238">        @JsonProperty(&quot;with_edge&quot;)</span>
+        public boolean withEdge = false;
+<span class="nc" id="L240">        @JsonProperty(&quot;traverse_mode&quot;)</span>
+        public String traverseMode = HugeTraverser.TRAVERSE_MODE_BFS;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L245">            return String.format(&quot;KoutRequest{source=%s,steps=%s,maxDepth=%s&quot; +</span>
+                                 &quot;nearest=%s,countOnly=%s,capacity=%s,&quot; +
+                                 &quot;limit=%s,withVertex=%s,withPath=%s,&quot; +
+                                 &quot;withEdge=%s,traverseMode=%s}&quot;, this.source,
+<span class="nc" id="L249">                                 this.steps, this.maxDepth, this.nearest,</span>
+<span class="nc" id="L250">                                 this.countOnly, this.capacity, this.limit,</span>
+<span class="nc" id="L251">                                 this.withVertex, this.withPath, this.withEdge,</span>
+                                 this.traverseMode);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

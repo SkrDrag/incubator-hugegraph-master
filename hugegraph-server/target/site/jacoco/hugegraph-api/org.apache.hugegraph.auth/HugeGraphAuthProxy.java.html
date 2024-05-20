@@ -1,0 +1,1904 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeGraphAuthProxy.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">HugeGraphAuthProxy.java</span></div><h1>HugeGraphAuthProxy.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.function.Supplier;
+
+import javax.security.sasl.AuthenticationException;
+
+import org.apache.commons.configuration2.Configuration;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.auth.HugeAuthenticator.RolePerm;
+import org.apache.hugegraph.auth.HugeAuthenticator.User;
+import org.apache.hugegraph.auth.SchemaDefine.AuthElement;
+import org.apache.hugegraph.backend.cache.Cache;
+import org.apache.hugegraph.backend.cache.CacheManager;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendStoreInfo;
+import org.apache.hugegraph.backend.store.raft.RaftGroupManager;
+import org.apache.hugegraph.config.AuthOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.TypedOption;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.iterator.FilterIterator;
+import org.apache.hugegraph.iterator.MapperIterator;
+import org.apache.hugegraph.masterelection.GlobalMasterInfo;
+import org.apache.hugegraph.masterelection.RoleElectionStateMachine;
+import org.apache.hugegraph.rpc.RpcServiceConfig4Client;
+import org.apache.hugegraph.rpc.RpcServiceConfig4Server;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeFeatures;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.task.HugeTask;
+import org.apache.hugegraph.task.TaskManager;
+import org.apache.hugegraph.task.TaskScheduler;
+import org.apache.hugegraph.task.TaskStatus;
+import org.apache.hugegraph.traversal.optimize.HugeScriptTraversal;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.Nameable;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.type.define.GraphReadMode;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.RateLimiter;
+import org.apache.tinkerpop.gremlin.process.computer.GraphComputer;
+import org.apache.tinkerpop.gremlin.process.traversal.Bytecode;
+import org.apache.tinkerpop.gremlin.process.traversal.Bytecode.Instruction;
+import org.apache.tinkerpop.gremlin.process.traversal.Script;
+import org.apache.tinkerpop.gremlin.process.traversal.Traversal;
+import org.apache.tinkerpop.gremlin.process.traversal.TraversalStrategies;
+import org.apache.tinkerpop.gremlin.process.traversal.TraversalStrategy;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
+import org.apache.tinkerpop.gremlin.process.traversal.translator.GroovyTranslator;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Element;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.Property;
+import org.apache.tinkerpop.gremlin.structure.Transaction;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.VertexProperty;
+import org.apache.tinkerpop.gremlin.structure.io.Io;
+import org.slf4j.Logger;
+
+import com.alipay.remoting.rpc.RpcServer;
+
+import jakarta.ws.rs.ForbiddenException;
+import jakarta.ws.rs.NotAuthorizedException;
+
+public final class HugeGraphAuthProxy implements HugeGraph {
+
+    static {
+<span class="nc" id="L112">        HugeGraph.registerTraversalStrategies(HugeGraphAuthProxy.class);</span>
+    }
+
+<span class="nc" id="L115">    private static final Logger LOG = Log.logger(HugeGraphAuthProxy.class);</span>
+    private final Cache&lt;Id, UserWithRole&gt; usersRoleCache;
+    private final Cache&lt;Id, RateLimiter&gt; auditLimiters;
+    private final double auditLogMaxRate;
+
+    private final HugeGraph hugegraph;
+    private final TaskSchedulerProxy taskScheduler;
+    private final AuthManagerProxy authManager;
+
+<span class="nc" id="L124">    public HugeGraphAuthProxy(HugeGraph hugegraph) {</span>
+<span class="nc" id="L125">        LOG.info(&quot;Wrap graph '{}' with HugeGraphAuthProxy&quot;, hugegraph.name());</span>
+<span class="nc" id="L126">        HugeConfig config = (HugeConfig) hugegraph.configuration();</span>
+<span class="nc" id="L127">        long expired = config.get(AuthOptions.AUTH_CACHE_EXPIRE);</span>
+<span class="nc" id="L128">        long capacity = config.get(AuthOptions.AUTH_CACHE_CAPACITY);</span>
+
+<span class="nc" id="L130">        this.hugegraph = hugegraph;</span>
+<span class="nc" id="L131">        this.taskScheduler = new TaskSchedulerProxy(hugegraph.taskScheduler());</span>
+<span class="nc" id="L132">        this.authManager = new AuthManagerProxy(hugegraph.authManager());</span>
+<span class="nc" id="L133">        this.auditLimiters = this.cache(&quot;audit-log-limiter&quot;, capacity, -1L);</span>
+<span class="nc" id="L134">        this.usersRoleCache = this.cache(&quot;users-role&quot;, capacity, expired);</span>
+<span class="nc" id="L135">        this.hugegraph.proxy(this);</span>
+
+        // TODO: Consider better way to get, use auth client's config now
+<span class="nc" id="L138">        this.auditLogMaxRate = config.get(AuthOptions.AUTH_AUDIT_LOG_RATE);</span>
+<span class="nc" id="L139">        LOG.info(&quot;Audit log rate limit is {}/s&quot;, this.auditLogMaxRate);</span>
+<span class="nc" id="L140">    }</span>
+
+    @Override
+    public HugeGraph hugegraph() {
+<span class="nc" id="L144">        this.verifyAdminPermission();</span>
+<span class="nc" id="L145">        return this.hugegraph;</span>
+    }
+
+    @Override
+    public &lt;C extends GraphComputer&gt; C compute(Class&lt;C&gt; clazz)
+                                               throws IllegalArgumentException {
+<span class="nc" id="L151">        this.verifyAnyPermission();</span>
+<span class="nc" id="L152">        return this.hugegraph.compute(clazz);</span>
+    }
+
+    @Override
+    public GraphComputer compute() throws IllegalArgumentException {
+<span class="nc" id="L157">        this.verifyAnyPermission();</span>
+<span class="nc" id="L158">        return this.hugegraph.compute();</span>
+    }
+
+    @Override
+    public GraphTraversalSource traversal() {
+        // Just return proxy
+<span class="nc" id="L164">        return new GraphTraversalSourceProxy(this);</span>
+    }
+
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;deprecation&quot; })
+    @Override
+    public &lt;I extends Io&gt; I io(final Io.Builder&lt;I&gt; builder) {
+<span class="nc" id="L170">        this.verifyAnyPermission();</span>
+<span class="nc" id="L171">        return this.hugegraph.io(builder);</span>
+    }
+
+    @Override
+    public SchemaManager schema() {
+<span class="nc" id="L176">        SchemaManager schema = this.hugegraph.schema();</span>
+<span class="nc" id="L177">        schema.proxy(this);</span>
+<span class="nc" id="L178">        return schema;</span>
+    }
+
+    @Override
+    public Id getNextId(HugeType type) {
+<span class="nc bnc" id="L183" title="All 2 branches missed.">        if (type == HugeType.TASK) {</span>
+<span class="nc" id="L184">            verifyPermission(HugePermission.WRITE, ResourceType.TASK);</span>
+        } else {
+<span class="nc" id="L186">            this.verifyAdminPermission();</span>
+        }
+<span class="nc" id="L188">        return this.hugegraph.getNextId(type);</span>
+    }
+
+    @Override
+    public Id addPropertyKey(PropertyKey key) {
+<span class="nc" id="L193">        verifySchemaPermission(HugePermission.WRITE, key);</span>
+<span class="nc" id="L194">        return this.hugegraph.addPropertyKey(key);</span>
+    }
+
+    @Override
+    public void updatePropertyKey(PropertyKey key) {
+<span class="nc" id="L199">        verifySchemaPermission(HugePermission.WRITE, key);</span>
+<span class="nc" id="L200">        this.hugegraph.updatePropertyKey(key);</span>
+<span class="nc" id="L201">    }</span>
+
+    @Override
+    public Id removePropertyKey(Id key) {
+<span class="nc" id="L205">        PropertyKey pkey = this.hugegraph.propertyKey(key);</span>
+<span class="nc" id="L206">        verifySchemaPermission(HugePermission.DELETE, pkey);</span>
+<span class="nc" id="L207">        return this.hugegraph.removePropertyKey(key);</span>
+    }
+
+    @Override
+    public Id clearPropertyKey(PropertyKey propertyKey) {
+<span class="nc" id="L212">        verifySchemaPermission(HugePermission.DELETE, propertyKey);</span>
+<span class="nc" id="L213">        return this.hugegraph.clearPropertyKey(propertyKey);</span>
+    }
+
+    @Override
+    public Collection&lt;PropertyKey&gt; propertyKeys() {
+<span class="nc" id="L218">        Collection&lt;PropertyKey&gt; pkeys = this.hugegraph.propertyKeys();</span>
+<span class="nc" id="L219">        return verifySchemaPermission(HugePermission.READ, pkeys);</span>
+    }
+
+    @Override
+    public PropertyKey propertyKey(String key) {
+<span class="nc" id="L224">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L225">            return this.hugegraph.propertyKey(key);</span>
+        });
+    }
+
+    @Override
+    public PropertyKey propertyKey(Id key) {
+<span class="nc" id="L231">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L232">            return this.hugegraph.propertyKey(key);</span>
+        });
+    }
+
+    @Override
+    public boolean existsPropertyKey(String key) {
+<span class="nc" id="L238">        verifyNameExistsPermission(ResourceType.PROPERTY_KEY, key);</span>
+<span class="nc" id="L239">        return this.hugegraph.existsPropertyKey(key);</span>
+    }
+
+    @Override
+    public void addVertexLabel(VertexLabel label) {
+<span class="nc" id="L244">        verifySchemaPermission(HugePermission.WRITE, label);</span>
+<span class="nc" id="L245">        this.hugegraph.addVertexLabel(label);</span>
+<span class="nc" id="L246">    }</span>
+
+    @Override
+    public void updateVertexLabel(VertexLabel label) {
+<span class="nc" id="L250">        verifySchemaPermission(HugePermission.WRITE, label);</span>
+<span class="nc" id="L251">        this.hugegraph.updateVertexLabel(label);</span>
+<span class="nc" id="L252">    }</span>
+
+    @Override
+    public Id removeVertexLabel(Id id) {
+<span class="nc" id="L256">        VertexLabel label = this.hugegraph.vertexLabel(id);</span>
+<span class="nc" id="L257">        verifySchemaPermission(HugePermission.DELETE, label);</span>
+<span class="nc" id="L258">        return this.hugegraph.removeVertexLabel(id);</span>
+    }
+
+    @Override
+    public Collection&lt;VertexLabel&gt; vertexLabels() {
+<span class="nc" id="L263">        Collection&lt;VertexLabel&gt; labels = this.hugegraph.vertexLabels();</span>
+<span class="nc" id="L264">        return verifySchemaPermission(HugePermission.READ, labels);</span>
+    }
+
+    @Override
+    public VertexLabel vertexLabel(String label) {
+<span class="nc" id="L269">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L270">            return this.hugegraph.vertexLabel(label);</span>
+        });
+    }
+
+    @Override
+    public VertexLabel vertexLabel(Id label) {
+<span class="nc" id="L276">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L277">            return this.hugegraph.vertexLabel(label);</span>
+        });
+    }
+
+    @Override
+    public VertexLabel vertexLabelOrNone(Id label) {
+<span class="nc" id="L283">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L284">            return this.hugegraph.vertexLabelOrNone(label);</span>
+        });
+    }
+
+    @Override
+    public boolean existsVertexLabel(String label) {
+<span class="nc" id="L290">        verifyNameExistsPermission(ResourceType.VERTEX_LABEL, label);</span>
+<span class="nc" id="L291">        return this.hugegraph.existsVertexLabel(label);</span>
+    }
+
+    @Override
+    public boolean existsLinkLabel(Id vertexLabel) {
+<span class="nc" id="L296">        verifyNameExistsPermission(ResourceType.VERTEX_LABEL,</span>
+<span class="nc" id="L297">                                   this.vertexLabel(vertexLabel).name());</span>
+<span class="nc" id="L298">        return this.hugegraph.existsLinkLabel(vertexLabel);</span>
+    }
+
+    @Override
+    public void addEdgeLabel(EdgeLabel label) {
+<span class="nc" id="L303">        verifySchemaPermission(HugePermission.WRITE, label);</span>
+<span class="nc" id="L304">        this.hugegraph.addEdgeLabel(label);</span>
+<span class="nc" id="L305">    }</span>
+
+    @Override
+    public void updateEdgeLabel(EdgeLabel label) {
+<span class="nc" id="L309">        verifySchemaPermission(HugePermission.WRITE, label);</span>
+<span class="nc" id="L310">        this.hugegraph.updateEdgeLabel(label);</span>
+<span class="nc" id="L311">    }</span>
+
+    @Override
+    public Id removeEdgeLabel(Id id) {
+<span class="nc" id="L315">        EdgeLabel label = this.hugegraph.edgeLabel(id);</span>
+<span class="nc" id="L316">        verifySchemaPermission(HugePermission.DELETE, label);</span>
+<span class="nc" id="L317">        return this.hugegraph.removeEdgeLabel(id);</span>
+    }
+
+    @Override
+    public Collection&lt;EdgeLabel&gt; edgeLabels() {
+<span class="nc" id="L322">        Collection&lt;EdgeLabel&gt; labels = this.hugegraph.edgeLabels();</span>
+<span class="nc" id="L323">        return verifySchemaPermission(HugePermission.READ, labels);</span>
+    }
+
+    @Override
+    public EdgeLabel edgeLabel(String label) {
+<span class="nc" id="L328">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L329">            return this.hugegraph.edgeLabel(label);</span>
+        });
+    }
+
+    @Override
+    public EdgeLabel edgeLabel(Id label) {
+<span class="nc" id="L335">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L336">            return this.hugegraph.edgeLabel(label);</span>
+        });
+    }
+
+    @Override
+    public EdgeLabel edgeLabelOrNone(Id label) {
+<span class="nc" id="L342">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L343">            return this.hugegraph.edgeLabelOrNone(label);</span>
+        });
+    }
+
+    @Override
+    public boolean existsEdgeLabel(String label) {
+<span class="nc" id="L349">        verifyNameExistsPermission(ResourceType.EDGE_LABEL, label);</span>
+<span class="nc" id="L350">        return this.hugegraph.existsEdgeLabel(label);</span>
+    }
+
+    @Override
+    public void addIndexLabel(SchemaLabel schemaLabel, IndexLabel indexLabel) {
+<span class="nc" id="L355">        verifySchemaPermission(HugePermission.WRITE, indexLabel);</span>
+<span class="nc" id="L356">        this.hugegraph.addIndexLabel(schemaLabel, indexLabel);</span>
+<span class="nc" id="L357">    }</span>
+
+    @Override
+    public void updateIndexLabel(IndexLabel label) {
+<span class="nc" id="L361">        verifySchemaPermission(HugePermission.WRITE, label);</span>
+<span class="nc" id="L362">        this.hugegraph.updateIndexLabel(label);</span>
+<span class="nc" id="L363">    }</span>
+
+    @Override
+    public Id removeIndexLabel(Id id) {
+<span class="nc" id="L367">        IndexLabel label = this.hugegraph.indexLabel(id);</span>
+<span class="nc" id="L368">        verifySchemaPermission(HugePermission.DELETE, label);</span>
+<span class="nc" id="L369">        return this.hugegraph.removeIndexLabel(id);</span>
+    }
+
+    @Override
+    public Id rebuildIndex(SchemaElement schema) {
+<span class="nc bnc" id="L374" title="All 2 branches missed.">        if (schema.type() == HugeType.INDEX_LABEL) {</span>
+<span class="nc" id="L375">            verifySchemaPermission(HugePermission.WRITE, schema);</span>
+        } else {
+<span class="nc" id="L377">            SchemaLabel label = (SchemaLabel) schema;</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">            for (Id il : label.indexLabels()) {</span>
+<span class="nc" id="L379">                IndexLabel indexLabel = this.hugegraph.indexLabel(il);</span>
+<span class="nc" id="L380">                verifySchemaPermission(HugePermission.WRITE, indexLabel);</span>
+<span class="nc" id="L381">            }</span>
+        }
+<span class="nc" id="L383">        return this.hugegraph.rebuildIndex(schema);</span>
+    }
+
+    @Override
+    public Collection&lt;IndexLabel&gt; indexLabels() {
+<span class="nc" id="L388">        Collection&lt;IndexLabel&gt; labels = this.hugegraph.indexLabels();</span>
+<span class="nc" id="L389">        return verifySchemaPermission(HugePermission.READ, labels);</span>
+    }
+
+    @Override
+    public IndexLabel indexLabel(String label) {
+<span class="nc" id="L394">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L395">            return this.hugegraph.indexLabel(label);</span>
+        });
+    }
+
+    @Override
+    public IndexLabel indexLabel(Id label) {
+<span class="nc" id="L401">        return verifySchemaPermission(HugePermission.READ, () -&gt; {</span>
+<span class="nc" id="L402">            return this.hugegraph.indexLabel(label);</span>
+        });
+    }
+
+    @Override
+    public boolean existsIndexLabel(String label) {
+<span class="nc" id="L408">        verifyNameExistsPermission(ResourceType.INDEX_LABEL, label);</span>
+<span class="nc" id="L409">        return this.hugegraph.existsIndexLabel(label);</span>
+    }
+
+    @Override
+    public Vertex addVertex(Object... keyValues) {
+<span class="nc" id="L414">        return verifyElemPermission(HugePermission.WRITE, () -&gt; {</span>
+<span class="nc" id="L415">            return (HugeVertex) this.hugegraph.addVertex(keyValues);</span>
+        });
+    }
+
+    @Override
+    public void removeVertex(Vertex vertex) {
+<span class="nc" id="L421">        verifyElemPermission(HugePermission.DELETE, vertex);</span>
+<span class="nc" id="L422">        this.hugegraph.removeVertex(vertex);</span>
+<span class="nc" id="L423">    }</span>
+
+    @Override
+    public void removeVertex(String label, Object id) {
+<span class="nc" id="L427">        this.removeVertex(this.vertex(id));</span>
+<span class="nc" id="L428">    }</span>
+
+    @Override
+    public &lt;V&gt; void addVertexProperty(VertexProperty&lt;V&gt; property) {
+<span class="nc" id="L432">        verifyElemPermission(HugePermission.WRITE, property.element());</span>
+<span class="nc" id="L433">        this.hugegraph.addVertexProperty(property);</span>
+<span class="nc" id="L434">    }</span>
+
+    @Override
+    public &lt;V&gt; void removeVertexProperty(VertexProperty&lt;V&gt; property) {
+<span class="nc" id="L438">        verifyElemPermission(HugePermission.WRITE, property.element());</span>
+<span class="nc" id="L439">        this.hugegraph.removeVertexProperty(property);</span>
+<span class="nc" id="L440">    }</span>
+
+    @Override
+    public Edge addEdge(Edge edge) {
+<span class="nc" id="L444">        return verifyElemPermission(HugePermission.WRITE, () -&gt; {</span>
+<span class="nc" id="L445">            return (HugeEdge) this.hugegraph.addEdge(edge);</span>
+        });
+    }
+
+    @Override
+    public void canAddEdge(Edge edge) {
+<span class="nc" id="L451">        verifyElemPermission(HugePermission.WRITE, () -&gt; (HugeEdge) edge);</span>
+<span class="nc" id="L452">    }</span>
+
+    @Override
+    public void removeEdge(Edge edge) {
+<span class="nc" id="L456">        verifyElemPermission(HugePermission.DELETE, edge);</span>
+<span class="nc" id="L457">        this.hugegraph.removeEdge(edge);</span>
+<span class="nc" id="L458">    }</span>
+
+    @Override
+    public void removeEdge(String label, Object id) {
+<span class="nc" id="L462">        this.removeEdge(this.edge(id));</span>
+<span class="nc" id="L463">    }</span>
+
+    @Override
+    public &lt;V&gt; void addEdgeProperty(Property&lt;V&gt; property) {
+<span class="nc" id="L467">        verifyElemPermission(HugePermission.WRITE, property.element());</span>
+<span class="nc" id="L468">        this.hugegraph.addEdgeProperty(property);</span>
+<span class="nc" id="L469">    }</span>
+
+    @Override
+    public &lt;V&gt; void removeEdgeProperty(Property&lt;V&gt; property) {
+<span class="nc" id="L473">        verifyElemPermission(HugePermission.WRITE, property.element());</span>
+<span class="nc" id="L474">        this.hugegraph.removeEdgeProperty(property);</span>
+<span class="nc" id="L475">    }</span>
+
+    @Override
+    public Iterator&lt;Vertex&gt; vertices(Query query) {
+<span class="nc" id="L479">        return verifyElemPermission(HugePermission.READ,</span>
+<span class="nc" id="L480">                                    this.hugegraph.vertices(query));</span>
+    }
+
+    @Override
+    public Iterator&lt;Vertex&gt; vertices(Object... objects) {
+<span class="nc" id="L485">        return verifyElemPermission(HugePermission.READ,</span>
+<span class="nc" id="L486">                                    this.hugegraph.vertices(objects));</span>
+    }
+
+    @Override
+    public Vertex vertex(Object object) {
+<span class="nc" id="L491">        Vertex vertex = this.hugegraph.vertex(object);</span>
+<span class="nc" id="L492">        verifyElemPermission(HugePermission.READ, vertex);</span>
+<span class="nc" id="L493">        return vertex;</span>
+    }
+
+    @Override
+    public Iterator&lt;Vertex&gt; adjacentVertex(Object id) {
+<span class="nc" id="L498">        return verifyElemPermission(HugePermission.READ,</span>
+<span class="nc" id="L499">                                    this.hugegraph.adjacentVertex(id));</span>
+    }
+
+    @Override
+    public Iterator&lt;Vertex&gt; adjacentVertices(Iterator&lt;Edge&gt; edges) {
+<span class="nc" id="L504">        Iterator&lt;Vertex&gt; vertices = this.hugegraph.adjacentVertices(edges);</span>
+<span class="nc" id="L505">        return verifyElemPermission(HugePermission.READ, vertices);</span>
+    }
+
+    @Override
+    public boolean checkAdjacentVertexExist() {
+<span class="nc" id="L510">        verifyAnyPermission();</span>
+<span class="nc" id="L511">        return this.hugegraph.checkAdjacentVertexExist();</span>
+    }
+
+    @Override
+    public Iterator&lt;Edge&gt; edges(Query query) {
+<span class="nc" id="L516">        return verifyElemPermission(HugePermission.READ,</span>
+<span class="nc" id="L517">                                    this.hugegraph.edges(query));</span>
+    }
+
+    @Override
+    public Iterator&lt;Edge&gt; edges(Object... objects) {
+<span class="nc" id="L522">        return verifyElemPermission(HugePermission.READ,</span>
+<span class="nc" id="L523">                                    this.hugegraph.edges(objects));</span>
+    }
+
+    @Override
+    public Edge edge(Object id) {
+<span class="nc" id="L528">        Edge edge = this.hugegraph.edge(id);</span>
+<span class="nc" id="L529">        verifyElemPermission(HugePermission.READ, edge);</span>
+<span class="nc" id="L530">        return edge;</span>
+    }
+
+    @Override
+    public Iterator&lt;Edge&gt; adjacentEdges(Id vertexId) {
+<span class="nc" id="L535">        Iterator&lt;Edge&gt; edges = this.hugegraph.adjacentEdges(vertexId);</span>
+<span class="nc" id="L536">        return verifyElemPermission(HugePermission.READ, edges);</span>
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+        ResourceType resType;
+<span class="nc bnc" id="L542" title="All 2 branches missed.">        if (query.resultType().isVertex()) {</span>
+<span class="nc" id="L543">            resType = ResourceType.VERTEX_AGGR;</span>
+        } else {
+<span class="nc bnc" id="L545" title="All 2 branches missed.">            assert query.resultType().isEdge();</span>
+<span class="nc" id="L546">            resType = ResourceType.EDGE_AGGR;</span>
+        }
+<span class="nc" id="L548">        this.verifyPermission(HugePermission.READ, resType);</span>
+<span class="nc" id="L549">        return this.hugegraph.queryNumber(query);</span>
+
+    }
+
+    @Override
+    public Transaction tx() {
+        /*
+         * Can't verifyPermission() here, will be called by rollbackAll().
+         */
+<span class="nc" id="L558">        return this.hugegraph.tx();</span>
+    }
+
+    @Override
+    public void close() throws Exception {
+<span class="nc" id="L563">        this.verifyAdminPermission();</span>
+<span class="nc" id="L564">        this.hugegraph.close();</span>
+<span class="nc" id="L565">    }</span>
+
+    @Override
+    public HugeFeatures features() {
+        // Can't verifyPermission() here, will be called by rollbackAll()
+        //verifyStatusPermission();
+<span class="nc" id="L571">        return this.hugegraph.features();</span>
+    }
+
+    @Override
+    public Variables variables() {
+        // Just return proxy
+<span class="nc" id="L577">        return new VariablesProxy(this.hugegraph.variables());</span>
+    }
+
+    @Override
+    public HugeConfig configuration() {
+<span class="nc" id="L582">        this.verifyAdminPermission();</span>
+<span class="nc" id="L583">        return (HugeConfig) this.hugegraph.configuration();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L588">        this.verifyAnyPermission();</span>
+<span class="nc" id="L589">        return this.hugegraph.toString();</span>
+    }
+
+    @Override
+    public void proxy(HugeGraph graph) {
+<span class="nc" id="L594">        throw new NotSupportException(&quot;Graph.proxy()&quot;);</span>
+    }
+
+    @Override
+    public boolean sameAs(HugeGraph graph) {
+<span class="nc bnc" id="L599" title="All 2 branches missed.">        if (graph instanceof HugeGraphAuthProxy) {</span>
+<span class="nc" id="L600">            graph = ((HugeGraphAuthProxy) graph).hugegraph;</span>
+        }
+<span class="nc" id="L602">        return this.hugegraph.sameAs(graph);</span>
+    }
+
+    @Override
+    public long now() {
+        // It's ok anyone call this method, so not verifyStatusPermission()
+<span class="nc" id="L608">        return this.hugegraph.now();</span>
+    }
+
+    @Override
+    public &lt;K, V&gt; V option(TypedOption&lt;K, V&gt; option) {
+<span class="nc" id="L613">        this.verifyAnyPermission();</span>
+<span class="nc" id="L614">        return this.hugegraph.option(option);</span>
+    }
+
+    @Override
+    public String name() {
+<span class="nc" id="L619">        this.verifyAnyPermission();</span>
+<span class="nc" id="L620">        return this.hugegraph.name();</span>
+    }
+
+    @Override
+    public String backend() {
+<span class="nc" id="L625">        this.verifyAnyPermission();</span>
+<span class="nc" id="L626">        return this.hugegraph.backend();</span>
+    }
+
+    @Override
+    public BackendStoreInfo backendStoreInfo() {
+<span class="nc" id="L631">        this.verifyAdminPermission();</span>
+<span class="nc" id="L632">        return this.hugegraph.backendStoreInfo();</span>
+    }
+
+    @Override
+    public BackendFeatures backendStoreFeatures() {
+<span class="nc" id="L637">        this.verifyAnyPermission();</span>
+<span class="nc" id="L638">        return this.hugegraph.backendStoreFeatures();</span>
+    }
+
+    @Override
+    public GraphMode mode() {
+<span class="nc" id="L643">        this.verifyStatusPermission();</span>
+<span class="nc" id="L644">        return this.hugegraph.mode();</span>
+    }
+
+    @Override
+    public void mode(GraphMode mode) {
+<span class="nc" id="L649">        this.verifyPermission(HugePermission.WRITE, ResourceType.STATUS);</span>
+<span class="nc" id="L650">        this.hugegraph.mode(mode);</span>
+<span class="nc" id="L651">    }</span>
+
+    @Override
+    public GraphReadMode readMode() {
+<span class="nc" id="L655">        this.verifyStatusPermission();</span>
+<span class="nc" id="L656">        return this.hugegraph.readMode();</span>
+    }
+
+    @Override
+    public void readMode(GraphReadMode readMode) {
+<span class="nc" id="L661">        this.verifyPermission(HugePermission.WRITE, ResourceType.STATUS);</span>
+<span class="nc" id="L662">        this.hugegraph.readMode(readMode);</span>
+<span class="nc" id="L663">    }</span>
+
+    @Override
+    public void waitReady(RpcServer rpcServer) {
+<span class="nc" id="L667">        this.verifyAnyPermission();</span>
+<span class="nc" id="L668">        this.hugegraph.waitReady(rpcServer);</span>
+<span class="nc" id="L669">    }</span>
+
+    @Override
+    public void serverStarted(GlobalMasterInfo nodeInfo) {
+<span class="nc" id="L673">        this.verifyAdminPermission();</span>
+<span class="nc" id="L674">        this.hugegraph.serverStarted(nodeInfo);</span>
+<span class="nc" id="L675">    }</span>
+
+    @Override
+    public boolean started() {
+<span class="nc" id="L679">        this.verifyAdminPermission();</span>
+<span class="nc" id="L680">        return this.hugegraph.started();</span>
+    }
+
+    @Override
+    public boolean closed() {
+<span class="nc" id="L685">        this.verifyAdminPermission();</span>
+<span class="nc" id="L686">        return this.hugegraph.closed();</span>
+    }
+
+    @Override
+    public &lt;R&gt; R metadata(HugeType type, String meta, Object... args) {
+<span class="nc" id="L691">        this.verifyNamePermission(HugePermission.EXECUTE,</span>
+                                  ResourceType.META, meta);
+<span class="nc" id="L693">        return this.hugegraph.metadata(type, meta, args);</span>
+    }
+
+    @Override
+    public TaskScheduler taskScheduler() {
+        // Just return proxy
+<span class="nc" id="L699">        return this.taskScheduler;</span>
+    }
+
+    @Override
+    public AuthManager authManager() {
+        // Just return proxy
+<span class="nc" id="L705">        return this.authManager;</span>
+    }
+
+    @Override
+    public RoleElectionStateMachine roleElectionStateMachine() {
+<span class="nc" id="L710">        this.verifyAdminPermission();</span>
+<span class="nc" id="L711">        return this.hugegraph.roleElectionStateMachine();</span>
+    }
+
+    @Override
+    public void switchAuthManager(AuthManager authManager) {
+<span class="nc" id="L716">        this.verifyAdminPermission();</span>
+<span class="nc" id="L717">        this.authManager.switchAuthManager(authManager);</span>
+<span class="nc" id="L718">    }</span>
+
+    @Override
+    public RaftGroupManager raftGroupManager() {
+<span class="nc" id="L722">        this.verifyAdminPermission();</span>
+<span class="nc" id="L723">        return this.hugegraph.raftGroupManager();</span>
+    }
+
+    @Override
+    public void registerRpcServices(RpcServiceConfig4Server serverConfig,
+                                    RpcServiceConfig4Client clientConfig) {
+<span class="nc" id="L729">        this.verifyAdminPermission();</span>
+<span class="nc" id="L730">        this.hugegraph.registerRpcServices(serverConfig, clientConfig);</span>
+<span class="nc" id="L731">    }</span>
+
+    @Override
+    public void initBackend() {
+<span class="nc" id="L735">        this.verifyAdminPermission();</span>
+<span class="nc" id="L736">        this.hugegraph.initBackend();</span>
+<span class="nc" id="L737">    }</span>
+
+    @Override
+    public void clearBackend() {
+<span class="nc" id="L741">        this.verifyAdminPermission();</span>
+<span class="nc" id="L742">        this.hugegraph.clearBackend();</span>
+<span class="nc" id="L743">    }</span>
+
+    @Override
+    public void truncateBackend() {
+<span class="nc" id="L747">        this.verifyAdminPermission();</span>
+<span class="nc" id="L748">        AuthManager userManager = this.hugegraph.authManager();</span>
+<span class="nc" id="L749">        HugeUser admin = userManager.findUser(HugeAuthenticator.USER_ADMIN);</span>
+        try {
+<span class="nc" id="L751">            this.hugegraph.truncateBackend();</span>
+        } finally {
+<span class="nc bnc" id="L753" title="All 4 branches missed.">            if (admin != null &amp;&amp; StandardAuthManager.isLocal(userManager)) {</span>
+                // Restore admin user to continue to do any operation
+<span class="nc" id="L755">                userManager.createUser(admin);</span>
+            }
+        }
+<span class="nc" id="L758">    }</span>
+
+    @Override
+    public void initSystemInfo() {
+<span class="nc" id="L762">        this.verifyAdminPermission();</span>
+<span class="nc" id="L763">        this.hugegraph.initSystemInfo();</span>
+<span class="nc" id="L764">    }</span>
+
+    @Override
+    public void createSnapshot() {
+<span class="nc" id="L768">        this.verifyPermission(HugePermission.WRITE, ResourceType.STATUS);</span>
+<span class="nc" id="L769">        this.hugegraph.createSnapshot();</span>
+<span class="nc" id="L770">    }</span>
+
+    @Override
+    public void resumeSnapshot() {
+<span class="nc" id="L774">        this.verifyPermission(HugePermission.WRITE, ResourceType.STATUS);</span>
+<span class="nc" id="L775">        this.hugegraph.resumeSnapshot();</span>
+<span class="nc" id="L776">    }</span>
+
+    @Override
+    public void create(String configPath, GlobalMasterInfo nodeInfo) {
+<span class="nc" id="L780">        this.verifyPermission(HugePermission.WRITE, ResourceType.STATUS);</span>
+<span class="nc" id="L781">        this.hugegraph.create(configPath, nodeInfo);</span>
+<span class="nc" id="L782">    }</span>
+
+    @Override
+    public void drop() {
+<span class="nc" id="L786">        this.verifyPermission(HugePermission.WRITE, ResourceType.STATUS);</span>
+<span class="nc" id="L787">        this.hugegraph.drop();</span>
+<span class="nc" id="L788">    }</span>
+
+    @Override
+    public HugeConfig cloneConfig(String newGraph) {
+<span class="nc" id="L792">        this.verifyPermission(HugePermission.WRITE, ResourceType.STATUS);</span>
+<span class="nc" id="L793">        return this.hugegraph.cloneConfig(newGraph);</span>
+    }
+
+    private &lt;V&gt; Cache&lt;Id, V&gt; cache(String prefix, long capacity,
+                                   long expiredTime) {
+<span class="nc" id="L798">        String name = prefix + &quot;-&quot; + this.hugegraph.name();</span>
+<span class="nc" id="L799">        Cache&lt;Id, V&gt; cache = CacheManager.instance().cache(name, capacity);</span>
+<span class="nc bnc" id="L800" title="All 2 branches missed.">        if (expiredTime &gt; 0L) {</span>
+<span class="nc" id="L801">            cache.expire(Duration.ofSeconds(expiredTime).toMillis());</span>
+        } else {
+<span class="nc" id="L803">            cache.expire(expiredTime);</span>
+        }
+<span class="nc" id="L805">        return cache;</span>
+    }
+
+    private void verifyAdminPermission() {
+<span class="nc" id="L809">        verifyPermission(HugePermission.ANY, ResourceType.ROOT);</span>
+<span class="nc" id="L810">    }</span>
+
+    private void verifyStatusPermission() {
+<span class="nc" id="L813">        verifyPermission(HugePermission.READ, ResourceType.STATUS);</span>
+<span class="nc" id="L814">    }</span>
+
+    private void verifyAnyPermission() {
+<span class="nc" id="L817">        verifyPermission(HugePermission.READ, ResourceType.NONE);</span>
+<span class="nc" id="L818">    }</span>
+
+    private void verifyPermission(HugePermission actionPerm,
+                                  ResourceType resType) {
+        /*
+         * The owner role should match the graph name
+         * NOTE: the graph names in gremlin-server.yaml/graphs and
+         * hugegraph.properties/store must be the same if enable auth.
+         */
+<span class="nc" id="L827">        verifyResPermission(actionPerm, true, () -&gt; {</span>
+<span class="nc" id="L828">            String graph = this.hugegraph.name();</span>
+<span class="nc" id="L829">            Nameable elem = HugeResource.NameObject.ANY;</span>
+<span class="nc" id="L830">            return ResourceObject.of(graph, resType, elem);</span>
+        });
+<span class="nc" id="L832">    }</span>
+
+    private &lt;V extends AuthElement&gt; V verifyUserPermission(
+                                      HugePermission actionPerm,
+                                      V elementFetcher) {
+<span class="nc" id="L837">        return verifyUserPermission(actionPerm, true, () -&gt; elementFetcher);</span>
+    }
+
+    private &lt;V extends AuthElement&gt; List&lt;V&gt; verifyUserPermission(
+                                            HugePermission actionPerm,
+                                            List&lt;V&gt; elems) {
+<span class="nc" id="L843">        List&lt;V&gt; results = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L844" title="All 2 branches missed.">        for (V elem : elems) {</span>
+<span class="nc" id="L845">            V r = verifyUserPermission(actionPerm, false, () -&gt; elem);</span>
+<span class="nc bnc" id="L846" title="All 2 branches missed.">            if (r != null) {</span>
+<span class="nc" id="L847">                results.add(r);</span>
+            }
+<span class="nc" id="L849">        }</span>
+<span class="nc" id="L850">        return results;</span>
+    }
+
+    private &lt;V extends AuthElement&gt; V verifyUserPermission(
+                                      HugePermission actionPerm,
+                                      boolean throwIfNoPerm,
+                                      Supplier&lt;V&gt; elementFetcher) {
+<span class="nc" id="L857">        return verifyResPermission(actionPerm, throwIfNoPerm, () -&gt; {</span>
+<span class="nc" id="L858">            String graph = this.hugegraph.name();</span>
+<span class="nc" id="L859">            V elem = elementFetcher.get();</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L861">            ResourceObject&lt;V&gt; r = (ResourceObject&lt;V&gt;) ResourceObject.of(graph,</span>
+                                                                        elem);
+<span class="nc" id="L863">            return r;</span>
+        });
+    }
+
+    private void verifyElemPermission(HugePermission actionPerm, Element elem) {
+<span class="nc" id="L868">        verifyElemPermission(actionPerm, true, () -&gt; elem);</span>
+<span class="nc" id="L869">    }</span>
+
+    private &lt;V extends HugeElement&gt; V verifyElemPermission(
+                                      HugePermission actionPerm,
+                                      Supplier&lt;V&gt; elementFetcher) {
+<span class="nc" id="L874">        return verifyElemPermission(actionPerm, true, elementFetcher);</span>
+    }
+
+    private &lt;V extends Element&gt; Iterator&lt;V&gt; verifyElemPermission(
+                                            HugePermission actionPerm,
+                                            Iterator&lt;V&gt; elems) {
+<span class="nc" id="L880">        return new FilterIterator&lt;&gt;(elems, elem -&gt; {</span>
+<span class="nc" id="L881">            V r = verifyElemPermission(actionPerm, false, () -&gt; elem);</span>
+<span class="nc bnc" id="L882" title="All 2 branches missed.">            return r != null;</span>
+        });
+    }
+
+    private &lt;V extends Element&gt; V verifyElemPermission(
+                                  HugePermission actionPerm,
+                                  boolean throwIfNoPerm,
+                                  Supplier&lt;V&gt; elementFetcher) {
+<span class="nc" id="L890">        return verifyResPermission(actionPerm, throwIfNoPerm, () -&gt; {</span>
+<span class="nc" id="L891">            String graph = this.hugegraph.name();</span>
+<span class="nc" id="L892">            HugeElement elem = (HugeElement) elementFetcher.get();</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L894">            ResourceObject&lt;V&gt; r = (ResourceObject&lt;V&gt;) ResourceObject.of(graph,</span>
+                                                                        elem);
+<span class="nc" id="L896">            return r;</span>
+        });
+    }
+
+    private void verifyNameExistsPermission(ResourceType resType, String name) {
+<span class="nc" id="L901">        verifyNamePermission(HugePermission.READ, resType, name);</span>
+<span class="nc" id="L902">    }</span>
+
+    private void verifyNamePermission(HugePermission actionPerm,
+                                      ResourceType resType, String name) {
+<span class="nc" id="L906">        verifyResPermission(actionPerm, true, () -&gt; {</span>
+<span class="nc" id="L907">            String graph = this.hugegraph.name();</span>
+<span class="nc" id="L908">            Nameable elem = HugeResource.NameObject.of(name);</span>
+<span class="nc" id="L909">            return ResourceObject.of(graph, resType, elem);</span>
+        });
+<span class="nc" id="L911">    }</span>
+
+    private void verifySchemaPermission(HugePermission actionPerm,
+                                        SchemaElement schema) {
+<span class="nc" id="L915">        verifySchemaPermission(actionPerm, true, () -&gt; schema);</span>
+<span class="nc" id="L916">    }</span>
+
+    private &lt;V extends SchemaElement&gt; Collection&lt;V&gt; verifySchemaPermission(
+                                                    HugePermission actionPerm,
+                                                    Collection&lt;V&gt; schemas) {
+<span class="nc" id="L921">        List&lt;V&gt; results = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L922" title="All 2 branches missed.">        for (V schema : schemas) {</span>
+<span class="nc" id="L923">            V r = verifySchemaPermission(actionPerm, false, () -&gt; schema);</span>
+<span class="nc bnc" id="L924" title="All 2 branches missed.">            if (r != null) {</span>
+<span class="nc" id="L925">                results.add(r);</span>
+            }
+<span class="nc" id="L927">        }</span>
+<span class="nc" id="L928">        return results;</span>
+    }
+
+    private &lt;V extends SchemaElement&gt; V verifySchemaPermission(
+                                        HugePermission actionPerm,
+                                        Supplier&lt;V&gt; schemaFetcher) {
+<span class="nc" id="L934">        return verifySchemaPermission(actionPerm, true, schemaFetcher);</span>
+    }
+
+    private &lt;V extends SchemaElement&gt; V verifySchemaPermission(
+                                        HugePermission actionPerm,
+                                        boolean throwIfNoPerm,
+                                        Supplier&lt;V&gt; schemaFetcher) {
+<span class="nc" id="L941">        return verifyResPermission(actionPerm, throwIfNoPerm, () -&gt; {</span>
+<span class="nc" id="L942">            String graph = this.hugegraph.name();</span>
+<span class="nc" id="L943">            SchemaElement elem = schemaFetcher.get();</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L945">            ResourceObject&lt;V&gt; r = (ResourceObject&lt;V&gt;) ResourceObject.of(graph,</span>
+                                                                        elem);
+<span class="nc" id="L947">            return r;</span>
+        });
+    }
+
+    private &lt;V&gt; V verifyResPermission(HugePermission actionPerm,
+                                      boolean throwIfNoPerm,
+                                      Supplier&lt;ResourceObject&lt;V&gt;&gt; fetcher) {
+<span class="nc" id="L954">        return verifyResPermission(actionPerm, throwIfNoPerm, fetcher, null);</span>
+    }
+
+    private &lt;V&gt; V verifyResPermission(HugePermission actionPerm,
+                                      boolean throwIfNoPerm,
+                                      Supplier&lt;ResourceObject&lt;V&gt;&gt; fetcher,
+                                      Supplier&lt;Boolean&gt; checker) {
+        // TODO: call verifyPermission() before actual action
+<span class="nc" id="L962">        Context context = getContext();</span>
+<span class="nc bnc" id="L963" title="All 2 branches missed.">        E.checkState(context != null,</span>
+                     &quot;Missing authentication context &quot; +
+                     &quot;when verifying resource permission&quot;);
+<span class="nc" id="L966">        String username = context.user().username();</span>
+<span class="nc" id="L967">        Object role = context.user().role();</span>
+<span class="nc" id="L968">        ResourceObject&lt;V&gt; ro = fetcher.get();</span>
+<span class="nc" id="L969">        String action = actionPerm.string();</span>
+
+<span class="nc bnc" id="L971" title="All 2 branches missed.">        if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L972">            LOG.debug(&quot;Verify permission {} {} for user '{}' with role {}&quot;,</span>
+                      action, ro, username, role);
+        }
+
+<span class="nc" id="L976">        V result = ro.operated();</span>
+        // Verify role permission
+<span class="nc bnc" id="L978" title="All 2 branches missed.">        if (!RolePerm.match(role, actionPerm, ro)) {</span>
+<span class="nc" id="L979">            result = null;</span>
+        }
+        // Verify permission for one access another, like: granted &lt;= user role
+<span class="nc bnc" id="L982" title="All 2 branches missed.">        else if (ro.type().isGrantOrUser()) {</span>
+<span class="nc" id="L983">            AuthElement element = (AuthElement) ro.operated();</span>
+<span class="nc" id="L984">            RolePermission grant = this.hugegraph.authManager()</span>
+<span class="nc" id="L985">                                                 .rolePermission(element);</span>
+<span class="nc bnc" id="L986" title="All 2 branches missed.">            if (!RolePerm.match(role, grant, ro)) {</span>
+<span class="nc" id="L987">                result = null;</span>
+            }
+        }
+
+        // Check resource detail if needed
+<span class="nc bnc" id="L992" title="All 6 branches missed.">        if (result != null &amp;&amp; checker != null &amp;&amp; !checker.get()) {</span>
+<span class="nc" id="L993">            result = null;</span>
+        }
+
+        // Log user action, limit rate for each user
+<span class="nc" id="L997">        Id usrId = context.user().userId();</span>
+<span class="nc" id="L998">        RateLimiter auditLimiter = this.auditLimiters.getOrFetch(usrId, id -&gt; {</span>
+<span class="nc" id="L999">            return RateLimiter.create(this.auditLogMaxRate);</span>
+        });
+
+<span class="nc bnc" id="L1002" title="All 4 branches missed.">        if (!(actionPerm == HugePermission.READ &amp;&amp; ro.type().isSchema()) &amp;&amp;</span>
+<span class="nc bnc" id="L1003" title="All 2 branches missed.">            auditLimiter.tryAcquire()) {</span>
+<span class="nc bnc" id="L1004" title="All 2 branches missed.">            String status = result == null ? &quot;denied&quot; : &quot;allowed&quot;;</span>
+<span class="nc" id="L1005">            LOG.info(&quot;User '{}' is {} to {} {}&quot;, username, status, action, ro);</span>
+        }
+
+        // result = null means no permission, throw if needed
+<span class="nc bnc" id="L1009" title="All 4 branches missed.">        if (result == null &amp;&amp; throwIfNoPerm) {</span>
+<span class="nc" id="L1010">            String error = String.format(&quot;Permission denied: %s %s&quot;,</span>
+                                         action, ro);
+<span class="nc" id="L1012">            throw new ForbiddenException(error);</span>
+        }
+<span class="nc" id="L1014">        return result;</span>
+    }
+
+    class TaskSchedulerProxy implements TaskScheduler {
+
+        private final TaskScheduler taskScheduler;
+
+<span class="nc" id="L1021">        public TaskSchedulerProxy(TaskScheduler origin) {</span>
+<span class="nc" id="L1022">            this.taskScheduler = origin;</span>
+<span class="nc" id="L1023">        }</span>
+
+        @Override
+        public HugeGraph graph() {
+<span class="nc" id="L1027">            return this.taskScheduler.graph();</span>
+        }
+
+        @Override
+        public void init() {
+<span class="nc" id="L1032">            verifyAdminPermission();</span>
+<span class="nc" id="L1033">            this.taskScheduler.init();</span>
+<span class="nc" id="L1034">        }</span>
+
+        @Override
+        public int pendingTasks() {
+<span class="nc" id="L1038">            verifyTaskPermission(HugePermission.READ);</span>
+<span class="nc" id="L1039">            return this.taskScheduler.pendingTasks();</span>
+        }
+
+        @Override
+        public &lt;V&gt; void restoreTasks() {
+<span class="nc" id="L1044">            verifyTaskPermission(HugePermission.WRITE);</span>
+<span class="nc" id="L1045">            this.taskScheduler.restoreTasks();</span>
+<span class="nc" id="L1046">        }</span>
+
+        @Override
+        public &lt;V&gt; Future&lt;?&gt; schedule(HugeTask&lt;V&gt; task) {
+<span class="nc" id="L1050">            verifyTaskPermission(HugePermission.EXECUTE);</span>
+<span class="nc" id="L1051">            task.context(getContextString());</span>
+<span class="nc" id="L1052">            return this.taskScheduler.schedule(task);</span>
+        }
+
+        @Override
+        public &lt;V&gt; void cancel(HugeTask&lt;V&gt; task) {
+<span class="nc" id="L1057">            verifyTaskPermission(HugePermission.WRITE, task);</span>
+<span class="nc" id="L1058">            this.taskScheduler.cancel(task);</span>
+<span class="nc" id="L1059">        }</span>
+
+        @Override
+        public &lt;V&gt; void save(HugeTask&lt;V&gt; task) {
+<span class="nc" id="L1063">            verifyTaskPermission(HugePermission.WRITE, task);</span>
+<span class="nc" id="L1064">            this.taskScheduler.save(task);</span>
+<span class="nc" id="L1065">        }</span>
+
+        @Override
+        public &lt;V&gt; HugeTask&lt;V&gt; task(Id id) {
+<span class="nc" id="L1069">            return verifyTaskPermission(HugePermission.READ,</span>
+<span class="nc" id="L1070">                                        this.taskScheduler.task(id));</span>
+        }
+
+        @Override
+        public &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; tasks(List&lt;Id&gt; ids) {
+<span class="nc" id="L1075">            return verifyTaskPermission(HugePermission.READ,</span>
+<span class="nc" id="L1076">                                        this.taskScheduler.tasks(ids));</span>
+        }
+
+        @Override
+        public &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; tasks(TaskStatus status,
+                                               long limit, String page) {
+<span class="nc" id="L1082">            Iterator&lt;HugeTask&lt;V&gt;&gt; tasks = this.taskScheduler.tasks(status,</span>
+                                                                   limit, page);
+<span class="nc" id="L1084">            return verifyTaskPermission(HugePermission.READ, tasks);</span>
+        }
+
+        @Override
+        public &lt;V&gt; HugeTask&lt;V&gt; delete(Id id) {
+<span class="nc" id="L1089">            verifyTaskPermission(HugePermission.DELETE,</span>
+<span class="nc" id="L1090">                                 this.taskScheduler.task(id));</span>
+<span class="nc" id="L1091">            return this.taskScheduler.delete(id);</span>
+        }
+
+        @Override
+        public boolean close() {
+<span class="nc" id="L1096">            verifyAdminPermission();</span>
+<span class="nc" id="L1097">            return this.taskScheduler.close();</span>
+        }
+
+        @Override
+        public &lt;V&gt; HugeTask&lt;V&gt; waitUntilTaskCompleted(Id id, long seconds)
+                                                      throws TimeoutException {
+<span class="nc" id="L1103">            verifyAnyPermission();</span>
+<span class="nc" id="L1104">            return this.taskScheduler.waitUntilTaskCompleted(id, seconds);</span>
+        }
+
+        @Override
+        public &lt;V&gt; HugeTask&lt;V&gt; waitUntilTaskCompleted(Id id)
+                                                      throws TimeoutException {
+<span class="nc" id="L1110">            verifyAnyPermission();</span>
+<span class="nc" id="L1111">            return this.taskScheduler.waitUntilTaskCompleted(id);</span>
+        }
+
+        @Override
+        public void waitUntilAllTasksCompleted(long seconds)
+                                               throws TimeoutException {
+<span class="nc" id="L1117">            verifyAnyPermission();</span>
+<span class="nc" id="L1118">            this.taskScheduler.waitUntilAllTasksCompleted(seconds);</span>
+<span class="nc" id="L1119">        }</span>
+
+        @Override
+        public void checkRequirement(String op) {
+<span class="nc" id="L1123">            verifyAnyPermission();</span>
+<span class="nc" id="L1124">            this.taskScheduler.checkRequirement(op);</span>
+<span class="nc" id="L1125">        }</span>
+
+        private void verifyTaskPermission(HugePermission actionPerm) {
+<span class="nc" id="L1128">            verifyPermission(actionPerm, ResourceType.TASK);</span>
+<span class="nc" id="L1129">        }</span>
+
+        private &lt;V&gt; HugeTask&lt;V&gt; verifyTaskPermission(HugePermission actionPerm,
+                                                     HugeTask&lt;V&gt; task) {
+<span class="nc" id="L1133">            return verifyTaskPermission(actionPerm, true, task);</span>
+        }
+
+        private &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; verifyTaskPermission(
+                                          HugePermission actionPerm,
+                                          Iterator&lt;HugeTask&lt;V&gt;&gt; tasks) {
+<span class="nc" id="L1139">            return new FilterIterator&lt;&gt;(tasks, task -&gt; {</span>
+<span class="nc bnc" id="L1140" title="All 2 branches missed.">                return verifyTaskPermission(actionPerm, false, task) != null;</span>
+            });
+        }
+
+        private &lt;V&gt; HugeTask&lt;V&gt; verifyTaskPermission(HugePermission actionPerm,
+                                                     boolean throwIfNoPerm,
+                                                     HugeTask&lt;V&gt; task) {
+<span class="nc" id="L1147">            Object r = verifyResPermission(actionPerm, throwIfNoPerm, () -&gt; {</span>
+<span class="nc" id="L1148">                String graph = HugeGraphAuthProxy.this.hugegraph.name();</span>
+<span class="nc" id="L1149">                String name = task.id().toString();</span>
+<span class="nc" id="L1150">                Nameable elem = HugeResource.NameObject.of(name);</span>
+<span class="nc" id="L1151">                return ResourceObject.of(graph, ResourceType.TASK, elem);</span>
+            }, () -&gt; {
+<span class="nc" id="L1153">                return hasTaskPermission(task);</span>
+            });
+<span class="nc bnc" id="L1155" title="All 2 branches missed.">            return r == null ? null : task;</span>
+        }
+
+        private boolean hasTaskPermission(HugeTask&lt;?&gt; task) {
+<span class="nc" id="L1159">            Context context = getContext();</span>
+<span class="nc bnc" id="L1160" title="All 2 branches missed.">            if (context == null) {</span>
+<span class="nc" id="L1161">                return false;</span>
+            }
+<span class="nc" id="L1163">            User currentUser = context.user();</span>
+
+<span class="nc" id="L1165">            User taskUser = User.fromJson(task.context());</span>
+<span class="nc bnc" id="L1166" title="All 2 branches missed.">            if (taskUser == null) {</span>
+<span class="nc" id="L1167">                return User.ADMIN.equals(currentUser);</span>
+            }
+
+<span class="nc bnc" id="L1170" title="All 2 branches missed.">            return Objects.equals(currentUser.getName(), taskUser.getName()) ||</span>
+<span class="nc bnc" id="L1171" title="All 2 branches missed.">                   RolePerm.match(currentUser.role(), taskUser.role(), null);</span>
+        }
+    }
+
+    class AuthManagerProxy implements AuthManager {
+
+        private AuthManager authManager;
+
+<span class="nc" id="L1179">        public AuthManagerProxy(AuthManager origin) {</span>
+<span class="nc" id="L1180">            this.authManager = origin;</span>
+<span class="nc" id="L1181">        }</span>
+
+        private AuthElement updateCreator(AuthElement elem) {
+<span class="nc" id="L1184">            String username = currentUsername();</span>
+<span class="nc bnc" id="L1185" title="All 4 branches missed.">            if (username != null &amp;&amp; elem.creator() == null) {</span>
+<span class="nc" id="L1186">                elem.creator(username);</span>
+            }
+<span class="nc" id="L1188">            return elem;</span>
+        }
+
+        private String currentUsername() {
+<span class="nc" id="L1192">            Context context = getContext();</span>
+<span class="nc bnc" id="L1193" title="All 2 branches missed.">            if (context != null) {</span>
+<span class="nc" id="L1194">                return context.user().username();</span>
+            }
+<span class="nc" id="L1196">            return null;</span>
+        }
+
+        @Override
+        public void init() {
+<span class="nc" id="L1201">            verifyAdminPermission();</span>
+<span class="nc" id="L1202">            this.authManager.init();</span>
+<span class="nc" id="L1203">        }</span>
+
+        @Override
+        public boolean close() {
+<span class="nc" id="L1207">            verifyAdminPermission();</span>
+<span class="nc" id="L1208">            return this.authManager.close();</span>
+        }
+
+        @Override
+        public Id createUser(HugeUser user) {
+<span class="nc bnc" id="L1213" title="All 2 branches missed.">            E.checkArgument(!HugeAuthenticator.USER_ADMIN.equals(user.name()),</span>
+<span class="nc" id="L1214">                            &quot;Invalid user name '%s'&quot;, user.name());</span>
+<span class="nc" id="L1215">            this.updateCreator(user);</span>
+<span class="nc" id="L1216">            verifyUserPermission(HugePermission.WRITE, user);</span>
+<span class="nc" id="L1217">            return this.authManager.createUser(user);</span>
+        }
+
+        @Override
+        public Id updateUser(HugeUser updatedUser) {
+<span class="nc" id="L1222">            String username = currentUsername();</span>
+<span class="nc" id="L1223">            HugeUser user = this.authManager.getUser(updatedUser.id());</span>
+<span class="nc bnc" id="L1224" title="All 2 branches missed.">            if (!user.name().equals(username)) {</span>
+<span class="nc" id="L1225">                this.updateCreator(updatedUser);</span>
+<span class="nc" id="L1226">                verifyUserPermission(HugePermission.WRITE, user);</span>
+            }
+<span class="nc" id="L1228">            this.invalidRoleCache();</span>
+<span class="nc" id="L1229">            return this.authManager.updateUser(updatedUser);</span>
+        }
+
+        @Override
+        public HugeUser deleteUser(Id id) {
+<span class="nc" id="L1234">            HugeUser user = this.authManager.getUser(id);</span>
+<span class="nc bnc" id="L1235" title="All 2 branches missed.">            E.checkArgument(!HugeAuthenticator.USER_ADMIN.equals(user.name()),</span>
+<span class="nc" id="L1236">                            &quot;Can't delete user '%s'&quot;, user.name());</span>
+<span class="nc" id="L1237">            verifyUserPermission(HugePermission.DELETE, user);</span>
+<span class="nc" id="L1238">            HugeGraphAuthProxy.this.auditLimiters.invalidate(user.id());</span>
+<span class="nc" id="L1239">            this.invalidRoleCache();</span>
+<span class="nc" id="L1240">            return this.authManager.deleteUser(id);</span>
+        }
+
+        @Override
+        public HugeUser findUser(String name) {
+<span class="nc" id="L1245">            HugeUser user = this.authManager.findUser(name);</span>
+<span class="nc" id="L1246">            String username = currentUsername();</span>
+<span class="nc bnc" id="L1247" title="All 2 branches missed.">            if (!user.name().equals(username)) {</span>
+<span class="nc" id="L1248">                verifyUserPermission(HugePermission.READ, user);</span>
+            }
+<span class="nc" id="L1250">            return user;</span>
+        }
+
+        @Override
+        public HugeUser getUser(Id id) {
+<span class="nc" id="L1255">            HugeUser user = this.authManager.getUser(id);</span>
+<span class="nc" id="L1256">            String username = currentUsername();</span>
+<span class="nc bnc" id="L1257" title="All 2 branches missed.">            if (!user.name().equals(username)) {</span>
+<span class="nc" id="L1258">                verifyUserPermission(HugePermission.READ, user);</span>
+            }
+<span class="nc" id="L1260">            return user;</span>
+        }
+
+        @Override
+        public List&lt;HugeUser&gt; listUsers(List&lt;Id&gt; ids) {
+<span class="nc" id="L1265">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1266">                                        this.authManager.listUsers(ids));</span>
+        }
+
+        @Override
+        public List&lt;HugeUser&gt; listAllUsers(long limit) {
+<span class="nc" id="L1271">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1272">                                        this.authManager.listAllUsers(limit));</span>
+        }
+
+        @Override
+        public Id createGroup(HugeGroup group) {
+<span class="nc" id="L1277">            this.updateCreator(group);</span>
+<span class="nc" id="L1278">            verifyUserPermission(HugePermission.WRITE, group);</span>
+<span class="nc" id="L1279">            this.invalidRoleCache();</span>
+<span class="nc" id="L1280">            return this.authManager.createGroup(group);</span>
+        }
+
+        @Override
+        public Id updateGroup(HugeGroup group) {
+<span class="nc" id="L1285">            this.updateCreator(group);</span>
+<span class="nc" id="L1286">            verifyUserPermission(HugePermission.WRITE, group);</span>
+<span class="nc" id="L1287">            this.invalidRoleCache();</span>
+<span class="nc" id="L1288">            return this.authManager.updateGroup(group);</span>
+        }
+
+        @Override
+        public HugeGroup deleteGroup(Id id) {
+<span class="nc" id="L1293">            verifyUserPermission(HugePermission.DELETE,</span>
+<span class="nc" id="L1294">                                 this.authManager.getGroup(id));</span>
+<span class="nc" id="L1295">            this.invalidRoleCache();</span>
+<span class="nc" id="L1296">            return this.authManager.deleteGroup(id);</span>
+        }
+
+        @Override
+        public HugeGroup getGroup(Id id) {
+<span class="nc" id="L1301">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1302">                                        this.authManager.getGroup(id));</span>
+        }
+
+        @Override
+        public List&lt;HugeGroup&gt; listGroups(List&lt;Id&gt; ids) {
+<span class="nc" id="L1307">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1308">                                        this.authManager.listGroups(ids));</span>
+        }
+
+        @Override
+        public List&lt;HugeGroup&gt; listAllGroups(long limit) {
+<span class="nc" id="L1313">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1314">                                        this.authManager.listAllGroups(limit));</span>
+        }
+
+        @Override
+        public Id createTarget(HugeTarget target) {
+<span class="nc" id="L1319">            this.updateCreator(target);</span>
+<span class="nc" id="L1320">            verifyUserPermission(HugePermission.WRITE, target);</span>
+<span class="nc" id="L1321">            this.invalidRoleCache();</span>
+<span class="nc" id="L1322">            return this.authManager.createTarget(target);</span>
+        }
+
+        @Override
+        public Id updateTarget(HugeTarget target) {
+<span class="nc" id="L1327">            this.updateCreator(target);</span>
+<span class="nc" id="L1328">            verifyUserPermission(HugePermission.WRITE, target);</span>
+<span class="nc" id="L1329">            this.invalidRoleCache();</span>
+<span class="nc" id="L1330">            return this.authManager.updateTarget(target);</span>
+        }
+
+        @Override
+        public HugeTarget deleteTarget(Id id) {
+<span class="nc" id="L1335">            verifyUserPermission(HugePermission.DELETE,</span>
+<span class="nc" id="L1336">                                 this.authManager.getTarget(id));</span>
+<span class="nc" id="L1337">            this.invalidRoleCache();</span>
+<span class="nc" id="L1338">            return this.authManager.deleteTarget(id);</span>
+        }
+
+        @Override
+        public HugeTarget getTarget(Id id) {
+<span class="nc" id="L1343">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1344">                                        this.authManager.getTarget(id));</span>
+        }
+
+        @Override
+        public List&lt;HugeTarget&gt; listTargets(List&lt;Id&gt; ids) {
+<span class="nc" id="L1349">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1350">                                        this.authManager.listTargets(ids));</span>
+        }
+
+        @Override
+        public List&lt;HugeTarget&gt; listAllTargets(long limit) {
+<span class="nc" id="L1355">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1356">                                        this.authManager.listAllTargets(limit));</span>
+        }
+
+        @Override
+        public Id createBelong(HugeBelong belong) {
+<span class="nc" id="L1361">            this.updateCreator(belong);</span>
+<span class="nc" id="L1362">            verifyUserPermission(HugePermission.WRITE, belong);</span>
+<span class="nc" id="L1363">            this.invalidRoleCache();</span>
+<span class="nc" id="L1364">            return this.authManager.createBelong(belong);</span>
+        }
+
+        @Override
+        public Id updateBelong(HugeBelong belong) {
+<span class="nc" id="L1369">            this.updateCreator(belong);</span>
+<span class="nc" id="L1370">            verifyUserPermission(HugePermission.WRITE, belong);</span>
+<span class="nc" id="L1371">            this.invalidRoleCache();</span>
+<span class="nc" id="L1372">            return this.authManager.updateBelong(belong);</span>
+        }
+
+        @Override
+        public HugeBelong deleteBelong(Id id) {
+<span class="nc" id="L1377">            verifyUserPermission(HugePermission.DELETE,</span>
+<span class="nc" id="L1378">                                 this.authManager.getBelong(id));</span>
+<span class="nc" id="L1379">            this.invalidRoleCache();</span>
+<span class="nc" id="L1380">            return this.authManager.deleteBelong(id);</span>
+        }
+
+        @Override
+        public HugeBelong getBelong(Id id) {
+<span class="nc" id="L1385">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1386">                                        this.authManager.getBelong(id));</span>
+        }
+
+        @Override
+        public List&lt;HugeBelong&gt; listBelong(List&lt;Id&gt; ids) {
+<span class="nc" id="L1391">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1392">                                        this.authManager.listBelong(ids));</span>
+        }
+
+        @Override
+        public List&lt;HugeBelong&gt; listAllBelong(long limit) {
+<span class="nc" id="L1397">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1398">                                        this.authManager.listAllBelong(limit));</span>
+        }
+
+        @Override
+        public List&lt;HugeBelong&gt; listBelongByUser(Id user, long limit) {
+<span class="nc" id="L1403">            List&lt;HugeBelong&gt; r = this.authManager.listBelongByUser(user, limit);</span>
+<span class="nc" id="L1404">            return verifyUserPermission(HugePermission.READ, r);</span>
+        }
+
+        @Override
+        public List&lt;HugeBelong&gt; listBelongByGroup(Id group, long limit) {
+<span class="nc" id="L1409">            List&lt;HugeBelong&gt; r = this.authManager.listBelongByGroup(group,</span>
+                                                                    limit);
+<span class="nc" id="L1411">            return verifyUserPermission(HugePermission.READ, r);</span>
+        }
+
+        @Override
+        public Id createAccess(HugeAccess access) {
+<span class="nc" id="L1416">            this.updateCreator(access);</span>
+<span class="nc" id="L1417">            verifyUserPermission(HugePermission.WRITE, access);</span>
+<span class="nc" id="L1418">            this.invalidRoleCache();</span>
+<span class="nc" id="L1419">            return this.authManager.createAccess(access);</span>
+        }
+
+        @Override
+        public Id updateAccess(HugeAccess access) {
+<span class="nc" id="L1424">            this.updateCreator(access);</span>
+<span class="nc" id="L1425">            verifyUserPermission(HugePermission.WRITE, access);</span>
+<span class="nc" id="L1426">            this.invalidRoleCache();</span>
+<span class="nc" id="L1427">            return this.authManager.updateAccess(access);</span>
+        }
+
+        @Override
+        public HugeAccess deleteAccess(Id id) {
+<span class="nc" id="L1432">            verifyUserPermission(HugePermission.DELETE,</span>
+<span class="nc" id="L1433">                                 this.authManager.getAccess(id));</span>
+<span class="nc" id="L1434">            this.invalidRoleCache();</span>
+<span class="nc" id="L1435">            return this.authManager.deleteAccess(id);</span>
+        }
+
+        @Override
+        public HugeAccess getAccess(Id id) {
+<span class="nc" id="L1440">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1441">                                        this.authManager.getAccess(id));</span>
+        }
+
+        @Override
+        public List&lt;HugeAccess&gt; listAccess(List&lt;Id&gt; ids) {
+<span class="nc" id="L1446">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1447">                                        this.authManager.listAccess(ids));</span>
+        }
+
+        @Override
+        public List&lt;HugeAccess&gt; listAllAccess(long limit) {
+<span class="nc" id="L1452">            return verifyUserPermission(HugePermission.READ,</span>
+<span class="nc" id="L1453">                                        this.authManager.listAllAccess(limit));</span>
+        }
+
+        @Override
+        public List&lt;HugeAccess&gt; listAccessByGroup(Id group, long limit) {
+<span class="nc" id="L1458">            List&lt;HugeAccess&gt; r = this.authManager.listAccessByGroup(group,</span>
+                                                                    limit);
+<span class="nc" id="L1460">            return verifyUserPermission(HugePermission.READ, r);</span>
+        }
+
+        @Override
+        public List&lt;HugeAccess&gt; listAccessByTarget(Id target, long limit) {
+<span class="nc" id="L1465">            List&lt;HugeAccess&gt; r = this.authManager.listAccessByTarget(target,</span>
+                                                                     limit);
+<span class="nc" id="L1467">            return verifyUserPermission(HugePermission.READ, r);</span>
+        }
+
+        @Override
+        public Id createProject(HugeProject project) {
+<span class="nc" id="L1472">            this.updateCreator(project);</span>
+<span class="nc" id="L1473">            verifyUserPermission(HugePermission.WRITE, project);</span>
+<span class="nc" id="L1474">            return this.authManager.createProject(project);</span>
+        }
+
+        @Override
+        public HugeProject deleteProject(Id id) {
+<span class="nc" id="L1479">            verifyUserPermission(HugePermission.DELETE,</span>
+<span class="nc" id="L1480">                                 this.authManager.getProject(id));</span>
+<span class="nc" id="L1481">            return this.authManager.deleteProject(id);</span>
+        }
+
+        @Override
+        public Id updateProject(HugeProject project) {
+<span class="nc" id="L1486">            this.updateCreator(project);</span>
+<span class="nc" id="L1487">            verifyUserPermission(HugePermission.WRITE, project);</span>
+<span class="nc" id="L1488">            return this.authManager.updateProject(project);</span>
+        }
+
+        @Override
+        public Id projectAddGraphs(Id id, Set&lt;String&gt; graphs) {
+<span class="nc" id="L1493">            verifyUserPermission(HugePermission.WRITE,</span>
+<span class="nc" id="L1494">                                 this.authManager.getProject(id));</span>
+<span class="nc" id="L1495">            return this.authManager.projectAddGraphs(id, graphs);</span>
+        }
+
+        @Override
+        public Id projectRemoveGraphs(Id id, Set&lt;String&gt; graphs) {
+<span class="nc" id="L1500">            verifyUserPermission(HugePermission.WRITE,</span>
+<span class="nc" id="L1501">                                 this.authManager.getProject(id));</span>
+<span class="nc" id="L1502">            return this.authManager.projectRemoveGraphs(id, graphs);</span>
+        }
+
+        @Override
+        public HugeProject getProject(Id id) {
+<span class="nc" id="L1507">            HugeProject project = this.authManager.getProject(id);</span>
+<span class="nc" id="L1508">            verifyUserPermission(HugePermission.READ, project);</span>
+<span class="nc" id="L1509">            return project;</span>
+        }
+
+        @Override
+        public List&lt;HugeProject&gt; listAllProject(long limit) {
+<span class="nc" id="L1514">            List&lt;HugeProject&gt; projects = this.authManager.listAllProject(limit);</span>
+<span class="nc" id="L1515">            return verifyUserPermission(HugePermission.READ, projects);</span>
+        }
+
+        @Override
+        public HugeUser matchUser(String name, String password) {
+            // Unneeded to verify permission
+<span class="nc" id="L1521">            return this.authManager.matchUser(name, password);</span>
+        }
+
+        @Override
+        public RolePermission rolePermission(AuthElement element) {
+<span class="nc" id="L1526">            String username = currentUsername();</span>
+<span class="nc bnc" id="L1527" title="All 2 branches missed.">            if (!(element instanceof HugeUser) ||</span>
+<span class="nc bnc" id="L1528" title="All 2 branches missed.">                !((HugeUser) element).name().equals(username)) {</span>
+<span class="nc" id="L1529">                verifyUserPermission(HugePermission.READ, element);</span>
+            }
+<span class="nc" id="L1531">            return this.authManager.rolePermission(element);</span>
+        }
+
+        @Override
+        public UserWithRole validateUser(String username, String password) {
+            // Can't verifyPermission() here, validate first with tmp permission
+<span class="nc" id="L1537">            Context context = setContext(Context.admin());</span>
+
+            try {
+<span class="nc" id="L1540">                Id userKey = IdGenerator.of(username + password);</span>
+<span class="nc" id="L1541">                return HugeGraphAuthProxy.this.usersRoleCache.getOrFetch(userKey, id -&gt; {</span>
+<span class="nc" id="L1542">                    return this.authManager.validateUser(username, password);</span>
+                });
+<span class="nc" id="L1544">            } catch (Exception e) {</span>
+<span class="nc" id="L1545">                LOG.error(&quot;Failed to validate user {} with error: &quot;,</span>
+                          username, e);
+<span class="nc" id="L1547">                throw e;</span>
+            } finally {
+<span class="nc" id="L1549">                setContext(context);</span>
+            }
+        }
+
+        @Override
+        public UserWithRole validateUser(String token) {
+            // Can't verifyPermission() here, validate first with tmp permission
+<span class="nc" id="L1556">            Context context = setContext(Context.admin());</span>
+
+            try {
+<span class="nc" id="L1559">                Id userKey = IdGenerator.of(token);</span>
+<span class="nc" id="L1560">                return HugeGraphAuthProxy.this.usersRoleCache.getOrFetch(userKey, id -&gt; {</span>
+<span class="nc" id="L1561">                    return this.authManager.validateUser(token);</span>
+                });
+<span class="nc" id="L1563">            } catch (Exception e) {</span>
+<span class="nc" id="L1564">                LOG.error(&quot;Failed to validate token {} with error: &quot;, token, e);</span>
+<span class="nc" id="L1565">                throw e;</span>
+            } finally {
+<span class="nc" id="L1567">                setContext(context);</span>
+            }
+        }
+
+        @Override
+        public Set&lt;String&gt; listWhiteIPs() {
+<span class="nc" id="L1573">            return this.authManager.listWhiteIPs();</span>
+        }
+
+        @Override
+        public void setWhiteIPs(Set&lt;String&gt; whiteIpList) {
+<span class="nc" id="L1578">            this.authManager.setWhiteIPs(whiteIpList);</span>
+<span class="nc" id="L1579">        }</span>
+
+        @Override
+        public boolean getWhiteIpStatus() {
+<span class="nc" id="L1583">            return this.authManager.getWhiteIpStatus();</span>
+        }
+
+        @Override
+        public void enabledWhiteIpList(boolean status) {
+<span class="nc" id="L1588">            this.authManager.enabledWhiteIpList(status);</span>
+<span class="nc" id="L1589">        }</span>
+
+        @Override
+        public String loginUser(String username, String password) {
+            try {
+<span class="nc" id="L1594">                return this.authManager.loginUser(username, password);</span>
+<span class="nc" id="L1595">            } catch (AuthenticationException e) {</span>
+<span class="nc" id="L1596">                throw new NotAuthorizedException(e.getMessage(), e);</span>
+            }
+        }
+
+        @Override
+        public void logoutUser(String token) {
+<span class="nc" id="L1602">            this.authManager.logoutUser(token);</span>
+<span class="nc" id="L1603">        }</span>
+
+        private void switchAuthManager(AuthManager authManager) {
+<span class="nc" id="L1606">            this.authManager = authManager;</span>
+<span class="nc" id="L1607">            HugeGraphAuthProxy.this.hugegraph.switchAuthManager(authManager);</span>
+<span class="nc" id="L1608">        }</span>
+
+        private void invalidRoleCache() {
+<span class="nc" id="L1611">            HugeGraphAuthProxy.this.usersRoleCache.clear();</span>
+<span class="nc" id="L1612">        }</span>
+    }
+
+    class VariablesProxy implements Variables {
+
+        private final Variables variables;
+
+<span class="nc" id="L1619">        public VariablesProxy(Variables variables) {</span>
+<span class="nc" id="L1620">            this.variables = variables;</span>
+<span class="nc" id="L1621">        }</span>
+
+        @Override
+        public &lt;R&gt; Optional&lt;R&gt; get(String key) {
+<span class="nc" id="L1625">            verifyPermission(HugePermission.READ, ResourceType.VAR);</span>
+<span class="nc" id="L1626">            return this.variables.get(key);</span>
+        }
+
+        @Override
+        public Set&lt;String&gt; keys() {
+<span class="nc" id="L1631">            verifyPermission(HugePermission.READ, ResourceType.VAR);</span>
+<span class="nc" id="L1632">            return this.variables.keys();</span>
+        }
+
+        @Override
+        public void set(String key, Object value) {
+<span class="nc" id="L1637">            verifyPermission(HugePermission.WRITE, ResourceType.VAR);</span>
+<span class="nc" id="L1638">            this.variables.set(key, value);</span>
+<span class="nc" id="L1639">        }</span>
+
+        @Override
+        public void remove(String key) {
+<span class="nc" id="L1643">            verifyPermission(HugePermission.DELETE, ResourceType.VAR);</span>
+<span class="nc" id="L1644">            this.variables.remove(key);</span>
+<span class="nc" id="L1645">        }</span>
+    }
+
+    class GraphTraversalSourceProxy extends GraphTraversalSource {
+
+<span class="nc" id="L1650">        public GraphTraversalSourceProxy(Graph graph) {</span>
+<span class="nc" id="L1651">            super(graph);</span>
+<span class="nc" id="L1652">        }</span>
+
+        public GraphTraversalSourceProxy(Graph graph,
+<span class="nc" id="L1655">                                         TraversalStrategies strategies) {</span>
+<span class="nc" id="L1656">            super(graph, strategies);</span>
+<span class="nc" id="L1657">        }</span>
+
+        @Override
+        public TraversalStrategies getStrategies() {
+            // getStrategies()/getGraph() is called by super.clone()
+<span class="nc" id="L1662">            return new TraversalStrategiesProxy(super.getStrategies());</span>
+        }
+    }
+
+    class TraversalStrategiesProxy implements TraversalStrategies {
+
+        private static final String REST_WORKER = &quot;grizzly-http-server&quot;;
+        private static final long serialVersionUID = -5424364720492307019L;
+        private final TraversalStrategies strategies;
+
+<span class="nc" id="L1672">        public TraversalStrategiesProxy(TraversalStrategies strategies) {</span>
+<span class="nc" id="L1673">            this.strategies = strategies;</span>
+<span class="nc" id="L1674">        }</span>
+
+        @Override
+        public List&lt;TraversalStrategy&lt;?&gt;&gt; toList() {
+<span class="nc" id="L1678">            return this.strategies.toList();</span>
+        }
+
+        @Override
+        public Iterator&lt;TraversalStrategy&lt;?&gt;&gt; iterator() {
+<span class="nc bnc" id="L1683" title="All 2 branches missed.">            if (this.strategies == null) {</span>
+<span class="nc" id="L1684">                return Collections.emptyIterator();</span>
+
+            }
+<span class="nc" id="L1687">            return new MapperIterator&lt;&gt;(this.strategies.iterator(), TraversalStrategyProxy::new);</span>
+        }
+
+        @Override
+        public TraversalStrategies addStrategies(TraversalStrategy&lt;?&gt;... strategies) {
+<span class="nc" id="L1692">            return this.strategies.addStrategies(strategies);</span>
+        }
+
+        @SuppressWarnings({&quot;unchecked&quot;})
+        @Override
+        public TraversalStrategies removeStrategies(
+               Class&lt;? extends TraversalStrategy&gt;... strategyClasses) {
+<span class="nc" id="L1699">            return this.strategies.removeStrategies(strategyClasses);</span>
+        }
+
+        @Override
+        public TraversalStrategies clone() {
+            // CHECKSTYLE:OFF
+<span class="nc" id="L1705">            return this.strategies.clone();</span>
+        }
+
+        @SuppressWarnings(&quot;unused&quot;)
+        private String translate(Bytecode bytecode) {
+            // GroovyTranslator.of(&quot;g&quot;).translate(bytecode);
+<span class="nc" id="L1711">            List&lt;Instruction&gt; steps = bytecode.getStepInstructions();</span>
+<span class="nc" id="L1712">            StringBuilder sb = new StringBuilder();</span>
+<span class="nc" id="L1713">            sb.append(&quot;g&quot;);</span>
+<span class="nc" id="L1714">            int stepsPrint = Math.min(10, steps.size());</span>
+<span class="nc bnc" id="L1715" title="All 2 branches missed.">            for (int i = 0; i &lt; stepsPrint; i++) {</span>
+<span class="nc" id="L1716">                Instruction step = steps.get(i);</span>
+<span class="nc" id="L1717">                sb.append('.').append(step);</span>
+            }
+<span class="nc bnc" id="L1719" title="All 2 branches missed.">            if (stepsPrint &lt; steps.size()) {</span>
+<span class="nc" id="L1720">                sb.append(&quot;..&quot;);</span>
+            }
+<span class="nc" id="L1722">            return sb.toString();</span>
+        }
+    }
+
+    private final class TraversalStrategyProxy&lt;T extends TraversalStrategy&lt;?&gt;&gt;
+                  implements TraversalStrategy&lt;T&gt; {
+
+        private static final long serialVersionUID = 2071829024642435735L;
+
+        private final TraversalStrategy&lt;T&gt; origin;
+
+<span class="nc" id="L1733">        public TraversalStrategyProxy(TraversalStrategy&lt;?&gt; origin) {</span>
+            @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+<span class="nc" id="L1735">            TraversalStrategy&lt;T&gt; strategy = (TraversalStrategy) origin;</span>
+<span class="nc" id="L1736">            this.origin = strategy;</span>
+<span class="nc" id="L1737">        }</span>
+
+        @Override
+        public void apply(Traversal.Admin&lt;?, ?&gt; traversal) {
+            String script;
+<span class="nc bnc" id="L1742" title="All 2 branches missed.">            if (traversal instanceof HugeScriptTraversal) {</span>
+<span class="nc" id="L1743">                script = ((HugeScriptTraversal&lt;?, ?&gt;) traversal).script();</span>
+            } else {
+<span class="nc" id="L1745">                GroovyTranslator translator = GroovyTranslator.of(&quot;g&quot;);</span>
+<span class="nc" id="L1746">                Script script1 = translator.translate(traversal.getBytecode());</span>
+<span class="nc bnc" id="L1747" title="All 2 branches missed.">                if (script1 != null) {</span>
+<span class="nc" id="L1748">                    script = script1.getScript();</span>
+                } else {
+<span class="nc" id="L1750">                    script = &quot;&quot;;</span>
+                }
+            }
+
+            /*
+             * Verify gremlin-execute permission for user gremlin(in gremlin-
+             * server-exec worker) and gremlin job(in task worker).
+             * But don't check permission in rest worker, because the following
+             * places need to call traversal():
+             *  1.vertices/edges rest api
+             *  2.oltp rest api (like crosspointpath/neighborrank)
+             *  3.olap rest api (like centrality/lpa/louvain/subgraph)
+             */
+<span class="nc" id="L1763">            String caller = Thread.currentThread().getName();</span>
+<span class="nc bnc" id="L1764" title="All 2 branches missed.">            if (!caller.contains(TraversalStrategiesProxy.REST_WORKER)) {</span>
+<span class="nc" id="L1765">                verifyNamePermission(HugePermission.EXECUTE,</span>
+                                     ResourceType.GREMLIN, script);
+            }
+
+<span class="nc" id="L1769">            this.origin.apply(traversal);</span>
+<span class="nc" id="L1770">        }</span>
+
+        @Override
+        public Set&lt;Class&lt;? extends T&gt;&gt; applyPrior() {
+<span class="nc" id="L1774">            return this.origin.applyPrior();</span>
+        }
+
+        @Override
+        public Set&lt;Class&lt;? extends T&gt;&gt; applyPost() {
+<span class="nc" id="L1779">            return this.origin.applyPost();</span>
+        }
+
+        @Override
+        public Class&lt;T&gt; getTraversalCategory() {
+<span class="nc" id="L1784">            return this.origin.getTraversalCategory();</span>
+        }
+
+        @Override
+        public Configuration getConfiguration() {
+<span class="nc" id="L1789">            return this.origin.getConfiguration();</span>
+        }
+
+        @Override
+        public int compareTo(Class&lt;? extends TraversalStrategy&gt; other) {
+<span class="nc" id="L1794">            return this.origin.compareTo(other);</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L1799">            return this.origin.hashCode();</span>
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+<span class="nc" id="L1804">            return this.origin.equals(obj);</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L1809">            return this.origin.toString();</span>
+        }
+    }
+
+<span class="nc" id="L1813">    private static final ThreadLocal&lt;Context&gt; CONTEXTS = new InheritableThreadLocal&lt;&gt;();</span>
+
+    protected static Context setContext(Context context) {
+<span class="nc" id="L1816">        Context old = CONTEXTS.get();</span>
+<span class="nc" id="L1817">        CONTEXTS.set(context);</span>
+<span class="nc" id="L1818">        return old;</span>
+    }
+
+    protected static void resetContext() {
+<span class="nc" id="L1822">        CONTEXTS.remove();</span>
+<span class="nc" id="L1823">    }</span>
+
+    protected static Context getContext() {
+        // Return task context first
+<span class="nc" id="L1827">        String taskContext = TaskManager.getContext();</span>
+<span class="nc" id="L1828">        User user = User.fromJson(taskContext);</span>
+<span class="nc bnc" id="L1829" title="All 2 branches missed.">        if (user != null) {</span>
+<span class="nc" id="L1830">            return new Context(user);</span>
+        }
+
+<span class="nc" id="L1833">        return CONTEXTS.get();</span>
+    }
+
+    protected static String getContextString() {
+<span class="nc" id="L1837">        Context context = getContext();</span>
+<span class="nc bnc" id="L1838" title="All 2 branches missed.">        if (context == null) {</span>
+<span class="nc" id="L1839">            return null;</span>
+        }
+<span class="nc" id="L1841">        return context.user().toJson();</span>
+    }
+
+    protected static void logUser(User user, String path) {
+<span class="nc" id="L1845">        LOG.info(&quot;User '{}' login from client [{}] with path '{}'&quot;,</span>
+<span class="nc" id="L1846">                 user.username(), user.client(), path);</span>
+<span class="nc" id="L1847">    }</span>
+
+    static class Context {
+
+<span class="nc" id="L1851">        private static final Context ADMIN = new Context(User.ADMIN);</span>
+
+        private final User user;
+
+<span class="nc" id="L1855">        public Context(User user) {</span>
+<span class="nc" id="L1856">            E.checkNotNull(user, &quot;user&quot;);</span>
+<span class="nc" id="L1857">            this.user = user;</span>
+<span class="nc" id="L1858">        }</span>
+
+        public User user() {
+<span class="nc" id="L1861">            return this.user;</span>
+        }
+
+        public static Context admin() {
+<span class="nc" id="L1865">            return ADMIN;</span>
+        }
+    }
+
+    static class ContextTask implements Runnable {
+
+        private final Runnable runner;
+        private final Context context;
+
+<span class="nc" id="L1874">        public ContextTask(Runnable runner) {</span>
+<span class="nc" id="L1875">            this.context = getContext();</span>
+<span class="nc" id="L1876">            this.runner = runner;</span>
+<span class="nc" id="L1877">        }</span>
+
+        @Override
+        public void run() {
+<span class="nc" id="L1881">            setContext(this.context);</span>
+            try {
+<span class="nc" id="L1883">                this.runner.run();</span>
+            } finally {
+<span class="nc" id="L1885">                resetContext();</span>
+            }
+<span class="nc" id="L1887">        }</span>
+    }
+
+    public static class ContextThreadPoolExecutor extends ThreadPoolExecutor {
+
+        public ContextThreadPoolExecutor(int corePoolSize, int maxPoolSize,
+                                         ThreadFactory threadFactory) {
+<span class="nc" id="L1894">            super(corePoolSize, maxPoolSize, 0L, TimeUnit.MILLISECONDS,</span>
+                  new LinkedBlockingQueue&lt;&gt;(), threadFactory);
+<span class="nc" id="L1896">        }</span>
+
+        @Override
+        public void execute(Runnable command) {
+<span class="nc" id="L1900">            super.execute(new ContextTask(command));</span>
+<span class="nc" id="L1901">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HanLPAnalyzer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.analyzer</a> &gt; <span class="el_source">HanLPAnalyzer.java</span></div><h1>HanLPAnalyzer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.analyzer;
+
+import java.util.List;
+import java.util.Set;
+
+import org.apache.hugegraph.config.ConfigException;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import com.google.common.collect.ImmutableList;
+import com.hankcs.hanlp.seg.Dijkstra.DijkstraSegment;
+import com.hankcs.hanlp.seg.NShort.NShortSegment;
+import com.hankcs.hanlp.seg.Segment;
+import com.hankcs.hanlp.seg.common.Term;
+import com.hankcs.hanlp.tokenizer.IndexTokenizer;
+import com.hankcs.hanlp.tokenizer.NLPTokenizer;
+import com.hankcs.hanlp.tokenizer.SpeedTokenizer;
+import com.hankcs.hanlp.tokenizer.StandardTokenizer;
+
+/**
+ * Reference from https://github.com/hankcs/HanLP/wiki
+ */
+public class HanLPAnalyzer implements Analyzer {
+
+    public static final List&lt;String&gt; SUPPORT_MODES =
+<span class="nc" id="L41">           ImmutableList.&lt;String&gt;builder()</span>
+<span class="nc" id="L42">                        .add(&quot;standard&quot;)</span>
+<span class="nc" id="L43">                        .add(&quot;nlp&quot;)</span>
+<span class="nc" id="L44">                        .add(&quot;index&quot;)</span>
+<span class="nc" id="L45">                        .add(&quot;nShort&quot;)</span>
+<span class="nc" id="L46">                        .add(&quot;shortest&quot;)</span>
+<span class="nc" id="L47">                        .add(&quot;speed&quot;)</span>
+<span class="nc" id="L48">                        .build();</span>
+
+<span class="nc" id="L50">    private static final Segment N_SHORT_SEGMENT =</span>
+<span class="nc" id="L51">            new NShortSegment().enableCustomDictionary(false)</span>
+<span class="nc" id="L52">                               .enablePlaceRecognize(true)</span>
+<span class="nc" id="L53">                               .enableOrganizationRecognize(true);</span>
+<span class="nc" id="L54">    private static final Segment DIJKSTRA_SEGMENT =</span>
+<span class="nc" id="L55">            new DijkstraSegment().enableCustomDictionary(false)</span>
+<span class="nc" id="L56">                                 .enablePlaceRecognize(true)</span>
+<span class="nc" id="L57">                                 .enableOrganizationRecognize(true);</span>
+
+    private final String tokenizer;
+
+<span class="nc" id="L61">    public HanLPAnalyzer(String mode) {</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        if (!SUPPORT_MODES.contains(mode)) {</span>
+<span class="nc" id="L63">            throw new ConfigException(</span>
+                      &quot;Unsupported segment mode '%s' for hanlp analyzer, &quot; +
+                      &quot;the available values are %s&quot;, mode, SUPPORT_MODES);
+        }
+<span class="nc" id="L67">        this.tokenizer = mode;</span>
+<span class="nc" id="L68">    }</span>
+
+    @Override
+    public Set&lt;String&gt; segment(String text) {
+        List&lt;Term&gt; terms;
+<span class="nc bnc" id="L73" title="All 7 branches missed.">        switch (this.tokenizer) {</span>
+            case &quot;standard&quot;:
+<span class="nc" id="L75">                terms = StandardTokenizer.segment(text);</span>
+<span class="nc" id="L76">                break;</span>
+            case &quot;nlp&quot;:
+<span class="nc" id="L78">                terms = NLPTokenizer.segment(text);</span>
+<span class="nc" id="L79">                break;</span>
+            case &quot;index&quot;:
+<span class="nc" id="L81">                terms = IndexTokenizer.segment(text);</span>
+<span class="nc" id="L82">                break;</span>
+            case &quot;nShort&quot;:
+<span class="nc" id="L84">                terms = N_SHORT_SEGMENT.seg(text);</span>
+<span class="nc" id="L85">                break;</span>
+            case &quot;shortest&quot;:
+<span class="nc" id="L87">                terms = DIJKSTRA_SEGMENT.seg(text);</span>
+<span class="nc" id="L88">                break;</span>
+            case &quot;speed&quot;:
+<span class="nc" id="L90">                terms = SpeedTokenizer.segment(text);</span>
+<span class="nc" id="L91">                break;</span>
+            default:
+<span class="nc" id="L93">                throw new AssertionError(String.format(</span>
+                          &quot;Unsupported segment mode '%s'&quot;, this.tokenizer));
+        }
+
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        assert terms != null;</span>
+<span class="nc" id="L98">        Set&lt;String&gt; result = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        for (Term term : terms) {</span>
+<span class="nc" id="L100">            result.add(term.word);</span>
+<span class="nc" id="L101">        }</span>
+<span class="nc" id="L102">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

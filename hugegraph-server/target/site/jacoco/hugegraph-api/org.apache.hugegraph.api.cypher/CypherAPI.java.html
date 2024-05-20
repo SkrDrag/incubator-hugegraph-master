@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CypherAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.cypher</a> &gt; <span class="el_source">CypherAPI.java</span></div><h1>CypherAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.cypher;
+
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.CompressInterceptor;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotAuthorizedException;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.HttpHeaders;
+
+@Path(&quot;graphs/{graph}/cypher&quot;)
+@Singleton
+@Tag(name = &quot;CypherAPI&quot;)
+<span class="nc" id="L53">public class CypherAPI extends API {</span>
+
+<span class="nc" id="L55">    private static final Logger LOG = Log.logger(CypherAPI.class);</span>
+<span class="nc" id="L56">    private static final Charset UTF8 = StandardCharsets.UTF_8;</span>
+    private static final String CLIENT_CONF = &quot;conf/remote-objects.yaml&quot;;
+<span class="nc" id="L58">    private final Base64.Decoder decoder = Base64.getUrlDecoder();</span>
+<span class="nc" id="L59">    private final String basic = &quot;Basic &quot;;</span>
+<span class="nc" id="L60">    private final String bearer = &quot;Bearer &quot;;</span>
+
+    private CypherManager cypherManager;
+
+    private CypherManager cypherManager() {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        if (this.cypherManager == null) {</span>
+<span class="nc" id="L66">            this.cypherManager = CypherManager.configOf(CLIENT_CONF);</span>
+        }
+<span class="nc" id="L68">        return this.cypherManager;</span>
+    }
+
+    @GET
+    @Timed
+    @CompressInterceptor.Compress(buffer = (1024 * 40))
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public CypherModel query(@PathParam(&quot;graph&quot;) String graph, @Context HttpHeaders headers,
+                             @QueryParam(&quot;cypher&quot;) String cypher) {
+<span class="nc" id="L77">        LOG.debug(&quot;Graph [{}] query by cypher: {}&quot;, graph, cypher);</span>
+<span class="nc" id="L78">        return this.queryByCypher(graph, headers, cypher);</span>
+    }
+
+    @POST
+    @Timed
+    @CompressInterceptor.Compress
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public CypherModel post(@PathParam(&quot;graph&quot;) String graph,
+                            @Context HttpHeaders headers, String cypher) {
+<span class="nc" id="L88">        LOG.debug(&quot;Graph [{}] query by cypher: {}&quot;, graph, cypher);</span>
+<span class="nc" id="L89">        return this.queryByCypher(graph, headers, cypher);</span>
+    }
+
+    private CypherModel queryByCypher(String graph, HttpHeaders headers, String cypher) {
+<span class="nc bnc" id="L93" title="All 4 branches missed.">        E.checkArgument(graph != null &amp;&amp; !graph.isEmpty(),</span>
+                        &quot;The graph parameter can't be null or empty&quot;);
+<span class="nc bnc" id="L95" title="All 4 branches missed.">        E.checkArgument(cypher != null &amp;&amp; !cypher.isEmpty(),</span>
+                        &quot;The cypher parameter can't be null or empty&quot;);
+
+<span class="nc" id="L98">        Map&lt;String, String&gt; aliases = new HashMap&lt;&gt;(1, 1);</span>
+<span class="nc" id="L99">        aliases.put(&quot;g&quot;, &quot;__g_&quot; + graph);</span>
+
+<span class="nc" id="L101">        return this.client(headers).submitQuery(cypher, aliases);</span>
+    }
+
+    private CypherClient client(HttpHeaders headers) {
+<span class="nc" id="L105">        String auth = headers.getHeaderString(HttpHeaders.AUTHORIZATION);</span>
+
+<span class="nc bnc" id="L107" title="All 4 branches missed.">        if (auth != null &amp;&amp; !auth.isEmpty()) {</span>
+<span class="nc" id="L108">            auth = auth.split(&quot;,&quot;)[0];</span>
+        }
+
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (auth != null) {</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">            if (auth.startsWith(basic)) {</span>
+<span class="nc" id="L113">                return this.clientViaBasic(auth);</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            } else if (auth.startsWith(bearer)) {</span>
+<span class="nc" id="L115">                return this.clientViaToken(auth);</span>
+            }
+        }
+
+<span class="nc" id="L119">        throw new NotAuthorizedException(&quot;The Cypher-API called without any authorization.&quot;);</span>
+    }
+
+    private CypherClient clientViaBasic(String auth) {
+<span class="nc" id="L123">        Pair&lt;String, String&gt; userPass = this.toUserPass(auth);</span>
+<span class="nc" id="L124">        E.checkNotNull(userPass, &quot;user-password-pair&quot;);</span>
+
+<span class="nc" id="L126">        return this.cypherManager().getClient(userPass.getLeft(), userPass.getRight());</span>
+    }
+
+    private CypherClient clientViaToken(String auth) {
+<span class="nc" id="L130">        return this.cypherManager().getClient(auth.substring(bearer.length()));</span>
+    }
+
+    private Pair&lt;String, String&gt; toUserPass(String auth) {
+<span class="nc bnc" id="L134" title="All 4 branches missed.">        if (auth == null || auth.isEmpty()) {</span>
+<span class="nc" id="L135">            return null;</span>
+        }
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        if (!auth.startsWith(basic)) {</span>
+<span class="nc" id="L138">            return null;</span>
+        }
+
+        String[] split;
+        try {
+<span class="nc" id="L143">            String encoded = auth.substring(basic.length());</span>
+<span class="nc" id="L144">            byte[] userPass = this.decoder.decode(encoded);</span>
+<span class="nc" id="L145">            String authorization = new String(userPass, UTF8);</span>
+<span class="nc" id="L146">            split = authorization.split(&quot;:&quot;);</span>
+<span class="nc" id="L147">        } catch (Exception e) {</span>
+<span class="nc" id="L148">            LOG.error(&quot;Failed convert auth to credential.&quot;, e);</span>
+<span class="nc" id="L149">            return null;</span>
+<span class="nc" id="L150">        }</span>
+
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (split.length != 2) {</span>
+<span class="nc" id="L153">            return null;</span>
+        }
+<span class="nc" id="L155">        return ImmutablePair.of(split[0], split[1]);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

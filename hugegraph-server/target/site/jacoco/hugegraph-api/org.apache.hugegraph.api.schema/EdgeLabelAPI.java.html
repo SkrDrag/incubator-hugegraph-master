@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EdgeLabelAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.schema</a> &gt; <span class="el_source">EdgeLabelAPI.java</span></div><h1>EdgeLabelAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.schema;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.RedirectFilter;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.Userdata;
+import org.apache.hugegraph.type.define.Frequency;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.ImmutableMap;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/schema/edgelabels&quot;)
+@Singleton
+@Tag(name = &quot;EdgeLabelAPI&quot;)
+<span class="nc" id="L63">public class EdgeLabelAPI extends API {</span>
+
+<span class="nc" id="L65">    private static final Logger LOG = Log.logger(EdgeLabelAPI.class);</span>
+
+    @POST
+    @Timed
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_label_write&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonEdgeLabel jsonEdgeLabel) {
+<span class="nc" id="L77">        LOG.debug(&quot;Graph [{}] create edge label: {}&quot;, graph, jsonEdgeLabel);</span>
+<span class="nc" id="L78">        checkCreatingBody(jsonEdgeLabel);</span>
+
+<span class="nc" id="L80">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L81">        EdgeLabel.Builder builder = jsonEdgeLabel.convert2Builder(g);</span>
+<span class="nc" id="L82">        EdgeLabel edgeLabel = builder.create();</span>
+<span class="nc" id="L83">        return manager.serializer(g).writeEdgeLabel(edgeLabel);</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_label_write&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;name&quot;) String name,
+                         @QueryParam(&quot;action&quot;) String action,
+                         JsonEdgeLabel jsonEdgeLabel) {
+<span class="nc" id="L98">        LOG.debug(&quot;Graph [{}] {} edge label: {}&quot;,</span>
+                  graph, action, jsonEdgeLabel);
+
+<span class="nc" id="L101">        checkUpdatingBody(jsonEdgeLabel);</span>
+<span class="nc" id="L102">        E.checkArgument(name.equals(jsonEdgeLabel.name),</span>
+                        &quot;The name in url(%s) and body(%s) are different&quot;,
+                        name, jsonEdgeLabel.name);
+        // Parse action param
+<span class="nc" id="L106">        boolean append = checkAndParseAction(action);</span>
+
+<span class="nc" id="L108">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L109">        EdgeLabel.Builder builder = jsonEdgeLabel.convert2Builder(g);</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        EdgeLabel edgeLabel = append ? builder.append() : builder.eliminate();</span>
+<span class="nc" id="L111">        return manager.serializer(g).writeEdgeLabel(edgeLabel);</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_label_read&quot;})
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;names&quot;) List&lt;String&gt; names) {
+<span class="nc" id="L121">        boolean listAll = CollectionUtils.isEmpty(names);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (listAll) {</span>
+<span class="nc" id="L123">            LOG.debug(&quot;Graph [{}] list edge labels&quot;, graph);</span>
+        } else {
+<span class="nc" id="L125">            LOG.debug(&quot;Graph [{}] get edge labels by names {}&quot;, graph, names);</span>
+        }
+
+<span class="nc" id="L128">        HugeGraph g = graph(manager, graph);</span>
+        List&lt;EdgeLabel&gt; labels;
+<span class="nc bnc" id="L130" title="All 2 branches missed.">        if (listAll) {</span>
+<span class="nc" id="L131">            labels = g.schema().getEdgeLabels();</span>
+        } else {
+<span class="nc" id="L133">            labels = new ArrayList&lt;&gt;(names.size());</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">            for (String name : names) {</span>
+<span class="nc" id="L135">                labels.add(g.schema().getEdgeLabel(name));</span>
+<span class="nc" id="L136">            }</span>
+        }
+<span class="nc" id="L138">        return manager.serializer(g).writeEdgeLabels(labels);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_label_read&quot;})
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L149">        LOG.debug(&quot;Graph [{}] get edge label by name '{}'&quot;, graph, name);</span>
+
+<span class="nc" id="L151">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L152">        EdgeLabel edgeLabel = g.schema().getEdgeLabel(name);</span>
+<span class="nc" id="L153">        return manager.serializer(g).writeEdgeLabel(edgeLabel);</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Status(Status.ACCEPTED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_label_delete&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public Map&lt;String, Id&gt; delete(@Context GraphManager manager,
+                                  @PathParam(&quot;graph&quot;) String graph,
+                                  @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L167">        LOG.debug(&quot;Graph [{}] remove edge label by name '{}'&quot;, graph, name);</span>
+
+<span class="nc" id="L169">        HugeGraph g = graph(manager, graph);</span>
+        // Throw 404 if not exists
+<span class="nc" id="L171">        g.schema().getEdgeLabel(name);</span>
+<span class="nc" id="L172">        return ImmutableMap.of(&quot;task_id&quot;,</span>
+<span class="nc" id="L173">                               g.schema().edgeLabel(name).remove());</span>
+    }
+
+    /**
+     * JsonEdgeLabel is only used to receive create and append requests
+     */
+    @JsonIgnoreProperties(value = {&quot;index_labels&quot;, &quot;status&quot;})
+    private static class JsonEdgeLabel implements Checkable {
+
+        @JsonProperty(&quot;id&quot;)
+        public long id;
+        @JsonProperty(&quot;name&quot;)
+        public String name;
+        @JsonProperty(&quot;source_label&quot;)
+        public String sourceLabel;
+        @JsonProperty(&quot;target_label&quot;)
+        public String targetLabel;
+        @JsonProperty(&quot;frequency&quot;)
+        public Frequency frequency;
+        @JsonProperty(&quot;properties&quot;)
+        public String[] properties;
+        @JsonProperty(&quot;sort_keys&quot;)
+        public String[] sortKeys;
+        @JsonProperty(&quot;nullable_keys&quot;)
+        public String[] nullableKeys;
+        @JsonProperty(&quot;ttl&quot;)
+        public long ttl;
+        @JsonProperty(&quot;ttl_start_time&quot;)
+        public String ttlStartTime;
+        @JsonProperty(&quot;enable_label_index&quot;)
+        public Boolean enableLabelIndex;
+        @JsonProperty(&quot;user_data&quot;)
+        public Userdata userdata;
+        @JsonProperty(&quot;check_exist&quot;)
+        public Boolean checkExist;
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L211">            E.checkArgumentNotNull(this.name, &quot;The name of edge label can't be null&quot;);</span>
+<span class="nc" id="L212">        }</span>
+
+        private EdgeLabel.Builder convert2Builder(HugeGraph g) {
+<span class="nc" id="L215">            EdgeLabel.Builder builder = g.schema().edgeLabel(this.name);</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            if (this.id != 0) {</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">                E.checkArgument(this.id &gt; 0,</span>
+                                &quot;Only positive number can be assign as &quot; +
+                                &quot;edge label id&quot;);
+<span class="nc bnc" id="L220" title="All 2 branches missed.">                E.checkArgument(g.mode() == GraphMode.RESTORING,</span>
+                                &quot;Only accept edge label id when graph in &quot; +
+                                &quot;RESTORING mode, but '%s' is in mode '%s'&quot;,
+<span class="nc" id="L223">                                g, g.mode());</span>
+<span class="nc" id="L224">                builder.id(this.id);</span>
+            }
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            if (this.sourceLabel != null) {</span>
+<span class="nc" id="L227">                builder.sourceLabel(this.sourceLabel);</span>
+            }
+<span class="nc bnc" id="L229" title="All 2 branches missed.">            if (this.targetLabel != null) {</span>
+<span class="nc" id="L230">                builder.targetLabel(this.targetLabel);</span>
+            }
+<span class="nc bnc" id="L232" title="All 2 branches missed.">            if (this.frequency != null) {</span>
+<span class="nc" id="L233">                builder.frequency(this.frequency);</span>
+            }
+<span class="nc bnc" id="L235" title="All 2 branches missed.">            if (this.properties != null) {</span>
+<span class="nc" id="L236">                builder.properties(this.properties);</span>
+            }
+<span class="nc bnc" id="L238" title="All 2 branches missed.">            if (this.sortKeys != null) {</span>
+<span class="nc" id="L239">                builder.sortKeys(this.sortKeys);</span>
+            }
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            if (this.nullableKeys != null) {</span>
+<span class="nc" id="L242">                builder.nullableKeys(this.nullableKeys);</span>
+            }
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            if (this.enableLabelIndex != null) {</span>
+<span class="nc" id="L245">                builder.enableLabelIndex(this.enableLabelIndex);</span>
+            }
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            if (this.userdata != null) {</span>
+<span class="nc" id="L248">                builder.userdata(this.userdata);</span>
+            }
+<span class="nc bnc" id="L250" title="All 2 branches missed.">            if (this.checkExist != null) {</span>
+<span class="nc" id="L251">                builder.checkExist(this.checkExist);</span>
+            }
+<span class="nc bnc" id="L253" title="All 2 branches missed.">            if (this.ttl != 0) {</span>
+<span class="nc" id="L254">                builder.ttl(this.ttl);</span>
+            }
+<span class="nc bnc" id="L256" title="All 2 branches missed.">            if (this.ttlStartTime != null) {</span>
+<span class="nc bnc" id="L257" title="All 2 branches missed.">                E.checkArgument(this.ttl &gt; 0,</span>
+                                &quot;Only set ttlStartTime when ttl is &quot; +
+<span class="nc" id="L259">                                &quot;positive,  but got ttl: %s&quot;, this.ttl);</span>
+<span class="nc" id="L260">                builder.ttlStartTime(this.ttlStartTime);</span>
+            }
+<span class="nc" id="L262">            return builder;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L267">            return String.format(&quot;JsonEdgeLabel{&quot; +</span>
+                                 &quot;name=%s, sourceLabel=%s, targetLabel=%s, frequency=%s, &quot; +
+                                 &quot;sortKeys=%s, nullableKeys=%s, properties=%s, ttl=%s, &quot; +
+                                 &quot;ttlStartTime=%s}&quot;,
+                                 this.name, this.sourceLabel, this.targetLabel,
+<span class="nc" id="L272">                                 this.frequency, Arrays.toString(this.sortKeys),</span>
+<span class="nc" id="L273">                                 Arrays.toString(this.nullableKeys),</span>
+<span class="nc" id="L274">                                 Arrays.toString(this.properties), this.ttl, this.ttlStartTime);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ServerReporter.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.metrics</a> &gt; <span class="el_source">ServerReporter.java</span></div><h1>ServerReporter.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.metrics;
+
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
+
+import java.util.Collections;
+import java.util.Map;
+import java.util.SortedMap;
+import java.util.concurrent.TimeUnit;
+
+import org.apache.hugegraph.util.E;
+import com.codahale.metrics.Counter;
+import com.codahale.metrics.Gauge;
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.MetricFilter;
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.ScheduledReporter;
+import com.codahale.metrics.Timer;
+import com.google.common.collect.ImmutableSortedMap;
+
+public class ServerReporter extends ScheduledReporter {
+
+<span class="nc" id="L41">    private static volatile ServerReporter instance = null;</span>
+
+    private SortedMap&lt;String, Gauge&lt;?&gt;&gt; gauges;
+    private SortedMap&lt;String, Counter&gt; counters;
+    private SortedMap&lt;String, Histogram&gt; histograms;
+    private SortedMap&lt;String, Meter&gt; meters;
+    private SortedMap&lt;String, Timer&gt; timers;
+
+    public static synchronized ServerReporter instance(
+                                              MetricRegistry registry) {
+<span class="nc bnc" id="L51" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L52">            synchronized (ServerReporter.class) {</span>
+<span class="nc bnc" id="L53" title="All 2 branches missed.">                if (instance == null) {</span>
+<span class="nc" id="L54">                    instance = new ServerReporter(registry);</span>
+                }
+<span class="nc" id="L56">            }</span>
+        }
+<span class="nc" id="L58">        return instance;</span>
+    }
+
+    public static ServerReporter instance() {
+<span class="nc" id="L62">        E.checkNotNull(instance, &quot;Must instantiate ServerReporter before get&quot;);</span>
+<span class="nc" id="L63">        return instance;</span>
+    }
+
+    private ServerReporter(MetricRegistry registry) {
+<span class="nc" id="L67">        this(registry, SECONDS, MILLISECONDS, MetricFilter.ALL);</span>
+<span class="nc" id="L68">    }</span>
+
+    private ServerReporter(MetricRegistry registry, TimeUnit rateUnit,
+                           TimeUnit durationUnit, MetricFilter filter) {
+<span class="nc" id="L72">        super(registry, &quot;server-reporter&quot;, filter, rateUnit, durationUnit);</span>
+<span class="nc" id="L73">        this.gauges = ImmutableSortedMap.of();</span>
+<span class="nc" id="L74">        this.counters = ImmutableSortedMap.of();</span>
+<span class="nc" id="L75">        this.histograms = ImmutableSortedMap.of();</span>
+<span class="nc" id="L76">        this.meters = ImmutableSortedMap.of();</span>
+<span class="nc" id="L77">        this.timers = ImmutableSortedMap.of();</span>
+<span class="nc" id="L78">    }</span>
+
+    public Map&lt;String, Timer&gt; timers() {
+<span class="nc" id="L81">        return Collections.unmodifiableMap(this.timers);</span>
+    }
+
+    public Map&lt;String, Gauge&lt;?&gt;&gt; gauges() {
+<span class="nc" id="L85">        return Collections.unmodifiableMap(this.gauges);</span>
+    }
+
+    public Map&lt;String, Counter&gt; counters() {
+<span class="nc" id="L89">        return Collections.unmodifiableMap(this.counters);</span>
+    }
+
+    public Map&lt;String, Histogram&gt; histograms() {
+<span class="nc" id="L93">        return Collections.unmodifiableMap(this.histograms);</span>
+    }
+
+    public Map&lt;String, Meter&gt; meters() {
+<span class="nc" id="L97">        return Collections.unmodifiableMap(this.meters);</span>
+    }
+
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+    @Override
+    public void report(SortedMap&lt;String, Gauge&gt; gauges,
+                       SortedMap&lt;String, Counter&gt; counters,
+                       SortedMap&lt;String, Histogram&gt; histograms,
+                       SortedMap&lt;String, Meter&gt; meters,
+                       SortedMap&lt;String, Timer&gt; timers) {
+<span class="nc" id="L107">        this.gauges = (SortedMap) gauges;</span>
+<span class="nc" id="L108">        this.counters = counters;</span>
+<span class="nc" id="L109">        this.histograms = histograms;</span>
+<span class="nc" id="L110">        this.meters = meters;</span>
+<span class="nc" id="L111">        this.timers = timers;</span>
+<span class="nc" id="L112">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MysqlSerializer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-mysql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.mysql</a> &gt; <span class="el_source">MysqlSerializer.java</span></div><h1>MysqlSerializer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.mysql;
+
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.commons.lang.NotImplementedException;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.serializer.TableBackendEntry;
+import org.apache.hugegraph.backend.serializer.TableSerializer;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.JsonUtil;
+
+<span class="nc" id="L43">public class MysqlSerializer extends TableSerializer {</span>
+
+    public MysqlSerializer(HugeConfig config) {
+<span class="nc" id="L46">        super(config);</span>
+<span class="nc" id="L47">    }</span>
+
+    @Override
+    public MysqlBackendEntry newBackendEntry(HugeType type, Id id) {
+<span class="nc" id="L51">        return new MysqlBackendEntry(type, id);</span>
+    }
+
+    @Override
+    protected TableBackendEntry newBackendEntry(TableBackendEntry.Row row) {
+<span class="nc" id="L56">        return new MysqlBackendEntry(row);</span>
+    }
+
+    @Override
+    protected MysqlBackendEntry convertEntry(BackendEntry backendEntry) {
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        if (!(backendEntry instanceof MysqlBackendEntry)) {</span>
+<span class="nc" id="L62">            throw new BackendException(&quot;Not supported by MysqlSerializer&quot;);</span>
+        }
+<span class="nc" id="L64">        return (MysqlBackendEntry) backendEntry;</span>
+    }
+
+    @Override
+    protected Set&lt;Object&gt; parseIndexElemIds(TableBackendEntry entry) {
+<span class="nc" id="L69">        Set&lt;Object&gt; elemIds = InsertionOrderUtil.newSet();</span>
+<span class="nc" id="L70">        elemIds.add(entry.column(HugeKeys.ELEMENT_IDS));</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">        for (TableBackendEntry.Row row : entry.subRows()) {</span>
+<span class="nc" id="L72">            elemIds.add(row.column(HugeKeys.ELEMENT_IDS));</span>
+<span class="nc" id="L73">        }</span>
+<span class="nc" id="L74">        return elemIds;</span>
+    }
+
+    @Override
+    protected Id toId(Number number) {
+<span class="nc" id="L79">        return IdGenerator.of(number.longValue());</span>
+    }
+
+    @Override
+    protected Id[] toIdArray(Object object) {
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        assert object instanceof String;</span>
+<span class="nc" id="L85">        String value = (String) object;</span>
+<span class="nc" id="L86">        Number[] values = JsonUtil.fromJson(value, Number[].class);</span>
+<span class="nc" id="L87">        Id[] ids = new Id[values.length];</span>
+<span class="nc" id="L88">        int i = 0;</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        for (Number number : values) {</span>
+<span class="nc" id="L90">            ids[i++] = IdGenerator.of(number.longValue());</span>
+        }
+<span class="nc" id="L92">        return ids;</span>
+    }
+
+    @Override
+    protected Object toLongSet(Collection&lt;Id&gt; ids) {
+<span class="nc" id="L97">        return this.toLongList(ids);</span>
+    }
+
+    @Override
+    protected Object toLongList(Collection&lt;Id&gt; ids) {
+<span class="nc" id="L102">        long[] values = new long[ids.size()];</span>
+<span class="nc" id="L103">        int i = 0;</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        for (Id id : ids) {</span>
+<span class="nc" id="L105">            values[i++] = id.asLong();</span>
+<span class="nc" id="L106">        }</span>
+<span class="nc" id="L107">        return JsonUtil.toJson(values);</span>
+    }
+
+    @Override
+    protected void formatProperty(HugeProperty&lt;?&gt; prop,
+                                  TableBackendEntry.Row row) {
+<span class="nc" id="L113">        throw new BackendException(&quot;Not support updating single property &quot; +</span>
+                                   &quot;by MySQL&quot;);
+    }
+
+    @Override
+    protected void formatProperties(HugeElement element,
+                                    TableBackendEntry.Row row) {
+<span class="nc" id="L120">        Map&lt;Number, Object&gt; properties = new HashMap&lt;&gt;();</span>
+        // Add all properties of a Vertex
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        for (HugeProperty&lt;?&gt; prop : element.getProperties()) {</span>
+<span class="nc" id="L123">            Number key = prop.propertyKey().id().asLong();</span>
+<span class="nc" id="L124">            Object val = prop.value();</span>
+<span class="nc" id="L125">            properties.put(key, val);</span>
+<span class="nc" id="L126">        }</span>
+<span class="nc" id="L127">        row.column(HugeKeys.PROPERTIES, JsonUtil.toJson(properties));</span>
+<span class="nc" id="L128">    }</span>
+
+    @Override
+    protected void parseProperties(HugeElement element,
+                                   TableBackendEntry.Row row) {
+<span class="nc" id="L133">        String properties = row.column(HugeKeys.PROPERTIES);</span>
+        // Query edge will wrapped by a vertex, whose properties is empty
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        if (properties.isEmpty()) {</span>
+<span class="nc" id="L136">            return;</span>
+        }
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L140">        Map&lt;String, Object&gt; props = JsonUtil.fromJson(properties, Map.class);</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; prop : props.entrySet()) {</span>
+            /*
+             * The key is string instead of int, because the key in json
+             * must be string
+             */
+<span class="nc" id="L146">            Id pkeyId = this.toId(Long.valueOf(prop.getKey()));</span>
+<span class="nc" id="L147">            String colJson = JsonUtil.toJson(prop.getValue());</span>
+<span class="nc" id="L148">            this.parseProperty(pkeyId, colJson, element);</span>
+<span class="nc" id="L149">        }</span>
+<span class="nc" id="L150">    }</span>
+
+    @Override
+    protected void writeUserdata(SchemaElement schema,
+                                 TableBackendEntry entry) {
+<span class="nc bnc" id="L155" title="All 2 branches missed.">        assert entry instanceof MysqlBackendEntry;</span>
+<span class="nc" id="L156">        entry.column(HugeKeys.USER_DATA, JsonUtil.toJson(schema.userdata()));</span>
+<span class="nc" id="L157">    }</span>
+
+    @Override
+    protected void readUserdata(SchemaElement schema,
+                                TableBackendEntry entry) {
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        assert entry instanceof MysqlBackendEntry;</span>
+        // Parse all user data of a schema element
+<span class="nc" id="L164">        String json = entry.column(HugeKeys.USER_DATA);</span>
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L166">        Map&lt;String, Object&gt; userdata = JsonUtil.fromJson(json, Map.class);</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; e : userdata.entrySet()) {</span>
+<span class="nc" id="L168">            schema.userdata(e.getKey(), e.getValue());</span>
+<span class="nc" id="L169">        }</span>
+<span class="nc" id="L170">    }</span>
+
+    @Override
+    public BackendEntry writeOlapVertex(HugeVertex vertex) {
+<span class="nc" id="L174">        throw new NotImplementedException(&quot;Unsupported writeOlapVertex()&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

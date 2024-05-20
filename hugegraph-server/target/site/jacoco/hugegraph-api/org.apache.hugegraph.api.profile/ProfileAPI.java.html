@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ProfileAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.profile</a> &gt; <span class="el_source">ProfileAPI.java</span></div><h1>ProfileAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.profile;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Application;
+import jakarta.ws.rs.core.Context;
+import jakarta.ws.rs.core.MediaType;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.tinkerpop.shaded.jackson.annotation.JsonProperty;
+import org.glassfish.jersey.model.Parameter.Source;
+import org.glassfish.jersey.server.model.Parameter;
+import org.glassfish.jersey.server.model.Resource;
+import org.glassfish.jersey.server.model.ResourceMethod;
+
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.version.CoreVersion;
+
+import com.codahale.metrics.annotation.Timed;
+
+@Path(&quot;/&quot;)
+@Singleton
+@Tag(name = &quot;ProfileAPI&quot;)
+<span class="nc" id="L55">public class ProfileAPI {</span>
+
+    private static final String SERVICE = &quot;hugegraph&quot;;
+    private static final String DOC = &quot;https://hugegraph.apache.org/docs/&quot;;
+    private static final String API_DOC = DOC + &quot;clients/&quot;;
+    private static final String SWAGGER_UI = &quot;/swagger-ui/index.html&quot;;
+
+<span class="nc" id="L62">    private static String SERVER_PROFILES = null;</span>
+<span class="nc" id="L63">    private static String API_PROFILES = null;</span>
+
+    @GET
+    @Timed
+    @Produces(MediaType.APPLICATION_JSON)
+    public String getProfile(@Context HugeConfig conf, @Context Application application) {
+        // May init multi times by multi threads, but no effect on the results
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        if (SERVER_PROFILES != null) {</span>
+<span class="nc" id="L71">            return SERVER_PROFILES;</span>
+        }
+
+<span class="nc" id="L74">        Map&lt;String, Object&gt; profiles = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L75">        profiles.put(&quot;service&quot;, SERVICE);</span>
+<span class="nc" id="L76">        profiles.put(&quot;version&quot;, CoreVersion.VERSION.toString());</span>
+<span class="nc" id="L77">        profiles.put(&quot;doc&quot;, DOC);</span>
+<span class="nc" id="L78">        profiles.put(&quot;api_doc&quot;, API_DOC);</span>
+<span class="nc" id="L79">        profiles.put(&quot;swagger_ui&quot;, conf.get(ServerOptions.REST_SERVER_URL) + SWAGGER_UI);</span>
+<span class="nc" id="L80">        Set&lt;String&gt; apis = new TreeSet&lt;&gt;();</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        for (Class&lt;?&gt; clazz : application.getClasses()) {</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">            if (!isAnnotatedPathClass(clazz)) {</span>
+<span class="nc" id="L83">                continue;</span>
+            }
+<span class="nc" id="L85">            Resource resource = Resource.from(clazz);</span>
+<span class="nc" id="L86">            APICategory apiCategory = APICategory.parse(resource.getName());</span>
+<span class="nc" id="L87">            apis.add(apiCategory.dir);</span>
+<span class="nc" id="L88">        }</span>
+<span class="nc" id="L89">        profiles.put(&quot;apis&quot;, apis);</span>
+<span class="nc" id="L90">        SERVER_PROFILES = JsonUtil.toJson(profiles);</span>
+<span class="nc" id="L91">        return SERVER_PROFILES;</span>
+    }
+
+    @GET
+    @Path(&quot;apis&quot;)
+    @Timed
+    @Produces(MediaType.APPLICATION_JSON)
+    public String showAllAPIs(@Context Application application) {
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        if (API_PROFILES != null) {</span>
+<span class="nc" id="L100">            return API_PROFILES;</span>
+        }
+
+<span class="nc" id="L103">        APIProfiles apiProfiles = new APIProfiles();</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        for (Class&lt;?&gt; clazz : application.getClasses()) {</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">            if (!isAnnotatedPathClass(clazz)) {</span>
+<span class="nc" id="L106">                continue;</span>
+            }
+
+<span class="nc" id="L109">            Resource resource = Resource.from(clazz);</span>
+<span class="nc" id="L110">            APICategory apiCategory = APICategory.parse(resource.getName());</span>
+
+<span class="nc" id="L112">            String url = resource.getPath();</span>
+            // List all methods of this resource
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            for (ResourceMethod rm : resource.getResourceMethods()) {</span>
+<span class="nc" id="L115">                APIProfile profile = APIProfile.parse(url, rm);</span>
+<span class="nc" id="L116">                apiProfiles.put(apiCategory, profile);</span>
+<span class="nc" id="L117">            }</span>
+            // List all methods of this resource's child resources
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            for (Resource childResource : resource.getChildResources()) {</span>
+<span class="nc" id="L120">                String childUrl = url + &quot;/&quot; + childResource.getPath();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">                for (ResourceMethod rm : childResource.getResourceMethods()) {</span>
+<span class="nc" id="L122">                    APIProfile profile = APIProfile.parse(childUrl, rm);</span>
+<span class="nc" id="L123">                    apiProfiles.put(apiCategory, profile);</span>
+<span class="nc" id="L124">                }</span>
+<span class="nc" id="L125">            }</span>
+<span class="nc" id="L126">        }</span>
+<span class="nc" id="L127">        API_PROFILES = JsonUtil.toJson(apiProfiles);</span>
+<span class="nc" id="L128">        return API_PROFILES;</span>
+    }
+
+    private static boolean isAnnotatedPathClass(Class&lt;?&gt; clazz) {
+<span class="nc bnc" id="L132" title="All 2 branches missed.">        if (clazz.isAnnotationPresent(Path.class)) {</span>
+<span class="nc" id="L133">            return true;</span>
+        }
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        for (Class&lt;?&gt; i : clazz.getInterfaces()) {</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">            if (i.isAnnotationPresent(Path.class)) {</span>
+<span class="nc" id="L137">                return true;</span>
+            }
+        }
+<span class="nc" id="L140">        return false;</span>
+    }
+
+    private static class APIProfiles {
+
+        @JsonProperty(&quot;apis&quot;)
+        private final Map&lt;String, Map&lt;String, List&lt;APIProfile&gt;&gt;&gt; apis;
+
+<span class="nc" id="L148">        public APIProfiles() {</span>
+<span class="nc" id="L149">            this.apis = new TreeMap&lt;&gt;();</span>
+<span class="nc" id="L150">        }</span>
+
+        public void put(APICategory category, APIProfile profile) {
+            Map&lt;String, List&lt;APIProfile&gt;&gt; categories;
+<span class="nc" id="L154">            categories = this.apis.computeIfAbsent(category.dir,</span>
+<span class="nc" id="L155">                                                   k -&gt; new TreeMap&lt;&gt;());</span>
+<span class="nc" id="L156">            List&lt;APIProfile&gt; profiles = categories.computeIfAbsent(</span>
+<span class="nc" id="L157">                                                   category.category,</span>
+<span class="nc" id="L158">                                                   k -&gt; new ArrayList&lt;&gt;());</span>
+<span class="nc" id="L159">            profiles.add(profile);</span>
+<span class="nc" id="L160">        }</span>
+    }
+
+    private static class APIProfile {
+
+        @JsonProperty(&quot;url&quot;)
+        private final String url;
+        @JsonProperty(&quot;method&quot;)
+        private final String method;
+        @JsonProperty(&quot;parameters&quot;)
+        private final List&lt;ParamInfo&gt; parameters;
+
+        public APIProfile(String url, String method,
+<span class="nc" id="L173">                          List&lt;ParamInfo&gt; parameters) {</span>
+<span class="nc" id="L174">            this.url = url;</span>
+<span class="nc" id="L175">            this.method = method;</span>
+<span class="nc" id="L176">            this.parameters = parameters;</span>
+<span class="nc" id="L177">        }</span>
+
+        public static APIProfile parse(String url, ResourceMethod resource) {
+<span class="nc" id="L180">            String method = resource.getHttpMethod();</span>
+<span class="nc" id="L181">            List&lt;ParamInfo&gt; params = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">            for (Parameter param : resource.getInvocable().getParameters()) {</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">                if (param.getSource() == Source.QUERY) {</span>
+<span class="nc" id="L184">                    String name = param.getSourceName();</span>
+<span class="nc" id="L185">                    String type = param.getType().getTypeName();</span>
+<span class="nc" id="L186">                    String defaultValue = param.getDefaultValue();</span>
+<span class="nc" id="L187">                    params.add(new ParamInfo(name, type, defaultValue));</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">                } else if (param.getSource() == Source.ENTITY) {</span>
+<span class="nc" id="L189">                    String type = param.getType().getTypeName();</span>
+<span class="nc" id="L190">                    params.add(new ParamInfo(&quot;body&quot;, type));</span>
+                }
+<span class="nc" id="L192">            }</span>
+<span class="nc" id="L193">            return new APIProfile(url, method, params);</span>
+        }
+
+        private static class ParamInfo {
+
+            @JsonProperty(&quot;name&quot;)
+            private final String name;
+            @JsonProperty(&quot;type&quot;)
+            private final String type;
+            @JsonProperty(&quot;default_value&quot;)
+            private final String defaultValue;
+
+            public ParamInfo(String name, String type) {
+<span class="nc" id="L206">                this(name, type, null);</span>
+<span class="nc" id="L207">            }</span>
+
+<span class="nc" id="L209">            public ParamInfo(String name, String type, String defaultValue) {</span>
+<span class="nc" id="L210">                this.name = name;</span>
+<span class="nc" id="L211">                this.type = type;</span>
+<span class="nc" id="L212">                this.defaultValue = defaultValue;</span>
+<span class="nc" id="L213">            }</span>
+        }
+    }
+
+    private static class APICategory {
+
+        private final String dir;
+        private final String category;
+
+<span class="nc" id="L222">        public APICategory(String dir, String category) {</span>
+<span class="nc" id="L223">            this.dir = dir;</span>
+<span class="nc" id="L224">            this.category = category;</span>
+<span class="nc" id="L225">        }</span>
+
+        public static APICategory parse(String fullName) {
+<span class="nc" id="L228">            String[] parts = StringUtils.split(fullName, &quot;.&quot;);</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">            E.checkState(parts.length &gt;= 2, &quot;Invalid api name&quot;);</span>
+<span class="nc" id="L230">            String dir = parts[parts.length - 2];</span>
+<span class="nc" id="L231">            String category = parts[parts.length - 1];</span>
+<span class="nc" id="L232">            return new APICategory(dir, category);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

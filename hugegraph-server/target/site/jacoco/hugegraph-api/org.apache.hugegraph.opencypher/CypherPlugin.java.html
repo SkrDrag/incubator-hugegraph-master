@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CypherPlugin.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.opencypher</a> &gt; <span class="el_source">CypherPlugin.java</span></div><h1>CypherPlugin.java</h1><pre class="source lang-java linenums">/*
+ * Copyright (c) 2018-2019 &quot;Neo4j, Inc.&quot; [https://neo4j.com]
+ *
+ * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Description of the modifications:
+ * &lt;p&gt;
+ * 1) Changed the package name.
+ * &lt;pre&gt;
+ * org.opencypher.gremlin.server.jsr223
+ * --&gt;
+ * org.apache.hugegraph.opencypher
+ * &lt;/pre&gt;
+ * &lt;/p&gt;
+ */
+
+package org.apache.hugegraph.opencypher;
+
+import org.apache.tinkerpop.gremlin.jsr223.Customizer;
+import org.apache.tinkerpop.gremlin.jsr223.DefaultImportCustomizer;
+import org.apache.tinkerpop.gremlin.jsr223.GremlinPlugin;
+import org.apache.tinkerpop.gremlin.jsr223.ImportCustomizer;
+import org.opencypher.gremlin.traversal.CustomFunctions;
+import org.opencypher.gremlin.traversal.CustomPredicate;
+
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+<span class="nc" id="L45">public class CypherPlugin implements GremlinPlugin {</span>
+
+<span class="nc" id="L47">    private static final ImportCustomizer IMPORTS =</span>
+<span class="nc" id="L48">        DefaultImportCustomizer.build()</span>
+<span class="nc" id="L49">                               .addClassImports(CustomPredicate.class)</span>
+<span class="nc" id="L50">                               .addMethodImports(getDeclaredPublicMethods(CustomPredicate.class))</span>
+<span class="nc" id="L51">                               .addClassImports(CustomFunctions.class)</span>
+<span class="nc" id="L52">                               .addMethodImports(getDeclaredPublicMethods(CustomFunctions.class))</span>
+<span class="nc" id="L53">                               .create();</span>
+
+    private static List&lt;Method&gt; getDeclaredPublicMethods(Class&lt;?&gt; klass) {
+<span class="nc" id="L56">        Method[] declaredMethods = klass.getDeclaredMethods();</span>
+<span class="nc" id="L57">        return Stream.of(declaredMethods)</span>
+<span class="nc" id="L58">                     .filter(method -&gt; Modifier.isPublic(method.getModifiers()))</span>
+<span class="nc" id="L59">                     .collect(Collectors.toList());</span>
+    }
+
+    @Override
+    public String getName() {
+<span class="nc" id="L64">        return &quot;cypher.extra&quot;;</span>
+    }
+
+    public static GremlinPlugin instance() {
+<span class="nc" id="L68">        return new CypherPlugin();</span>
+    }
+
+    @Override
+    public boolean requireRestart() {
+<span class="nc" id="L73">        return true;</span>
+    }
+
+    @Override
+    public Optional&lt;Customizer[]&gt; getCustomizers(String scriptEngineName) {
+<span class="nc" id="L78">        return Optional.of(new Customizer[]{IMPORTS});</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

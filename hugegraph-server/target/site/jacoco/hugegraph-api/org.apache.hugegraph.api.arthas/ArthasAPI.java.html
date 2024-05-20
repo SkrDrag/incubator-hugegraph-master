@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ArthasAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.arthas</a> &gt; <span class="el_source">ArthasAPI.java</span></div><h1>ArthasAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.arthas;
+
+import java.util.HashMap;
+
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.util.JsonUtil;
+
+import com.codahale.metrics.annotation.Timed;
+import com.taobao.arthas.agent.attach.ArthasAgent;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;arthas&quot;)
+@Singleton
+@Tag(name = &quot;ArthasAPI&quot;)
+<span class="nc" id="L42">public class ArthasAPI extends API {</span>
+
+    @Context
+    private jakarta.inject.Provider&lt;HugeConfig&gt; configProvider;
+
+    @PUT
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @Operation(summary = &quot;start arthas agent&quot;)
+    public Object startArthas() {
+<span class="nc" id="L52">        HugeConfig config = this.configProvider.get();</span>
+<span class="nc" id="L53">        HashMap&lt;String, String&gt; configMap = new HashMap&lt;&gt;(4);</span>
+<span class="nc" id="L54">        configMap.put(&quot;arthas.telnetPort&quot;, config.get(ServerOptions.ARTHAS_TELNET_PORT));</span>
+<span class="nc" id="L55">        configMap.put(&quot;arthas.httpPort&quot;, config.get(ServerOptions.ARTHAS_HTTP_PORT));</span>
+<span class="nc" id="L56">        configMap.put(&quot;arthas.ip&quot;, config.get(ServerOptions.ARTHAS_IP));</span>
+<span class="nc" id="L57">        configMap.put(&quot;arthas.disabledCommands&quot;,</span>
+<span class="nc" id="L58">                      config.get(ServerOptions.ARTHAS_DISABLED_COMMANDS));</span>
+<span class="nc" id="L59">        ArthasAgent.attach(configMap);</span>
+<span class="nc" id="L60">        return JsonUtil.toJson(configMap);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

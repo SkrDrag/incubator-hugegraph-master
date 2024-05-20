@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PostgresqlSessions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.postgresql</a> &gt; <span class="el_source">PostgresqlSessions.java</span></div><h1>PostgresqlSessions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.postgresql;
+
+import java.net.URISyntaxException;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+
+import org.apache.http.client.utils.URIBuilder;
+import org.postgresql.core.Utils;
+import org.postgresql.util.PSQLException;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.mysql.MysqlSessions;
+import org.apache.hugegraph.backend.store.mysql.MysqlUtil;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.util.Log;
+
+public class PostgresqlSessions extends MysqlSessions {
+
+<span class="nc" id="L38">    private static final Logger LOG = Log.logger(PostgresqlSessions.class);</span>
+
+    private static final String COCKROACH_DB_CREATE =
+            &quot;CREATE DATABASE %s ENCODING='UTF-8'&quot;;
+    private static final String POSTGRESQL_DB_CREATE = COCKROACH_DB_CREATE +
+            &quot; TEMPLATE=template0 LC_COLLATE='C' LC_CTYPE='C';&quot;;
+
+    public PostgresqlSessions(HugeConfig config, String database, String store) {
+<span class="nc" id="L46">        super(config, database, store);</span>
+<span class="nc" id="L47">    }</span>
+
+    @Override
+    public boolean existsDatabase() {
+<span class="nc" id="L51">        String statement = String.format(</span>
+                           &quot;SELECT datname FROM pg_catalog.pg_database &quot; +
+<span class="nc" id="L53">                           &quot;WHERE datname = '%s';&quot;, this.escapedDatabase());</span>
+<span class="nc" id="L54">        try (Connection conn = this.openWithoutDB(0)) {</span>
+<span class="nc" id="L55">            ResultSet result = conn.createStatement().executeQuery(statement);</span>
+<span class="nc" id="L56">            return result.next();</span>
+<span class="nc" id="L57">        } catch (Exception e) {</span>
+<span class="nc" id="L58">            throw new BackendException(&quot;Failed to obtain database info&quot;, e);</span>
+        }
+    }
+
+    @Override
+    public void createDatabase() {
+        // Create database with non-database-session
+<span class="nc" id="L65">        LOG.debug(&quot;Create database: {}&quot;, this.database());</span>
+
+<span class="nc" id="L67">        String sql = this.buildCreateDatabase(this.database());</span>
+<span class="nc" id="L68">        try (Connection conn = this.openWithoutDB(0)) {</span>
+            try {
+<span class="nc" id="L70">                conn.createStatement().execute(sql);</span>
+<span class="nc" id="L71">            } catch (PSQLException e) {</span>
+                // CockroachDB not support 'template' arg of CREATE DATABASE
+<span class="nc bnc" id="L73" title="All 2 branches missed.">                if (e.getMessage().contains(&quot;syntax error at or near &quot; +</span>
+                                            &quot;\&quot;template\&quot;&quot;)) {
+<span class="nc" id="L75">                    sql = String.format(COCKROACH_DB_CREATE, this.database());</span>
+<span class="nc" id="L76">                    conn.createStatement().execute(sql);</span>
+                }
+<span class="nc" id="L78">            }</span>
+<span class="nc" id="L79">        } catch (SQLException e) {</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">            if (!e.getMessage().endsWith(&quot;already exists&quot;)) {</span>
+<span class="nc" id="L81">                throw new BackendException(&quot;Failed to create database '%s'&quot;, e,</span>
+<span class="nc" id="L82">                                           this.database());</span>
+            }
+            // Ignore exception if database already exists
+<span class="nc" id="L85">        }</span>
+<span class="nc" id="L86">    }</span>
+
+    @Override
+    protected String buildCreateDatabase(String database) {
+<span class="nc" id="L90">        return String.format(POSTGRESQL_DB_CREATE, database);</span>
+    }
+
+    @Override
+    protected String buildDropDatabase(String database) {
+<span class="nc" id="L95">        return String.format(</span>
+               &quot;REVOKE CONNECT ON DATABASE %s FROM public;&quot; +
+               &quot;SELECT pg_terminate_backend(pg_stat_activity.pid) &quot; +
+               &quot;  FROM pg_stat_activity &quot; +
+               &quot;  WHERE pg_stat_activity.datname = %s;&quot; +
+               &quot;DROP DATABASE IF EXISTS %s;&quot;,
+<span class="nc" id="L101">               database, escapeAndWrapString(database), database);</span>
+    }
+
+    @Override
+    protected String buildExistsTable(String table) {
+<span class="nc" id="L106">        return String.format(</span>
+               &quot;SELECT * FROM information_schema.tables &quot; +
+               &quot;WHERE table_schema = 'public' AND table_name = '%s' LIMIT 1;&quot;,
+<span class="nc" id="L109">               MysqlUtil.escapeString(table));</span>
+    }
+
+    @Override
+    protected URIBuilder newConnectionURIBuilder(String url)
+                                                 throws URISyntaxException {
+        // Suppress error log when database does not exist
+<span class="nc" id="L116">        return new URIBuilder(url).addParameter(&quot;loggerLevel&quot;, &quot;OFF&quot;);</span>
+    }
+
+    @Override
+    protected String connectDatabase() {
+<span class="nc" id="L121">        return this.config().get(PostgresqlOptions.POSTGRESQL_CONNECT_DATABASE);</span>
+    }
+
+    public static String escapeAndWrapString(String value) {
+<span class="nc" id="L125">        StringBuilder builder = new StringBuilder(8 + value.length());</span>
+<span class="nc" id="L126">        builder.append('\'');</span>
+        try {
+<span class="nc" id="L128">            Utils.escapeLiteral(builder, value, false);</span>
+<span class="nc" id="L129">        } catch (SQLException e) {</span>
+<span class="nc" id="L130">            throw new BackendException(&quot;Failed to escape '%s'&quot;, e, value);</span>
+<span class="nc" id="L131">        }</span>
+<span class="nc" id="L132">        builder.append('\'');</span>
+<span class="nc" id="L133">        return builder.toString();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

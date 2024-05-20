@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>JaccardSimilarityAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">JaccardSimilarityAPI.java</span></div><h1>JaccardSimilarityAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_CAPACITY;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_LIMIT;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+
+import java.util.Map;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.graph.EdgeAPI;
+import org.apache.hugegraph.api.graph.VertexAPI;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.traversal.algorithm.JaccardSimilarTraverser;
+import org.apache.hugegraph.traversal.algorithm.steps.EdgeStep;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.ImmutableMap;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/traversers/jaccardsimilarity&quot;)
+@Singleton
+@Tag(name = &quot;JaccardSimilarityAPI&quot;)
+<span class="nc" id="L58">public class JaccardSimilarityAPI extends TraverserAPI {</span>
+
+<span class="nc" id="L60">    private static final Logger LOG = Log.logger(JaccardSimilarityAPI.class);</span>
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @QueryParam(&quot;vertex&quot;) String vertex,
+                      @QueryParam(&quot;other&quot;) String other,
+                      @QueryParam(&quot;direction&quot;) String direction,
+                      @QueryParam(&quot;label&quot;) String edgeLabel,
+                      @QueryParam(&quot;max_degree&quot;)
+                      @DefaultValue(DEFAULT_MAX_DEGREE) long maxDegree) {
+<span class="nc" id="L73">        LOG.debug(&quot;Graph [{}] get jaccard similarity between '{}' and '{}' &quot; +</span>
+                  &quot;with direction {}, edge label {} and max degree '{}'&quot;,
+<span class="nc" id="L75">                  graph, vertex, other, direction, edgeLabel, maxDegree);</span>
+
+<span class="nc" id="L77">        ApiMeasurer measure = new ApiMeasurer();</span>
+
+<span class="nc" id="L79">        Id sourceId = VertexAPI.checkAndParseVertexId(vertex);</span>
+<span class="nc" id="L80">        Id targetId = VertexAPI.checkAndParseVertexId(other);</span>
+<span class="nc" id="L81">        Directions dir = Directions.convert(EdgeAPI.parseDirection(direction));</span>
+
+<span class="nc" id="L83">        HugeGraph g = graph(manager, graph);</span>
+        double similarity;
+<span class="nc" id="L85">        try (JaccardSimilarTraverser traverser =</span>
+                     new JaccardSimilarTraverser(g)) {
+<span class="nc" id="L87">            similarity = traverser.jaccardSimilarity(sourceId, targetId, dir,</span>
+                                                     edgeLabel, maxDegree);
+<span class="nc" id="L89">            measure.addIterCount(traverser.vertexIterCounter.get(),</span>
+<span class="nc" id="L90">                                 traverser.edgeIterCounter.get());</span>
+        }
+
+<span class="nc" id="L93">        return manager.serializer(g, measure.measures())</span>
+<span class="nc" id="L94">                      .writeMap(ImmutableMap.of(&quot;jaccard_similarity&quot;, similarity));</span>
+    }
+
+    @POST
+    @Timed
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String post(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       Request request) {
+<span class="nc" id="L104">        E.checkArgumentNotNull(request, &quot;The request body can't be null&quot;);</span>
+<span class="nc" id="L105">        E.checkArgumentNotNull(request.vertex,</span>
+                               &quot;The source vertex of request can't be null&quot;);
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        E.checkArgument(request.step != null,</span>
+                        &quot;The steps of request can't be null&quot;);
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        E.checkArgument(request.top &gt;= 0,</span>
+<span class="nc" id="L110">                        &quot;The top must be &gt;= 0, but got: %s&quot;, request.top);</span>
+
+<span class="nc" id="L112">        LOG.debug(&quot;Graph [{}] get jaccard similars from source vertex '{}', &quot; +</span>
+                  &quot;with step '{}', top '{}' and capacity '{}'&quot;,
+                  graph, request.vertex, request.step,
+<span class="nc" id="L115">                  request.top, request.capacity);</span>
+
+<span class="nc" id="L117">        ApiMeasurer measure = new ApiMeasurer();</span>
+
+<span class="nc" id="L119">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L120">        Id sourceId = HugeVertex.getIdValue(request.vertex);</span>
+
+<span class="nc" id="L122">        EdgeStep step = step(g, request.step);</span>
+
+        Map&lt;Id, Double&gt; results;
+<span class="nc" id="L125">        try (JaccardSimilarTraverser traverser =</span>
+                     new JaccardSimilarTraverser(g)) {
+<span class="nc" id="L127">            results = traverser.jaccardSimilars(sourceId, step, request.top,</span>
+                                                request.capacity);
+<span class="nc" id="L129">            measure.addIterCount(traverser.vertexIterCounter.get(),</span>
+<span class="nc" id="L130">                                 traverser.edgeIterCounter.get());</span>
+        }
+<span class="nc" id="L132">        return manager.serializer(g, measure.measures())</span>
+<span class="nc" id="L133">                      .writeMap(ImmutableMap.of(&quot;jaccard_similarity&quot;, results));</span>
+    }
+
+<span class="nc" id="L136">    private static class Request {</span>
+
+        @JsonProperty(&quot;vertex&quot;)
+        public Object vertex;
+        @JsonProperty(&quot;step&quot;)
+        public TraverserAPI.Step step;
+<span class="nc" id="L142">        @JsonProperty(&quot;top&quot;)</span>
+<span class="nc" id="L143">        public int top = Integer.parseInt(DEFAULT_LIMIT);</span>
+<span class="nc" id="L144">        @JsonProperty(&quot;capacity&quot;)</span>
+<span class="nc" id="L145">        public long capacity = Long.parseLong(DEFAULT_CAPACITY);</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L149">            return String.format(&quot;Request{vertex=%s,step=%s,top=%s,&quot; +</span>
+                                 &quot;capacity=%s}&quot;, this.vertex, this.step,
+<span class="nc" id="L151">                                 this.top, this.capacity);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

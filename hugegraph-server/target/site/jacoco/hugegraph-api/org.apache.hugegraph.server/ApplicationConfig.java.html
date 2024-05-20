@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ApplicationConfig.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.server</a> &gt; <span class="el_source">ApplicationConfig.java</span></div><h1>ApplicationConfig.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.server;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.api.filter.RedirectFilterDynamicFeature;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.WorkLoad;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.version.CoreVersion;
+import org.apache.tinkerpop.gremlin.server.util.MetricManager;
+import org.glassfish.hk2.api.Factory;
+import org.glassfish.hk2.api.MultiException;
+import org.glassfish.hk2.utilities.binding.AbstractBinder;
+import org.glassfish.jersey.process.internal.RequestScoped;
+import org.glassfish.jersey.server.ResourceConfig;
+import org.glassfish.jersey.server.filter.RolesAllowedDynamicFeature;
+import org.glassfish.jersey.server.monitoring.ApplicationEvent;
+import org.glassfish.jersey.server.monitoring.ApplicationEventListener;
+import org.glassfish.jersey.server.monitoring.RequestEvent;
+import org.glassfish.jersey.server.monitoring.RequestEventListener;
+
+import com.codahale.metrics.MetricRegistry;
+import com.codahale.metrics.jersey3.InstrumentedResourceMethodApplicationListener;
+
+import io.swagger.v3.jaxrs2.integration.resources.OpenApiResource;
+import io.swagger.v3.oas.annotations.OpenAPIDefinition;
+import io.swagger.v3.oas.annotations.info.Contact;
+import io.swagger.v3.oas.annotations.info.Info;
+import io.swagger.v3.oas.annotations.enums.SecuritySchemeType;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.security.SecurityScheme;
+import jakarta.ws.rs.ApplicationPath;
+
+@SecurityScheme(
+    name = &quot;basic&quot;,
+    type = SecuritySchemeType.HTTP,
+    scheme = &quot;basic&quot;
+)
+@SecurityScheme(
+    name = &quot;bearer&quot;,
+    type = SecuritySchemeType.HTTP,
+    scheme = &quot;bearer&quot;
+)
+@ApplicationPath(&quot;/&quot;)
+@OpenAPIDefinition(
+    info = @Info(
+        title = &quot;HugeGraph RESTful API&quot;,
+        version = CoreVersion.DEFAULT_VERSION,
+        description = &quot;All management API for HugeGraph&quot;,
+        contact = @Contact(url = &quot;https://github.com/apache/hugegraph&quot;, name = &quot;HugeGraph&quot;)
+    ),
+    security = {@SecurityRequirement(name = &quot;basic&quot;), @SecurityRequirement(name = &quot;bearer&quot;)}
+)
+public class ApplicationConfig extends ResourceConfig {
+
+<span class="nc" id="L74">    public ApplicationConfig(HugeConfig conf, EventHub hub) {</span>
+<span class="nc" id="L75">        packages(&quot;org.apache.hugegraph.api&quot;);</span>
+
+        // Register Jackson to support json
+<span class="nc" id="L78">        register(org.glassfish.jersey.jackson.JacksonFeature.class);</span>
+
+        // Register to use the jsr250 annotations @RolesAllowed
+<span class="nc" id="L81">        register(RolesAllowedDynamicFeature.class);</span>
+
+<span class="nc" id="L83">        register(RedirectFilterDynamicFeature.class);</span>
+
+        // Register HugeConfig to context
+<span class="nc" id="L86">        register(new ConfFactory(conf));</span>
+
+        // Register GraphManager to context
+<span class="nc" id="L89">        register(new GraphManagerFactory(conf, hub));</span>
+
+        // Register WorkLoad to context
+<span class="nc" id="L92">        register(new WorkLoadFactory());</span>
+
+        // Let @Metric annotations work
+<span class="nc" id="L95">        MetricRegistry registry = MetricManager.INSTANCE.getRegistry();</span>
+<span class="nc" id="L96">        register(new InstrumentedResourceMethodApplicationListener(registry));</span>
+
+        // Register OpenApi file to support display on swagger-ui
+<span class="nc" id="L99">        register(OpenApiResource.class);</span>
+<span class="nc" id="L100">    }</span>
+
+    private class ConfFactory extends AbstractBinder implements Factory&lt;HugeConfig&gt; {
+
+        private final HugeConfig conf;
+
+<span class="nc" id="L106">        public ConfFactory(HugeConfig conf) {</span>
+<span class="nc" id="L107">            E.checkNotNull(conf, &quot;configuration&quot;);</span>
+<span class="nc" id="L108">            this.conf = conf;</span>
+<span class="nc" id="L109">        }</span>
+
+        @Override
+        protected void configure() {
+<span class="nc" id="L113">            bindFactory(this).to(HugeConfig.class).in(RequestScoped.class);</span>
+<span class="nc" id="L114">        }</span>
+
+        @Override
+        public HugeConfig provide() {
+<span class="nc" id="L118">            return this.conf;</span>
+        }
+
+        @Override
+        public void dispose(HugeConfig conf) {
+            // pass
+<span class="nc" id="L124">        }</span>
+    }
+
+    private class GraphManagerFactory extends AbstractBinder implements Factory&lt;GraphManager&gt; {
+
+<span class="nc" id="L129">        private GraphManager manager = null;</span>
+
+<span class="nc" id="L131">        public GraphManagerFactory(HugeConfig conf, EventHub hub) {</span>
+<span class="nc" id="L132">            register(new ApplicationEventListener() {</span>
+<span class="nc" id="L133">                private final ApplicationEvent.Type eventInited =</span>
+                              ApplicationEvent.Type.INITIALIZATION_FINISHED;
+<span class="nc" id="L135">                private final ApplicationEvent.Type eventDestroyed =</span>
+                              ApplicationEvent.Type.DESTROY_FINISHED;
+
+                @Override
+                public void onEvent(ApplicationEvent event) {
+<span class="nc bnc" id="L140" title="All 2 branches missed.">                    if (event.getType() == this.eventInited) {</span>
+<span class="nc" id="L141">                        GraphManager manager = new GraphManager(conf, hub);</span>
+                        try {
+<span class="nc" id="L143">                            manager.init();</span>
+<span class="nc" id="L144">                        } catch (Throwable e) {</span>
+<span class="nc" id="L145">                            manager.close();</span>
+<span class="nc" id="L146">                            throw e;</span>
+<span class="nc" id="L147">                        }</span>
+<span class="nc" id="L148">                        GraphManagerFactory.this.manager = manager;</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">                    } else if (event.getType() == this.eventDestroyed) {</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                        if (GraphManagerFactory.this.manager != null) {</span>
+<span class="nc" id="L151">                            GraphManagerFactory.this.manager.close();</span>
+                        }
+                    }
+<span class="nc" id="L154">                }</span>
+
+                @Override
+                public RequestEventListener onRequest(RequestEvent event) {
+<span class="nc" id="L158">                    return null;</span>
+                }
+            });
+<span class="nc" id="L161">        }</span>
+
+        @Override
+        protected void configure() {
+<span class="nc" id="L165">            bindFactory(this).to(GraphManager.class).in(RequestScoped.class);</span>
+<span class="nc" id="L166">        }</span>
+
+        @Override
+        public GraphManager provide() {
+<span class="nc bnc" id="L170" title="All 2 branches missed.">            if (this.manager == null) {</span>
+<span class="nc" id="L171">                String message = &quot;Please wait for the server to initialize&quot;;</span>
+<span class="nc" id="L172">                throw new MultiException(new HugeException(message), false);</span>
+            }
+<span class="nc" id="L174">            return this.manager;</span>
+        }
+
+        @Override
+        public void dispose(GraphManager manager) {
+            // pass
+<span class="nc" id="L180">        }</span>
+    }
+
+    private class WorkLoadFactory extends AbstractBinder implements Factory&lt;WorkLoad&gt; {
+
+        private final WorkLoad load;
+
+<span class="nc" id="L187">        public WorkLoadFactory() {</span>
+<span class="nc" id="L188">            this.load = new WorkLoad();</span>
+<span class="nc" id="L189">        }</span>
+
+        @Override
+        public WorkLoad provide() {
+<span class="nc" id="L193">            return this.load;</span>
+        }
+
+        @Override
+        public void dispose(WorkLoad workLoad) {
+            // pass
+<span class="nc" id="L199">        }</span>
+
+        @Override
+        protected void configure() {
+<span class="nc" id="L203">            bindFactory(this).to(WorkLoad.class).in(RequestScoped.class);</span>
+<span class="nc" id="L204">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

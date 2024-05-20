@@ -1,0 +1,297 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TableBackendEntry.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.serializer</a> &gt; <span class="el_source">TableBackendEntry.java</span></div><h1>TableBackendEntry.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.serializer;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+import org.apache.commons.lang3.NotImplementedException;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.HugeKeys;
+
+public class TableBackendEntry implements BackendEntry {
+
+    public static class Row {
+
+        private HugeType type;
+        private Id id;
+        private Id subId;
+        private final Map&lt;HugeKeys, Object&gt; columns;
+        private long ttl;
+
+        public Row(HugeType type) {
+<span class="nc" id="L48">            this(type, null);</span>
+<span class="nc" id="L49">        }</span>
+
+<span class="nc" id="L51">        public Row(HugeType type, Id id) {</span>
+<span class="nc" id="L52">            this.type = type;</span>
+<span class="nc" id="L53">            this.id = id;</span>
+<span class="nc" id="L54">            this.subId = null;</span>
+<span class="nc" id="L55">            this.columns = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L56">            this.ttl = 0L;</span>
+<span class="nc" id="L57">        }</span>
+
+        public HugeType type() {
+<span class="nc" id="L60">            return this.type;</span>
+        }
+
+        public Id id() {
+<span class="nc" id="L64">            return this.id;</span>
+        }
+
+        public Map&lt;HugeKeys, Object&gt; columns() {
+<span class="nc" id="L68">            return this.columns;</span>
+        }
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+        public &lt;T&gt; T column(HugeKeys key) {
+            // The T must be primitive type, or list/set/map of primitive type
+<span class="nc" id="L74">            return (T) this.columns.get(key);</span>
+        }
+
+        public &lt;T&gt; void column(HugeKeys key, T value) {
+<span class="nc" id="L78">            this.columns.put(key, value);</span>
+<span class="nc" id="L79">        }</span>
+
+        public &lt;T&gt; void column(HugeKeys key, T value, Cardinality c) {
+<span class="nc bnc" id="L82" title="All 4 branches missed.">            switch (c) {</span>
+                case SINGLE:
+<span class="nc" id="L84">                    this.column(key, value);</span>
+<span class="nc" id="L85">                    break;</span>
+                case SET:
+                    // Avoid creating new Set when the key exists
+<span class="nc bnc" id="L88" title="All 2 branches missed.">                    if (!this.columns.containsKey(key)) {</span>
+<span class="nc" id="L89">                        this.columns.putIfAbsent(key, new LinkedHashSet&lt;&gt;());</span>
+                    }
+<span class="nc" id="L91">                    this.&lt;Set&lt;T&gt;&gt;column(key).add(value);</span>
+<span class="nc" id="L92">                    break;</span>
+                case LIST:
+                    // Avoid creating new List when the key exists
+<span class="nc bnc" id="L95" title="All 2 branches missed.">                    if (!this.columns.containsKey(key)) {</span>
+<span class="nc" id="L96">                        this.columns.putIfAbsent(key, new LinkedList&lt;&gt;());</span>
+                    }
+<span class="nc" id="L98">                    this.&lt;List&lt;T&gt;&gt;column(key).add(value);</span>
+<span class="nc" id="L99">                    break;</span>
+                default:
+<span class="nc" id="L101">                    throw new AssertionError(&quot;Unsupported cardinality: &quot; + c);</span>
+            }
+<span class="nc" id="L103">        }</span>
+
+        public &lt;T&gt; void column(HugeKeys key, Object name, T value) {
+<span class="nc bnc" id="L106" title="All 2 branches missed.">            if (!this.columns.containsKey(key)) {</span>
+<span class="nc" id="L107">                this.columns.putIfAbsent(key, new ConcurrentHashMap&lt;&gt;());</span>
+            }
+<span class="nc" id="L109">            this.&lt;Map&lt;Object, T&gt;&gt;column(key).put(name, value);</span>
+<span class="nc" id="L110">        }</span>
+
+        public void ttl(long ttl) {
+<span class="nc" id="L113">            this.ttl = ttl;</span>
+<span class="nc" id="L114">        }</span>
+
+        public long ttl() {
+<span class="nc" id="L117">            return this.ttl;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L122">            return String.format(&quot;Row{type=%s, id=%s, columns=%s}&quot;,</span>
+                                 this.type, this.id, this.columns);
+        }
+    }
+
+    private final Row row;
+    private final List&lt;Row&gt; subRows;
+
+    // NOTE: selfChanged is false when the row has not changed but subRows has.
+    private boolean selfChanged;
+    private boolean olap;
+
+    public TableBackendEntry(Id id) {
+<span class="nc" id="L135">        this(null, id);</span>
+<span class="nc" id="L136">    }</span>
+
+    public TableBackendEntry(HugeType type) {
+<span class="nc" id="L139">        this(type, null);</span>
+<span class="nc" id="L140">    }</span>
+
+    public TableBackendEntry(HugeType type, Id id) {
+<span class="nc" id="L143">        this(new Row(type, id));</span>
+<span class="nc" id="L144">    }</span>
+
+<span class="nc" id="L146">    public TableBackendEntry(Row row) {</span>
+<span class="nc" id="L147">        this.row = row;</span>
+<span class="nc" id="L148">        this.subRows = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L149">        this.selfChanged = true;</span>
+<span class="nc" id="L150">        this.olap = false;</span>
+<span class="nc" id="L151">    }</span>
+
+    @Override
+    public HugeType type() {
+<span class="nc" id="L155">        return this.row.type;</span>
+    }
+
+    public void type(HugeType type) {
+<span class="nc" id="L159">        this.row.type = type;</span>
+<span class="nc" id="L160">    }</span>
+
+    @Override
+    public Id id() {
+<span class="nc" id="L164">        return this.row.id;</span>
+    }
+
+    @Override
+    public Id originId() {
+<span class="nc" id="L169">        return this.row.id;</span>
+    }
+
+    public void id(Id id) {
+<span class="nc" id="L173">        this.row.id = id;</span>
+<span class="nc" id="L174">    }</span>
+
+    @Override
+    public Id subId() {
+<span class="nc" id="L178">        return this.row.subId;</span>
+    }
+
+    public void subId(Id subId) {
+<span class="nc" id="L182">        this.row.subId = subId;</span>
+<span class="nc" id="L183">    }</span>
+
+    public void selfChanged(boolean changed) {
+<span class="nc" id="L186">        this.selfChanged = changed;</span>
+<span class="nc" id="L187">    }</span>
+
+    public boolean selfChanged() {
+<span class="nc" id="L190">        return this.selfChanged;</span>
+    }
+
+    public void olap(boolean olap) {
+<span class="nc" id="L194">        this.olap = olap;</span>
+<span class="nc" id="L195">    }</span>
+
+    @Override
+    public boolean olap() {
+<span class="nc" id="L199">        return this.olap;</span>
+    }
+
+    public Row row() {
+<span class="nc" id="L203">        return this.row;</span>
+    }
+
+    public Map&lt;HugeKeys, Object&gt; columnsMap() {
+<span class="nc" id="L207">        return this.row.columns();</span>
+    }
+
+    public &lt;T&gt; void column(HugeKeys key, T value) {
+<span class="nc" id="L211">        this.row.column(key, value);</span>
+<span class="nc" id="L212">    }</span>
+
+    public &lt;T&gt; void column(HugeKeys key, Object name, T value) {
+<span class="nc" id="L215">        this.row.column(key, name, value);</span>
+<span class="nc" id="L216">    }</span>
+
+    public &lt;T&gt; void column(HugeKeys key, T value, Cardinality c) {
+<span class="nc" id="L219">        this.row.column(key, value, c);</span>
+<span class="nc" id="L220">    }</span>
+
+    public &lt;T&gt; T column(HugeKeys key) {
+<span class="nc" id="L223">        return this.row.column(key);</span>
+    }
+
+    public void subRow(Row row) {
+<span class="nc" id="L227">        this.subRows.add(row);</span>
+<span class="nc" id="L228">    }</span>
+
+    public List&lt;Row&gt; subRows() {
+<span class="nc" id="L231">        return this.subRows;</span>
+    }
+
+    public void ttl(long ttl) {
+<span class="nc" id="L235">        this.row.ttl(ttl);</span>
+<span class="nc" id="L236">    }</span>
+
+    @Override
+    public long ttl() {
+<span class="nc" id="L240">        return this.row.ttl();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L245">        return String.format(&quot;TableBackendEntry{%s, sub-rows: %s}&quot;,</span>
+<span class="nc" id="L246">                             this.row.toString(),</span>
+<span class="nc" id="L247">                             this.subRows.toString());</span>
+    }
+
+    @Override
+    public int columnsSize() {
+<span class="nc" id="L252">        throw new NotImplementedException(&quot;Not supported by table backend&quot;);</span>
+    }
+
+    @Override
+    public Collection&lt;BackendEntry.BackendColumn&gt; columns() {
+<span class="nc" id="L257">        throw new NotImplementedException(&quot;Not supported by table backend&quot;);</span>
+    }
+
+    @Override
+    public void columns(Collection&lt;BackendEntry.BackendColumn&gt; bytesColumns) {
+<span class="nc" id="L262">        throw new NotImplementedException(&quot;Not supported by table backend&quot;);</span>
+    }
+
+    @Override
+    public void columns(BackendEntry.BackendColumn bytesColumn) {
+<span class="nc" id="L267">        throw new NotImplementedException(&quot;Not supported by table backend&quot;);</span>
+    }
+
+    @Override
+    public void merge(BackendEntry other) {
+<span class="nc" id="L272">        throw new NotImplementedException(&quot;Not supported by table backend&quot;);</span>
+    }
+
+    @Override
+    public boolean mergeable(BackendEntry other) {
+<span class="nc bnc" id="L277" title="All 2 branches missed.">        if (!(other instanceof TableBackendEntry)) {</span>
+<span class="nc" id="L278">            return false;</span>
+        }
+<span class="nc" id="L280">        TableBackendEntry tableEntry = (TableBackendEntry) other;</span>
+<span class="nc" id="L281">        Object selfId = this.column(HugeKeys.ID);</span>
+<span class="nc" id="L282">        Object otherId = tableEntry.column(HugeKeys.ID);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if (!selfId.equals(otherId)) {</span>
+<span class="nc" id="L284">            return false;</span>
+        }
+<span class="nc" id="L286">        Id key = tableEntry.subId();</span>
+<span class="nc" id="L287">        Object value = tableEntry.row().column(HugeKeys.PROPERTY_VALUE);</span>
+<span class="nc" id="L288">        this.row().column(HugeKeys.PROPERTIES, key.asLong(), value);</span>
+<span class="nc" id="L289">        return true;</span>
+    }
+
+    @Override
+    public void clear() {
+<span class="nc" id="L294">        throw new NotImplementedException(&quot;Not supported by table backend&quot;);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

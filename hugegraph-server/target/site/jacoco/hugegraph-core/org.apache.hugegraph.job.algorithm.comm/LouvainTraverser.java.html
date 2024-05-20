@@ -1,0 +1,921 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LouvainTraverser.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.comm</a> &gt; <span class="el_source">LouvainTraverser.java</span></div><h1>LouvainTraverser.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.comm;
+
+import java.io.BufferedOutputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.commons.lang.mutable.MutableFloat;
+import org.apache.commons.lang3.mutable.MutableInt;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.job.algorithm.Consumers;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.T;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.exception.ExistedException;
+import org.apache.hugegraph.iterator.ListIterator;
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.job.algorithm.AbstractAlgorithm;
+import org.apache.hugegraph.job.algorithm.AbstractAlgorithm.AlgoTraverser;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.StringEncoding;
+import com.google.common.collect.ImmutableMap;
+
+public class LouvainTraverser extends AlgoTraverser {
+
+    public static final String C_PASS = &quot;c_pass-&quot;;
+    public static final String C_KIN = &quot;c_kin&quot;;
+    public static final String C_WEIGHT = &quot;c_weight&quot;;
+    public static final String C_MEMBERS = &quot;c_members&quot;;
+
+    private static final long LIMIT = AbstractAlgorithm.MAX_QUERY_LIMIT;
+    private static final int MAX_COMM_SIZE = 100000; // 10w
+
+<span class="nc" id="L77">    private static final Logger LOG = Log.logger(LouvainTraverser.class);</span>
+
+    private final GraphTraversalSource g;
+    private final String sourceLabel;
+    private final String sourceCLabel;
+    private final long degree;
+    private final boolean skipIsolated;
+
+    private final Cache cache;
+
+    private long m;
+    private String passLabel;
+
+    public LouvainTraverser(UserJob&lt;Object&gt; job, int workers, long degree,
+                            String sourceLabel, String sourceCLabel,
+                            boolean skipIsolated) {
+<span class="nc" id="L93">        super(job, LouvainAlgorithm.ALGO_NAME, workers);</span>
+<span class="nc" id="L94">        this.g = this.graph().traversal();</span>
+<span class="nc" id="L95">        this.sourceLabel = sourceLabel;</span>
+<span class="nc" id="L96">        this.sourceCLabel = sourceCLabel;</span>
+<span class="nc" id="L97">        this.degree = degree;</span>
+<span class="nc" id="L98">        this.skipIsolated = skipIsolated;</span>
+<span class="nc" id="L99">        this.m = 1L;</span>
+<span class="nc" id="L100">        this.passLabel = &quot;&quot;;</span>
+
+<span class="nc" id="L102">        this.cache = new Cache();</span>
+<span class="nc" id="L103">    }</span>
+
+    private void defineSchemaOfPk() {
+<span class="nc" id="L106">        String label = this.labelOfPassN(0);</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (this.graph().existsVertexLabel(label) ||</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">            this.graph().existsEdgeLabel(label)) {</span>
+<span class="nc" id="L109">            throw new IllegalArgumentException(</span>
+                      &quot;Please clear historical results before proceeding&quot;);
+        }
+
+<span class="nc" id="L113">        SchemaManager schema = this.graph().schema();</span>
+<span class="nc" id="L114">        schema.propertyKey(C_KIN).asInt()</span>
+<span class="nc" id="L115">              .ifNotExist().create();</span>
+<span class="nc" id="L116">        schema.propertyKey(C_MEMBERS).valueSet().asText()</span>
+<span class="nc" id="L117">              .ifNotExist().create();</span>
+<span class="nc" id="L118">        schema.propertyKey(C_WEIGHT).asFloat()</span>
+<span class="nc" id="L119">              .ifNotExist().create();</span>
+
+<span class="nc" id="L121">        this.m = this.g.E().count().next();</span>
+<span class="nc" id="L122">    }</span>
+
+    private void defineSchemaOfPassN(int pass) {
+<span class="nc" id="L125">        this.passLabel = labelOfPassN(pass);</span>
+
+<span class="nc" id="L127">        SchemaManager schema = this.graph().schema();</span>
+        try {
+<span class="nc" id="L129">            schema.vertexLabel(this.passLabel).useCustomizeStringId()</span>
+<span class="nc" id="L130">                  .properties(C_KIN, C_MEMBERS, C_WEIGHT)</span>
+<span class="nc" id="L131">                  .create();</span>
+<span class="nc" id="L132">            schema.edgeLabel(this.passLabel)</span>
+<span class="nc" id="L133">                  .sourceLabel(this.passLabel)</span>
+<span class="nc" id="L134">                  .targetLabel(this.passLabel)</span>
+<span class="nc" id="L135">                  .properties(C_WEIGHT)</span>
+<span class="nc" id="L136">                  .create();</span>
+<span class="nc" id="L137">        } catch (ExistedException e) {</span>
+<span class="nc" id="L138">            throw new IllegalArgumentException(</span>
+                      &quot;Please clear historical results before proceeding&quot;, e);
+<span class="nc" id="L140">        }</span>
+<span class="nc" id="L141">    }</span>
+
+    private List&lt;String&gt; cpassEdgeLabels() {
+<span class="nc" id="L144">        List&lt;String&gt; names = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        for (SchemaLabel label : this.graph().schema().getEdgeLabels()) {</span>
+<span class="nc" id="L146">            String name = label.name();</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            if (name.startsWith(C_PASS)) {</span>
+<span class="nc" id="L148">                names.add(name);</span>
+            }
+<span class="nc" id="L150">        }</span>
+<span class="nc" id="L151">        return names;</span>
+    }
+
+    private List&lt;String&gt; cpassVertexLabels() {
+<span class="nc" id="L155">        List&lt;String&gt; names = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        for (SchemaLabel label : this.graph().schema().getVertexLabels()) {</span>
+<span class="nc" id="L157">            String name = label.name();</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">            if (name.startsWith(C_PASS)) {</span>
+<span class="nc" id="L159">                names.add(name);</span>
+            }
+<span class="nc" id="L161">        }</span>
+<span class="nc" id="L162">        return names;</span>
+    }
+
+    private String labelOfPassN(int n) {
+<span class="nc" id="L166">        return C_PASS + n;</span>
+    }
+
+    private float weightOfEdge(Edge e) {
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        if (e.label().startsWith(C_PASS)) {</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">            assert e.property(C_WEIGHT).isPresent();</span>
+<span class="nc" id="L172">            return e.value(C_WEIGHT);</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">        } else if (e.property(C_WEIGHT).isPresent()) {</span>
+<span class="nc" id="L174">            return e.value(C_WEIGHT);</span>
+        }
+<span class="nc" id="L176">        return 1f;</span>
+    }
+
+    private float weightOfEdges(List&lt;Edge&gt; edges) {
+<span class="nc" id="L180">        float weight = 0f;</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        for (Edge edge : edges) {</span>
+<span class="nc" id="L182">            weight += weightOfEdge(edge);</span>
+<span class="nc" id="L183">        }</span>
+<span class="nc" id="L184">        return weight;</span>
+    }
+
+    private Vertex newCommunityNode(Id cid, float cweight,
+                                    int kin, List&lt;String&gt; members) {
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        assert !members.isEmpty() : members;</span>
+        /*
+         * cweight: members size(all pass) of the community, just for debug
+         * kin: edges weight in the community
+         * members: members id of the community of last pass
+         */
+<span class="nc" id="L195">        return this.graph().addVertex(T.label, this.passLabel,</span>
+<span class="nc" id="L196">                                      T.id, cid, C_WEIGHT, cweight,</span>
+<span class="nc" id="L197">                                      C_KIN, kin, C_MEMBERS, members);</span>
+    }
+
+    private Vertex makeCommunityNode(Id cid) {
+<span class="nc" id="L201">        VertexLabel vl = this.graph().vertexLabel(this.passLabel);</span>
+<span class="nc" id="L202">        return new HugeVertex(this.graph(), cid, vl);</span>
+    }
+
+    private Edge newCommunityEdge(Vertex source, Vertex target, float weight) {
+<span class="nc" id="L206">        return source.addEdge(this.passLabel, target, C_WEIGHT, weight);</span>
+    }
+
+    private void insertNewCommunity(int pass, Id cid, float cweight,
+                                    int kin, List&lt;String&gt; members,
+                                    Map&lt;Id, MutableFloat&gt; cedges) {
+        // create backend vertex if it's the first time
+<span class="nc" id="L213">        Id vid = this.cache.genId(pass, cid);</span>
+<span class="nc" id="L214">        Vertex node = this.newCommunityNode(vid, cweight, kin, members);</span>
+<span class="nc" id="L215">        commitIfNeeded();</span>
+        // update backend vertex edges
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        for (Map.Entry&lt;Id, MutableFloat&gt; e : cedges.entrySet()) {</span>
+<span class="nc" id="L218">            float weight = e.getValue().floatValue();</span>
+<span class="nc" id="L219">            vid = this.cache.genId(pass, e.getKey());</span>
+<span class="nc" id="L220">            Vertex targetV = this.makeCommunityNode(vid);</span>
+<span class="nc" id="L221">            this.newCommunityEdge(node, targetV, weight);</span>
+<span class="nc" id="L222">            commitIfNeeded();</span>
+<span class="nc" id="L223">        }</span>
+<span class="nc" id="L224">        LOG.debug(&quot;Add new comm: {} kin={} size={}&quot;, node, kin, members.size());</span>
+<span class="nc" id="L225">    }</span>
+
+    private boolean needSkipVertex(int pass, Vertex v) {
+        // skip the old intermediate data when first pass
+<span class="nc" id="L229">        String label = v.label();</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        if (label.startsWith(C_PASS)) {</span>
+<span class="nc bnc" id="L231" title="All 2 branches missed.">            if (pass == 0) {</span>
+<span class="nc" id="L232">                return true;</span>
+            }
+<span class="nc" id="L234">            String lastPassLabel = labelOfPassN(pass - 1);</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">            if (!label.equals(lastPassLabel)) {</span>
+<span class="nc" id="L236">                return true;</span>
+            }
+        }
+        // skip the vertex with unmatched clabel
+<span class="nc bnc" id="L240" title="All 4 branches missed.">        return this.sourceCLabel != null &amp;&amp; !match(v, this.sourceCLabel);</span>
+    }
+
+    private Iterator&lt;Vertex&gt; sourceVertices(int pass) {
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        if (pass &gt; 0) {</span>
+            // all vertices of merged community
+<span class="nc" id="L246">            String lastPassLabel = labelOfPassN(pass - 1);</span>
+<span class="nc" id="L247">            return this.vertices(lastPassLabel, LIMIT);</span>
+        } else {
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            assert pass == 0;</span>
+            // all vertices at the first time
+<span class="nc" id="L251">            return this.vertices(this.sourceLabel, LIMIT);</span>
+        }
+    }
+
+    private List&lt;Edge&gt; neighbors(Id vid) {
+<span class="nc" id="L256">        Iterator&lt;Edge&gt; nbs = this.edgesOfVertex(vid, Directions.BOTH,</span>
+                                                (Id) null, this.degree);
+        @SuppressWarnings(&quot;resource&quot;)
+<span class="nc" id="L259">        ListIterator&lt;Edge&gt; list = new ListIterator&lt;&gt;(LIMIT, nbs);</span>
+<span class="nc" id="L260">        return (List&lt;Edge&gt;) list.list();</span>
+    }
+
+    private float weightOfVertex(Vertex v, List&lt;Edge&gt; edges) {
+        // degree/weight of vertex
+<span class="nc" id="L265">        Float value = this.cache.vertexWeight((Id) v.id());</span>
+<span class="nc bnc" id="L266" title="All 2 branches missed.">        if (value != null) {</span>
+<span class="nc" id="L267">            return value;</span>
+        }
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        if (edges == null) {</span>
+<span class="nc" id="L270">            edges = neighbors((Id) v.id());</span>
+        }
+<span class="nc" id="L272">        float weight = weightOfEdges(edges);</span>
+<span class="nc" id="L273">        this.cache.vertexWeight((Id) v.id(), weight);</span>
+<span class="nc" id="L274">        return weight;</span>
+    }
+
+    private int kinOfVertex(Vertex v) {
+<span class="nc bnc" id="L278" title="All 4 branches missed.">        if (v.label().startsWith(C_PASS) &amp;&amp; v.property(C_KIN).isPresent()) {</span>
+<span class="nc" id="L279">            return v.value(C_KIN);</span>
+        }
+<span class="nc" id="L281">        return 0;</span>
+    }
+
+    private float cweightOfVertex(Vertex v) {
+<span class="nc bnc" id="L285" title="All 4 branches missed.">        if (v.label().startsWith(C_PASS) &amp;&amp; v.property(C_WEIGHT).isPresent()) {</span>
+<span class="nc" id="L286">            return v.value(C_WEIGHT);</span>
+        }
+<span class="nc" id="L288">        return 1f;</span>
+    }
+
+    private Community communityOfVertex(Vertex v, List&lt;Edge&gt; nbs) {
+<span class="nc" id="L292">        Id vid = (Id) v.id();</span>
+<span class="nc" id="L293">        Community c = this.cache.vertex2Community(vid);</span>
+        // ensure source vertex exist in cache
+<span class="nc bnc" id="L295" title="All 2 branches missed.">        if (c == null) {</span>
+<span class="nc" id="L296">            c = this.wrapCommunity(v, nbs);</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">            assert c != null;</span>
+        }
+<span class="nc" id="L299">        return c;</span>
+    }
+
+    // 1: wrap original vertex as community node
+    // 2: add original vertices to community node,
+    //    and save as community vertex when merge()
+    // 3: wrap community vertex as community node,
+    //    and repeat step 2 and step 3.
+    private Community wrapCommunity(Vertex v, List&lt;Edge&gt; nbs) {
+<span class="nc" id="L308">        Id vid = (Id) v.id();</span>
+<span class="nc" id="L309">        Community comm = this.cache.vertex2Community(vid);</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">        if (comm != null) {</span>
+<span class="nc" id="L311">            return comm;</span>
+        }
+
+<span class="nc" id="L314">        comm = new Community(vid);</span>
+<span class="nc" id="L315">        comm.add(this, v, nbs);</span>
+<span class="nc" id="L316">        comm = this.cache.vertex2CommunityIfAbsent(vid, comm);</span>
+<span class="nc" id="L317">        return comm;</span>
+    }
+
+    private Collection&lt;Pair&lt;Community, MutableInt&gt;&gt; nbCommunities(int pass, List&lt;Edge&gt; edges) {
+        // comms is a map of cid:[community,weight]
+<span class="nc" id="L322">        Map&lt;Id, Pair&lt;Community, MutableInt&gt;&gt; comms = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">        for (Edge edge : edges) {</span>
+<span class="nc" id="L324">            Vertex otherV = ((HugeEdge) edge).otherVertex();</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">            if (needSkipVertex(pass, otherV)) {</span>
+                // skip the old intermediate data, or filter clabel
+<span class="nc" id="L327">                continue;</span>
+            }
+            // will traverse the neighbors of otherV
+<span class="nc" id="L330">            Community c = this.wrapCommunity(otherV, null);</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">            if (!comms.containsKey(c.cid)) {</span>
+<span class="nc" id="L332">                comms.put(c.cid, Pair.of(c, new MutableInt(0)));</span>
+            }
+            // calc weight between source vertex and neighbor community
+<span class="nc" id="L335">            comms.get(c.cid).getRight().add(2 * weightOfEdge(edge));</span>
+<span class="nc" id="L336">        }</span>
+<span class="nc" id="L337">        return comms.values();</span>
+    }
+
+    private void doMoveCommunity(Vertex v, List&lt;Edge&gt; nbs, Community newC) {
+<span class="nc" id="L341">        Id vid = (Id) v.id();</span>
+
+        // update community of v (return the origin one)
+<span class="nc" id="L344">        Community oldC = this.cache.vertex2Community(vid, newC);</span>
+
+        // remove v from old community. should synchronized (vid)?
+<span class="nc bnc" id="L347" title="All 2 branches missed.">        if (oldC != null) {</span>
+<span class="nc" id="L348">            oldC.remove(this, v, nbs);</span>
+        }
+
+        // add v to new community
+<span class="nc" id="L352">        newC.add(this, v, nbs);</span>
+<span class="nc" id="L353">        LOG.debug(&quot;Move {} to community: {}&quot;, v, newC);</span>
+<span class="nc" id="L354">    }</span>
+
+    private boolean moveCommunity(Vertex v, int pass) {
+        // move vertex to neighbor community if needed
+<span class="nc" id="L358">        List&lt;Edge&gt; nbs = neighbors((Id) v.id());</span>
+<span class="nc bnc" id="L359" title="All 6 branches missed.">        if (this.skipIsolated &amp;&amp; pass == 0 &amp;&amp; nbs.isEmpty()) {</span>
+<span class="nc" id="L360">            return false;</span>
+        }
+<span class="nc" id="L362">        Community c = communityOfVertex(v, nbs);</span>
+<span class="nc" id="L363">        double ki = kinOfVertex(v) + weightOfVertex(v, nbs);</span>
+        // update community of v if △Q changed
+<span class="nc" id="L365">        double maxDeltaQ = 0d;</span>
+<span class="nc" id="L366">        Community bestComm = null;</span>
+        // list all neighbor communities of v
+<span class="nc bnc" id="L368" title="All 2 branches missed.">        for (Pair&lt;Community, MutableInt&gt; nbc : nbCommunities(pass, nbs)) {</span>
+            // △Q = (Ki_in - Ki * Etot / m) / 2m
+<span class="nc" id="L370">            Community otherC = nbc.getLeft();</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">            if (otherC.size() &gt;= MAX_COMM_SIZE) {</span>
+<span class="nc" id="L372">                LOG.info(&quot;Skip community {} for {} due to its size &gt;= {}&quot;,</span>
+<span class="nc" id="L373">                         otherC.cid, v, MAX_COMM_SIZE);</span>
+<span class="nc" id="L374">                continue;</span>
+            }
+            // weight between c and otherC
+<span class="nc" id="L377">            double kiin = nbc.getRight().floatValue();</span>
+            // weight of otherC
+<span class="nc" id="L379">            double tot = otherC.kin() + otherC.kout();</span>
+<span class="nc bnc" id="L380" title="All 2 branches missed.">            if (c.equals(otherC)) {</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">                assert c == otherC;</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">                if (tot &lt; ki) {</span>
+                    /*
+                     * expect tot &gt;= ki, but multi-threads may
+                     * cause tot &lt; ki due to concurrent update otherC
+                     */
+<span class="nc" id="L387">                    LOG.warn(&quot;Changing vertex: {}(ki={}, kiin={}, pass={}), otherC: {}&quot;,</span>
+<span class="nc" id="L388">                             v, ki, kiin, pass, otherC);</span>
+                }
+<span class="nc" id="L390">                tot -= ki;</span>
+                // assert tot &gt;= 0d : otherC + &quot;, tot=&quot; + tot + &quot;, ki=&quot; + ki;
+                // expect tot &gt;= 0, but may be something wrong?
+<span class="nc bnc" id="L393" title="All 2 branches missed.">                if (tot &lt; 0d) {</span>
+<span class="nc" id="L394">                    tot = 0d;</span>
+                }
+            }
+<span class="nc" id="L397">            double deltaQ = kiin - ki * tot / this.m;</span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">            if (deltaQ &gt; maxDeltaQ) {</span>
+                // TODO: cache otherC for neighbors the same community
+<span class="nc" id="L400">                maxDeltaQ = deltaQ;</span>
+<span class="nc" id="L401">                bestComm = otherC;</span>
+            }
+<span class="nc" id="L403">        }</span>
+<span class="nc bnc" id="L404" title="All 4 branches missed.">        if (maxDeltaQ &gt; 0d &amp;&amp; !c.equals(bestComm)) {</span>
+            // move v to the community of maxQ neighbor
+<span class="nc" id="L406">            doMoveCommunity(v, nbs, bestComm);</span>
+<span class="nc" id="L407">            return true;</span>
+        }
+<span class="nc" id="L409">        return false;</span>
+    }
+
+    private double moveCommunities(int pass) {
+<span class="nc" id="L413">        LOG.info(&quot;Detect community for pass {}&quot;, pass);</span>
+<span class="nc" id="L414">        Iterator&lt;Vertex&gt; vertices = this.sourceVertices(pass);</span>
+
+        // shuffle
+        //r = r.order().by(shuffle);
+
+<span class="nc" id="L419">        long total = 0L;</span>
+<span class="nc" id="L420">        AtomicLong moved = new AtomicLong(0L);</span>
+
+<span class="nc" id="L422">        Consumers&lt;Vertex&gt; consumers = new Consumers&lt;&gt;(this.executor, v -&gt; {</span>
+            // called by multi-threads
+<span class="nc bnc" id="L424" title="All 2 branches missed.">            if (this.moveCommunity(v, pass)) {</span>
+<span class="nc" id="L425">                moved.incrementAndGet();</span>
+            }
+<span class="nc" id="L427">        });</span>
+
+<span class="nc" id="L429">        consumers.start(&quot;louvain-move-pass-&quot; + pass);</span>
+        try {
+<span class="nc bnc" id="L431" title="All 2 branches missed.">            while (vertices.hasNext()) {</span>
+<span class="nc" id="L432">                this.updateProgress(++this.progress);</span>
+<span class="nc" id="L433">                Vertex v = vertices.next();</span>
+<span class="nc bnc" id="L434" title="All 2 branches missed.">                if (needSkipVertex(pass, v)) {</span>
+                    // skip the old intermediate data, or filter clabel
+<span class="nc" id="L436">                    continue;</span>
+                }
+<span class="nc" id="L438">                total++;</span>
+<span class="nc" id="L439">                consumers.provide(v);</span>
+<span class="nc" id="L440">            }</span>
+<span class="nc" id="L441">        } catch (Throwable e) {</span>
+<span class="nc" id="L442">            throw Consumers.wrapException(e);</span>
+        } finally {
+<span class="nc" id="L444">            consumers.await();</span>
+        }
+
+        // maybe always shocking when set degree limited
+<span class="nc bnc" id="L448" title="All 2 branches missed.">        return total == 0L ? 0d : moved.doubleValue() / total;</span>
+    }
+
+    private void mergeCommunities(int pass) {
+<span class="nc" id="L452">        LOG.info(&quot;Merge community for pass {}&quot;, pass);</span>
+        // merge each community as a vertex
+<span class="nc" id="L454">        Collection&lt;Pair&lt;Community, Set&lt;Id&gt;&gt;&gt; comms = this.cache.communities();</span>
+<span class="nc bnc" id="L455" title="All 4 branches missed.">        assert this.skipIsolated || this.allMembersExist(comms,  pass - 1);</span>
+<span class="nc" id="L456">        this.cache.resetVertexWeight();</span>
+
+<span class="nc" id="L458">        Consumers&lt;Pair&lt;Community, Set&lt;Id&gt;&gt;&gt; consumers = new Consumers&lt;&gt;(</span>
+                                                        this.executor, pair -&gt; {
+            // called by multi-threads
+<span class="nc" id="L461">            this.mergeCommunity(pass, pair.getLeft(), pair.getRight());</span>
+<span class="nc" id="L462">        }, () -&gt; {</span>
+            // commit when finished
+<span class="nc" id="L464">            this.graph().tx().commit();</span>
+<span class="nc" id="L465">        });</span>
+
+<span class="nc" id="L467">        consumers.start(&quot;louvain-merge-pass-&quot; + pass);</span>
+        try {
+<span class="nc bnc" id="L469" title="All 2 branches missed.">            for (Pair&lt;Community, Set&lt;Id&gt;&gt; pair : comms) {</span>
+<span class="nc" id="L470">                Community c = pair.getLeft();</span>
+<span class="nc bnc" id="L471" title="All 2 branches missed.">                if (c.empty()) {</span>
+<span class="nc" id="L472">                    continue;</span>
+                }
+<span class="nc" id="L474">                this.progress += pair.getRight().size();</span>
+<span class="nc" id="L475">                this.updateProgress(this.progress);</span>
+                //this.mergeCommunity(pass, pair.getLeft(), pair.getRight());
+<span class="nc" id="L477">                consumers.provide(pair);</span>
+<span class="nc" id="L478">            }</span>
+<span class="nc" id="L479">        } catch (Throwable e) {</span>
+<span class="nc" id="L480">            throw Consumers.wrapException(e);</span>
+        } finally {
+<span class="nc" id="L482">            consumers.await();</span>
+        }
+
+<span class="nc" id="L485">        this.graph().tx().commit();</span>
+<span class="nc bnc" id="L486" title="All 4 branches missed.">        assert this.skipIsolated || this.allMembersExist(pass);</span>
+
+        // reset communities
+<span class="nc" id="L489">        this.cache.reset();</span>
+<span class="nc" id="L490">    }</span>
+
+    private void mergeCommunity(int pass, Community c, Set&lt;Id&gt; cvertices) {
+        // update kin and edges between communities
+<span class="nc" id="L494">        int kin = c.kin();</span>
+<span class="nc" id="L495">        int membersSize = cvertices.size();</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">        assert !cvertices.isEmpty();</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">        assert membersSize == c.size();</span>
+<span class="nc" id="L498">        List&lt;String&gt; members = new ArrayList&lt;&gt;(membersSize);</span>
+<span class="nc" id="L499">        Map&lt;Id, MutableFloat&gt; cedges = new HashMap&lt;&gt;(membersSize);</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">        for (Id v : cvertices) {</span>
+<span class="nc" id="L501">            members.add(v.toString());</span>
+            // collect edges between this community and other communities
+<span class="nc" id="L503">            List&lt;Edge&gt; neighbors = neighbors(v);</span>
+<span class="nc bnc" id="L504" title="All 2 branches missed.">            for (Edge edge : neighbors) {</span>
+<span class="nc" id="L505">                Vertex otherV = ((HugeEdge) edge).otherVertex();</span>
+<span class="nc bnc" id="L506" title="All 2 branches missed.">                if (cvertices.contains(otherV.id())) {</span>
+                    // inner edges of this community, will be calc twice
+                    // due to both e-in and e-out are in vertices,
+<span class="nc" id="L509">                    kin += (int) weightOfEdge(edge);</span>
+<span class="nc" id="L510">                    continue;</span>
+                }
+<span class="nc bnc" id="L512" title="All 2 branches missed.">                assert this.cache.vertex2Community(otherV.id()) != null;</span>
+<span class="nc" id="L513">                Id otherCid = communityOfVertex(otherV, null).cid;</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">                if (otherCid.compareTo(c.cid) &lt; 0) {</span>
+                    // skip if it should be collected by otherC
+<span class="nc" id="L516">                    continue;</span>
+                }
+<span class="nc bnc" id="L518" title="All 2 branches missed.">                if (!cedges.containsKey(otherCid)) {</span>
+<span class="nc" id="L519">                    cedges.putIfAbsent(otherCid, new MutableFloat(0f));</span>
+                }
+                // update edge weight
+<span class="nc" id="L522">                cedges.get(otherCid).add(weightOfEdge(edge));</span>
+<span class="nc" id="L523">            }</span>
+<span class="nc" id="L524">        }</span>
+
+        // insert new community vertex and edges into storage
+<span class="nc" id="L527">        this.insertNewCommunity(pass, c.cid, c.weight(), kin, members, cedges);</span>
+<span class="nc" id="L528">    }</span>
+
+    private boolean allMembersExist(Collection&lt;Pair&lt;Community, Set&lt;Id&gt;&gt;&gt; comms,
+                                    int lastPass) {
+<span class="nc" id="L532">        String lastLabel = labelOfPassN(lastPass);</span>
+<span class="nc bnc" id="L533" title="All 2 branches missed.">        GraphTraversal&lt;Vertex, Object&gt; t = lastPass &lt; 0 ? this.g.V().id() :</span>
+<span class="nc" id="L534">                                           this.g.V().hasLabel(lastLabel).id();</span>
+<span class="nc" id="L535">        Set&lt;Object&gt; all = this.execute(t, t::toSet);</span>
+<span class="nc bnc" id="L536" title="All 2 branches missed.">        for (Pair&lt;Community, Set&lt;Id&gt;&gt; comm : comms) {</span>
+<span class="nc" id="L537">            all.removeAll(comm.getRight());</span>
+<span class="nc" id="L538">        }</span>
+<span class="nc bnc" id="L539" title="All 2 branches missed.">        if (all.size() &gt; 0) {</span>
+<span class="nc" id="L540">            LOG.warn(&quot;Lost members of last pass: {}&quot;, all);</span>
+        }
+<span class="nc" id="L542">        return all.isEmpty();</span>
+    }
+
+    private boolean allMembersExist(int pass) {
+<span class="nc" id="L546">        String label = labelOfPassN(pass);</span>
+<span class="nc" id="L547">        int lastPass = pass - 1;</span>
+        Number expected;
+<span class="nc bnc" id="L549" title="All 2 branches missed.">        if (lastPass &lt; 0) {</span>
+<span class="nc" id="L550">            expected = tryNext(this.g.V().count()).longValue() -</span>
+<span class="nc" id="L551">                       tryNext(this.g.V().hasLabel(label).count()).longValue();</span>
+        } else {
+<span class="nc" id="L553">            expected = tryNext(this.g.V().hasLabel(labelOfPassN(lastPass))</span>
+<span class="nc" id="L554">                                         .values(C_WEIGHT).sum());</span>
+        }
+<span class="nc" id="L556">        Number actual = tryNext(this.g.V().hasLabel(label)</span>
+<span class="nc" id="L557">                                          .values(C_WEIGHT).sum());</span>
+<span class="nc bnc" id="L558" title="All 2 branches missed.">        boolean allExist = actual.floatValue() == expected.floatValue();</span>
+<span class="nc bnc" id="L559" title="All 2 branches missed.">        assert allExist : actual + &quot;!=&quot; + expected;</span>
+<span class="nc" id="L560">        return allExist;</span>
+    }
+
+    public Object louvain(int maxTimes, int stableTimes, double precision) {
+<span class="nc bnc" id="L564" title="All 2 branches missed.">        assert maxTimes &gt; 0;</span>
+<span class="nc bnc" id="L565" title="All 2 branches missed.">        assert precision &gt; 0d;</span>
+
+<span class="nc" id="L567">        this.defineSchemaOfPk();</span>
+
+        /*
+         * iterate until it has stabilized or
+         * the maximum number of times is reached
+         */
+<span class="nc" id="L573">        int times = maxTimes;</span>
+<span class="nc" id="L574">        int movedTimes = 0;</span>
+<span class="nc" id="L575">        double movedPercent = 0d;</span>
+        double lastMovedPercent;
+
+<span class="nc bnc" id="L578" title="All 2 branches missed.">        for (int i = 0; i &lt; maxTimes; i++) {</span>
+<span class="nc" id="L579">            boolean finished = true;</span>
+<span class="nc" id="L580">            lastMovedPercent = 1d;</span>
+<span class="nc" id="L581">            int tinyChanges = 0;</span>
+<span class="nc bnc" id="L582" title="All 2 branches missed.">            while ((movedPercent = this.moveCommunities(i)) &gt; 0d) {</span>
+<span class="nc" id="L583">                movedTimes++;</span>
+<span class="nc" id="L584">                finished = false;</span>
+<span class="nc bnc" id="L585" title="All 2 branches missed.">                if (lastMovedPercent - movedPercent &lt; precision) {</span>
+<span class="nc" id="L586">                    tinyChanges++;</span>
+                }
+<span class="nc bnc" id="L588" title="All 4 branches missed.">                if (i == 0 &amp;&amp; movedPercent &lt; precision) {</span>
+                    // stop the first round of iterations early
+<span class="nc" id="L590">                    break;</span>
+                }
+<span class="nc bnc" id="L592" title="All 2 branches missed.">                if (tinyChanges &gt;= stableTimes) {</span>
+                    // maybe always shaking and falling into an dead loop
+<span class="nc" id="L594">                    break;</span>
+                }
+<span class="nc" id="L596">                lastMovedPercent = movedPercent;</span>
+            }
+<span class="nc bnc" id="L598" title="All 2 branches missed.">            if (finished) {</span>
+<span class="nc" id="L599">                times = i;</span>
+<span class="nc" id="L600">                break;</span>
+            } else {
+<span class="nc" id="L602">                this.defineSchemaOfPassN(i);</span>
+<span class="nc" id="L603">                this.mergeCommunities(i);</span>
+            }
+        }
+
+<span class="nc" id="L607">        Map&lt;String, Object&gt; results = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L608">        results.putAll(ImmutableMap.of(&quot;pass_times&quot;, times,</span>
+<span class="nc" id="L609">                                       &quot;phase1_times&quot;, movedTimes,</span>
+<span class="nc" id="L610">                                       &quot;last_precision&quot;, movedPercent,</span>
+<span class="nc" id="L611">                                       &quot;times&quot;, maxTimes));</span>
+<span class="nc" id="L612">        Number communities = 0L;</span>
+<span class="nc" id="L613">        Number modularity = -1L;</span>
+<span class="nc" id="L614">        String commLabel = this.passLabel;</span>
+<span class="nc bnc" id="L615" title="All 2 branches missed.">        if (!commLabel.isEmpty()) {</span>
+<span class="nc" id="L616">            communities = tryNext(this.g.V().hasLabel(commLabel).count());</span>
+<span class="nc" id="L617">            modularity = this.modularity(commLabel);</span>
+        }
+<span class="nc" id="L619">        results.putAll(ImmutableMap.of(&quot;communities&quot;, communities,</span>
+                                       &quot;modularity&quot;, modularity));
+<span class="nc" id="L621">        return results;</span>
+    }
+
+    public double modularity(int pass) {
+        // community vertex label of one pass
+<span class="nc" id="L626">        String label = labelOfPassN(pass);</span>
+<span class="nc" id="L627">        return this.modularity(label);</span>
+    }
+
+    private double modularity(String label) {
+        // label: community vertex label of one pass
+<span class="nc" id="L632">        Number kin = tryNext(this.g.V().hasLabel(label).values(C_KIN).sum());</span>
+<span class="nc" id="L633">        Number weight = tryNext(this.g.E().hasLabel(label).values(C_WEIGHT).sum());</span>
+<span class="nc" id="L634">        double m = kin.intValue() + weight.floatValue() * 2.0d;</span>
+<span class="nc" id="L635">        double q = 0.0d;</span>
+<span class="nc" id="L636">        Iterator&lt;Vertex&gt; comms = this.vertices(label, LIMIT);</span>
+<span class="nc bnc" id="L637" title="All 2 branches missed.">        while (comms.hasNext()) {</span>
+<span class="nc" id="L638">            Vertex comm = comms.next();</span>
+<span class="nc" id="L639">            int cin = comm.value(C_KIN);</span>
+<span class="nc" id="L640">            Number cout = tryNext(this.g.V(comm).bothE().values(C_WEIGHT).sum());</span>
+<span class="nc" id="L641">            double cdegree = cin + cout.floatValue();</span>
+            // Q = ∑(I/M - ((2I+O)/2M)^2)
+<span class="nc" id="L643">            q += cin / m - Math.pow(cdegree / m, 2);</span>
+<span class="nc" id="L644">        }</span>
+<span class="nc" id="L645">        return q;</span>
+    }
+
+    public Collection&lt;Object&gt; showCommunity(String community) {
+<span class="nc" id="L649">        final String C_PASS0 = labelOfPassN(0);</span>
+<span class="nc" id="L650">        Collection&lt;Object&gt; comms = Collections.singletonList(community);</span>
+<span class="nc" id="L651">        boolean reachPass0 = false;</span>
+<span class="nc bnc" id="L652" title="All 4 branches missed.">        while (comms.size() &gt; 0 &amp;&amp; !reachPass0) {</span>
+<span class="nc" id="L653">            Iterator&lt;Vertex&gt; subComms = this.vertices(comms.iterator());</span>
+<span class="nc" id="L654">            comms = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L655" title="All 2 branches missed.">            while (subComms.hasNext()) {</span>
+<span class="nc" id="L656">                this.updateProgress(++this.progress);</span>
+<span class="nc" id="L657">                Vertex sub = subComms.next();</span>
+<span class="nc bnc" id="L658" title="All 2 branches missed.">                if (sub.property(C_MEMBERS).isPresent()) {</span>
+<span class="nc" id="L659">                    Set&lt;Object&gt; members = sub.value(C_MEMBERS);</span>
+<span class="nc" id="L660">                    reachPass0 = sub.label().equals(C_PASS0);</span>
+<span class="nc" id="L661">                    comms.addAll(members);</span>
+                }
+<span class="nc" id="L663">            }</span>
+<span class="nc" id="L664">        }</span>
+<span class="nc" id="L665">        return comms;</span>
+    }
+
+    public long exportCommunity(int pass, boolean vertexFirst) {
+<span class="nc" id="L669">        String exportFile = String.format(&quot;%s/louvain-%s.txt&quot;,</span>
+                                          LouvainAlgorithm.EXPORT_PATH,
+<span class="nc" id="L671">                                          this.jobId());</span>
+<span class="nc" id="L672">        String label = labelOfPassN(pass);</span>
+<span class="nc" id="L673">        GraphTraversal&lt;Vertex, Vertex&gt; t = this.g.V().hasLabel(label);</span>
+<span class="nc" id="L674">        this.execute(t, () -&gt; {</span>
+<span class="nc" id="L675">            try (OutputStream os = Files.newOutputStream(Paths.get(exportFile));</span>
+<span class="nc" id="L676">                 BufferedOutputStream bos = new BufferedOutputStream(os)) {</span>
+<span class="nc bnc" id="L677" title="All 2 branches missed.">                while (t.hasNext()) {</span>
+<span class="nc" id="L678">                    String comm = t.next().id().toString();</span>
+<span class="nc" id="L679">                    Collection&lt;Object&gt; members = this.showCommunity(comm);</span>
+<span class="nc bnc" id="L680" title="All 2 branches missed.">                    if (vertexFirst) {</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">                        for (Object member : members) {</span>
+<span class="nc" id="L682">                            bos.write(StringEncoding.encode(member.toString()));</span>
+<span class="nc" id="L683">                            bos.write(StringEncoding.encode(&quot;\t&quot;));</span>
+<span class="nc" id="L684">                            bos.write(StringEncoding.encode(comm));</span>
+<span class="nc" id="L685">                            bos.write(StringEncoding.encode(&quot;\n&quot;));</span>
+<span class="nc" id="L686">                        }</span>
+                    } else {
+<span class="nc" id="L688">                        bos.write(StringEncoding.encode(comm));</span>
+<span class="nc" id="L689">                        bos.write(StringEncoding.encode(&quot;: &quot;));</span>
+<span class="nc" id="L690">                        bos.write(StringEncoding.encode(members.toString()));</span>
+<span class="nc" id="L691">                        bos.write(StringEncoding.encode(&quot;\n&quot;));</span>
+                    }
+<span class="nc" id="L693">                }</span>
+            }
+<span class="nc" id="L695">            return null;</span>
+        });
+
+<span class="nc" id="L698">        return this.progress;</span>
+    }
+
+    public long clearPass(int pass) {
+<span class="nc" id="L702">        GraphTraversal&lt;Edge, Edge&gt; te = this.g.E();</span>
+<span class="nc bnc" id="L703" title="All 2 branches missed.">        if (pass &lt; 0) {</span>
+            // drop edges of all pass
+<span class="nc" id="L705">            List&lt;String&gt; els = this.cpassEdgeLabels();</span>
+<span class="nc bnc" id="L706" title="All 2 branches missed.">            if (els.size() &gt; 0) {</span>
+<span class="nc" id="L707">                String first = els.remove(0);</span>
+<span class="nc" id="L708">                te = te.hasLabel(first, els.toArray(new String[0]));</span>
+<span class="nc" id="L709">                this.drop(te);</span>
+            }
+            // drop schema
+<span class="nc bnc" id="L712" title="All 2 branches missed.">            for (String label : this.cpassEdgeLabels()) {</span>
+<span class="nc" id="L713">                this.graph().schema().edgeLabel(label).remove();</span>
+<span class="nc" id="L714">            }</span>
+<span class="nc" id="L715">        } else {</span>
+            // drop edges of pass N
+<span class="nc" id="L717">            String label = labelOfPassN(pass);</span>
+<span class="nc bnc" id="L718" title="All 2 branches missed.">            if (this.graph().existsEdgeLabel(label)) {</span>
+<span class="nc" id="L719">                te = te.hasLabel(label);</span>
+<span class="nc" id="L720">                this.drop(te);</span>
+                // drop schema
+<span class="nc" id="L722">                this.graph().schema().edgeLabel(label).remove();</span>
+            }
+        }
+
+<span class="nc" id="L726">        GraphTraversal&lt;Vertex, Vertex&gt; tv = this.g.V();</span>
+<span class="nc bnc" id="L727" title="All 2 branches missed.">        if (pass &lt; 0) {</span>
+            // drop vertices of all pass
+<span class="nc" id="L729">            List&lt;String&gt; vls = this.cpassVertexLabels();</span>
+<span class="nc bnc" id="L730" title="All 2 branches missed.">            if (vls.size() &gt; 0) {</span>
+<span class="nc" id="L731">                String first = vls.remove(0);</span>
+<span class="nc" id="L732">                tv = tv.hasLabel(first, vls.toArray(new String[0]));</span>
+<span class="nc" id="L733">                this.drop(tv);</span>
+            }
+            // drop schema
+<span class="nc bnc" id="L736" title="All 2 branches missed.">            for (String label : this.cpassVertexLabels()) {</span>
+<span class="nc" id="L737">                this.graph().schema().vertexLabel(label).remove();</span>
+<span class="nc" id="L738">            }</span>
+<span class="nc" id="L739">        } else {</span>
+            // drop vertices of pass N
+<span class="nc" id="L741">            String label = labelOfPassN(pass);</span>
+<span class="nc bnc" id="L742" title="All 2 branches missed.">            if (this.graph().existsVertexLabel(label)) {</span>
+<span class="nc" id="L743">                tv = tv.hasLabel(label);</span>
+<span class="nc" id="L744">                this.drop(tv);</span>
+                // drop schema
+<span class="nc" id="L746">                this.graph().schema().vertexLabel(label).remove();</span>
+            }
+        }
+
+<span class="nc" id="L750">        return this.progress;</span>
+    }
+
+    private static class Community {
+
+        // community id (stored as a backend vertex)
+        private final Id cid;
+        // community members size of last pass [just for skip large community]
+<span class="nc" id="L758">        private int size = 0;</span>
+        // community members size of origin vertex [just for debug members lost]
+<span class="nc" id="L760">        private float weight = 0f;</span>
+        /*
+         * weight of all edges in community(2X), sum of kin of new members
+         *  [each is from the last pass, stored in backend vertex]
+         */
+<span class="nc" id="L765">        private int kin = 0;</span>
+        /*
+         * weight of all edges between communities, sum of kout of new members
+         * [each is last pass, calculated in real time by neighbors]
+         */
+<span class="nc" id="L770">        private float kout = 0f;</span>
+
+<span class="nc" id="L772">        public Community(Id cid) {</span>
+<span class="nc" id="L773">            this.cid = cid;</span>
+<span class="nc" id="L774">        }</span>
+
+        public boolean empty() {
+<span class="nc bnc" id="L777" title="All 2 branches missed.">            return this.size &lt;= 0;</span>
+        }
+
+        public int size() {
+<span class="nc" id="L781">            return this.size;</span>
+        }
+
+        public float weight() {
+<span class="nc" id="L785">            return this.weight;</span>
+        }
+
+        public synchronized void add(LouvainTraverser t,
+                                     Vertex v, List&lt;Edge&gt; nbs) {
+<span class="nc" id="L790">            this.size++;</span>
+<span class="nc" id="L791">            this.weight += t.cweightOfVertex(v);</span>
+<span class="nc" id="L792">            this.kin += t.kinOfVertex(v);</span>
+<span class="nc" id="L793">            this.kout += t.weightOfVertex(v, nbs);</span>
+<span class="nc" id="L794">        }</span>
+
+        public synchronized void remove(LouvainTraverser t,
+                                        Vertex v, List&lt;Edge&gt; nbs) {
+<span class="nc" id="L798">            this.size--;</span>
+<span class="nc" id="L799">            this.weight -= t.cweightOfVertex(v);</span>
+<span class="nc" id="L800">            this.kin -= t.kinOfVertex(v);</span>
+<span class="nc" id="L801">            this.kout -= t.weightOfVertex(v, nbs);</span>
+<span class="nc" id="L802">        }</span>
+
+        public synchronized int kin() {
+<span class="nc" id="L805">            return this.kin;</span>
+        }
+
+        public synchronized float kout() {
+<span class="nc" id="L809">            return this.kout;</span>
+        }
+
+        @Override
+        public boolean equals(Object object) {
+<span class="nc bnc" id="L814" title="All 2 branches missed.">            if (!(object instanceof Community)) {</span>
+<span class="nc" id="L815">                return false;</span>
+            }
+<span class="nc" id="L817">            Community other = (Community) object;</span>
+<span class="nc" id="L818">            return Objects.equals(this.cid, other.cid);</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L823">            return String.format(&quot;[%s](size=%s weight=%s kin=%s kout=%s)&quot;,</span>
+<span class="nc" id="L824">                                 this.cid , this.size, this.weight,</span>
+<span class="nc" id="L825">                                 this.kin, this.kout);</span>
+        }
+    }
+
+<span class="nc" id="L829">    private static class Cache {</span>
+
+        private final Map&lt;Id, Float&gt; vertexWeightCache;
+        private final Map&lt;Id, Community&gt; vertex2Community;
+        private final Map&lt;Id, Integer&gt; genIds;
+
+<span class="nc" id="L835">        public Cache() {</span>
+<span class="nc" id="L836">            this.vertexWeightCache = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L837">            this.vertex2Community = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L838">            this.genIds = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L839">        }</span>
+
+        public Community vertex2Community(Object id) {
+<span class="nc bnc" id="L842" title="All 2 branches missed.">            assert id instanceof Id;</span>
+<span class="nc" id="L843">            return this.vertex2Community.get(id);</span>
+        }
+
+        public Community vertex2Community(Id id, Community c) {
+<span class="nc" id="L847">            return this.vertex2Community.put(id, c);</span>
+        }
+
+        public Community vertex2CommunityIfAbsent(Id id, Community c) {
+<span class="nc" id="L851">            Community old = this.vertex2Community.putIfAbsent(id, c);</span>
+<span class="nc bnc" id="L852" title="All 2 branches missed.">            if (old != null) {</span>
+<span class="nc" id="L853">                c = old;</span>
+            }
+<span class="nc" id="L855">            return c;</span>
+        }
+
+        public Float vertexWeight(Id id) {
+<span class="nc" id="L859">            return this.vertexWeightCache.get(id);</span>
+        }
+
+        public void vertexWeight(Id id, float weight) {
+<span class="nc" id="L863">            this.vertexWeightCache.put(id, weight);</span>
+<span class="nc" id="L864">        }</span>
+
+        public void reset() {
+<span class="nc" id="L867">            this.vertexWeightCache.clear();</span>
+<span class="nc" id="L868">            this.vertex2Community.clear();</span>
+<span class="nc" id="L869">            this.genIds.clear();</span>
+<span class="nc" id="L870">        }</span>
+
+        public void resetVertexWeight() {
+<span class="nc" id="L873">            this.vertexWeightCache.clear();</span>
+<span class="nc" id="L874">        }</span>
+
+        public Id genId(int pass, Id cid) {
+<span class="nc" id="L877">            synchronized (this.genIds) {</span>
+<span class="nc bnc" id="L878" title="All 2 branches missed.">                if (!this.genIds.containsKey(cid)) {</span>
+<span class="nc" id="L879">                    this.genIds.putIfAbsent(cid, this.genIds.size() + 1);</span>
+                }
+<span class="nc" id="L881">                String id = pass + &quot;~&quot; + this.genIds.get(cid);</span>
+<span class="nc" id="L882">                return IdGenerator.of(id);</span>
+            }
+        }
+
+        @SuppressWarnings(&quot;unused&quot;)
+        public Id genId2(int pass, Id cid) {
+            // gen id for merge-community vertex
+<span class="nc" id="L889">            String id = cid.toString();</span>
+<span class="nc bnc" id="L890" title="All 2 branches missed.">            if (pass == 0) {</span>
+                // concat pass with cid
+<span class="nc" id="L892">                id = pass + &quot;~&quot; + id;</span>
+            } else {
+                // replace last pass with current pass
+<span class="nc" id="L895">                String lastPass = String.valueOf(pass - 1);</span>
+<span class="nc bnc" id="L896" title="All 2 branches missed.">                assert id.startsWith(lastPass);</span>
+<span class="nc" id="L897">                id = id.substring(lastPass.length());</span>
+<span class="nc" id="L898">                id = pass + id;</span>
+            }
+<span class="nc" id="L900">            return IdGenerator.of(id);</span>
+        }
+
+        public Collection&lt;Pair&lt;Community, Set&lt;Id&gt;&gt;&gt; communities(){
+            // TODO: get communities from backend store instead of ram
+<span class="nc" id="L905">            Map&lt;Id, Pair&lt;Community, Set&lt;Id&gt;&gt;&gt; comms = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L906" title="All 2 branches missed.">            for (Entry&lt;Id, Community&gt; e : this.vertex2Community.entrySet()) {</span>
+<span class="nc" id="L907">                Community c = e.getValue();</span>
+<span class="nc bnc" id="L908" title="All 2 branches missed.">                if (c.empty()) {</span>
+<span class="nc" id="L909">                    continue;</span>
+                }
+<span class="nc" id="L911">                Pair&lt;Community, Set&lt;Id&gt;&gt; pair = comms.computeIfAbsent(c.cid, k -&gt; {</span>
+<span class="nc" id="L912">                    return Pair.of(c, new HashSet&lt;&gt;());</span>
+                });
+                // collect members joined to the community [current pass]
+<span class="nc" id="L915">                pair.getRight().add(e.getKey());</span>
+<span class="nc" id="L916">            }</span>
+<span class="nc" id="L917">            return comms.values();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

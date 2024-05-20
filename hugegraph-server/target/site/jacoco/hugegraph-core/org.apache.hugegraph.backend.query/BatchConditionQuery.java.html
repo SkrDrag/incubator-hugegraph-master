@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BatchConditionQuery.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.query</a> &gt; <span class="el_source">BatchConditionQuery.java</span></div><h1>BatchConditionQuery.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.query;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+
+import org.apache.hugegraph.backend.query.Condition.RelationType;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+
+<span class="nc" id="L30">public class BatchConditionQuery extends ConditionQuery {</span>
+
+    private Condition.Relation in;
+    private final int batchSize;
+
+    public BatchConditionQuery(HugeType resultType, int batchSize) {
+<span class="nc" id="L36">        super(resultType);</span>
+<span class="nc" id="L37">        this.in = null;</span>
+<span class="nc" id="L38">        this.batchSize = batchSize;</span>
+<span class="nc" id="L39">    }</span>
+
+    public void mergeToIN(ConditionQuery query, HugeKeys key) {
+<span class="nc" id="L42">        Object value = query.condition(key);</span>
+<span class="nc bnc" id="L43" title="All 2 branches missed.">        if (this.in == null) {</span>
+<span class="nc bnc" id="L44" title="All 2 branches missed.">            assert !this.containsRelation(RelationType.IN);</span>
+<span class="nc" id="L45">            this.resetConditions(InsertionOrderUtil.newList(</span>
+<span class="nc" id="L46">                                 (List&lt;Condition&gt;) query.conditions()));</span>
+<span class="nc" id="L47">            this.unsetCondition(key);</span>
+
+<span class="nc" id="L49">            List&lt;Object&gt; list = new ArrayList&lt;&gt;(this.batchSize);</span>
+<span class="nc" id="L50">            list.add(value);</span>
+            // TODO: ensure not flatten BatchQuery
+<span class="nc" id="L52">            this.in = (Condition.Relation) Condition.in(key, list);</span>
+<span class="nc" id="L53">            this.query(this.in);</span>
+<span class="nc" id="L54">        } else {</span>
+<span class="nc" id="L55">            E.checkArgument(this.in.key().equals(key),</span>
+                            &quot;Invalid key '%s'&quot;, key);
+<span class="nc" id="L57">            E.checkArgument(this.sameQueryExceptKeyIN(query),</span>
+                            &quot;Can't merge query with different keys&quot;);
+
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L61">            List&lt;Object&gt; values = ((List&lt;Object&gt;) this.in.value());</span>
+<span class="nc" id="L62">            values.add(value);</span>
+        }
+<span class="nc" id="L64">    }</span>
+
+    protected boolean sameQueryExceptKeyIN(ConditionQuery query) {
+<span class="nc" id="L67">        List&lt;Condition.Relation&gt; relations = query.relations();</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">        if (relations.size() != this.relations().size()) {</span>
+<span class="nc" id="L69">            return false;</span>
+        }
+
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        for (Condition.Relation r : this.relations()) {</span>
+<span class="nc bnc" id="L73" title="All 2 branches missed.">            if (r.relation() == RelationType.IN) {</span>
+<span class="nc" id="L74">                continue;</span>
+            }
+<span class="nc" id="L76">            Object key = r.key();</span>
+<span class="nc bnc" id="L77" title="All 2 branches missed.">            if (!Objects.equals(this.condition(key), query.condition(key))) {</span>
+<span class="nc" id="L78">                return false;</span>
+            }
+<span class="nc" id="L80">        }</span>
+<span class="nc" id="L81">        return true;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractCache.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.cache</a> &gt; <span class="el_source">AbstractCache.java</span></div><h1>AbstractCache.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.cache;
+
+import java.util.Iterator;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.LongAdder;
+import java.util.function.Function;
+
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.util.Log;
+
+public abstract class AbstractCache&lt;K, V&gt; implements Cache&lt;K, V&gt; {
+
+    public static final int MB = 1024 * 1024;
+    public static final int DEFAULT_SIZE = 1 * MB;
+    public static final int MAX_INIT_CAP = 100 * MB;
+
+<span class="nc" id="L36">    protected static final Logger LOG = Log.logger(AbstractCache.class);</span>
+
+    // The unit of expired time is ms
+    private volatile long expire;
+
+    // Enabled cache metrics may cause performance penalty
+    private volatile boolean enabledMetrics;
+    private final LongAdder hits;
+    private final LongAdder miss;
+
+    // NOTE: the count in number of items, not in bytes
+    private final long capacity;
+
+    // For user attachment
+    private final AtomicReference&lt;Object&gt; attachment;
+
+    public AbstractCache() {
+<span class="nc" id="L53">        this(DEFAULT_SIZE);</span>
+<span class="nc" id="L54">    }</span>
+
+<span class="nc" id="L56">    public AbstractCache(long capacity) {</span>
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        if (capacity &lt; 0L) {</span>
+<span class="nc" id="L58">            capacity = 0L;</span>
+        }
+<span class="nc" id="L60">        this.capacity = capacity;</span>
+<span class="nc" id="L61">        this.attachment = new AtomicReference&lt;&gt;();</span>
+
+<span class="nc" id="L63">        this.expire = 0L;</span>
+
+<span class="nc" id="L65">        this.enabledMetrics = false;</span>
+<span class="nc" id="L66">        this.hits = new LongAdder();</span>
+<span class="nc" id="L67">        this.miss = new LongAdder();</span>
+<span class="nc" id="L68">    }</span>
+
+    @Watched(prefix = &quot;cache&quot;)
+    @Override
+    public V get(K id) {
+<span class="nc bnc" id="L73" title="All 4 branches missed.">        if (id == null || this.capacity &lt;= 0L) {</span>
+<span class="nc" id="L74">            return null;</span>
+        }
+
+<span class="nc" id="L77">        V value = this.access(id);</span>
+
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (this.enabledMetrics) {</span>
+<span class="nc" id="L80">            this.collectMetrics(id, value);</span>
+        }
+
+<span class="nc" id="L83">        return value;</span>
+    }
+
+    @Watched(prefix = &quot;cache&quot;)
+    @Override
+    public V getOrFetch(K id, Function&lt;K, V&gt; fetcher) {
+<span class="nc bnc" id="L89" title="All 4 branches missed.">        if (id == null || this.capacity &lt;= 0L) {</span>
+<span class="nc" id="L90">            return null;</span>
+        }
+
+<span class="nc" id="L93">        V value = this.access(id);</span>
+
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        if (this.enabledMetrics) {</span>
+<span class="nc" id="L96">            this.collectMetrics(id, value);</span>
+        }
+
+        // Do fetch and update the cache if cache missed
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L101">            value = fetcher.apply(id);</span>
+<span class="nc" id="L102">            this.update(id, value);</span>
+        }
+
+<span class="nc" id="L105">        return value;</span>
+    }
+
+    private void collectMetrics(K key, V value) {
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L110">            this.miss.add(1L);</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">            if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L112">                LOG.debug(&quot;Cache missed '{}' (miss={}, hits={})&quot;,</span>
+                          key, this.miss, this.hits);
+            }
+        } else {
+<span class="nc" id="L116">            this.hits.add(1L);</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">            if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L118">                LOG.debug(&quot;Cache cached '{}' (hits={}, miss={})&quot;,</span>
+                          key, this.hits, this.miss);
+            }
+        }
+<span class="nc" id="L122">    }</span>
+
+    @Override
+    public boolean update(K id, V value) {
+<span class="nc" id="L126">        return this.update(id, value, 0L);</span>
+    }
+
+    @Watched(prefix = &quot;cache&quot;)
+    @Override
+    public boolean update(K id, V value, long timeOffset) {
+<span class="nc bnc" id="L132" title="All 6 branches missed.">        if (id == null || value == null || this.capacity &lt;= 0L) {</span>
+<span class="nc" id="L133">            return false;</span>
+        }
+<span class="nc" id="L135">        return this.write(id, value, timeOffset);</span>
+    }
+
+    @Watched(prefix = &quot;cache&quot;)
+    @Override
+    public boolean updateIfAbsent(K id, V value) {
+<span class="nc bnc" id="L141" title="All 6 branches missed.">        if (id == null || value == null ||</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">            this.capacity &lt;= 0L || this.containsKey(id)) {</span>
+<span class="nc" id="L143">            return false;</span>
+        }
+<span class="nc" id="L145">        return this.write(id, value, 0L);</span>
+    }
+
+    @Watched(prefix = &quot;cache&quot;)
+    @Override
+    public boolean updateIfPresent(K id, V value) {
+<span class="nc bnc" id="L151" title="All 6 branches missed.">        if (id == null || value == null ||</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">            this.capacity &lt;= 0L || !this.containsKey(id)) {</span>
+<span class="nc" id="L153">            return false;</span>
+        }
+<span class="nc" id="L155">        return this.write(id, value, 0L);</span>
+    }
+
+    @Watched(prefix = &quot;cache&quot;)
+    @Override
+    public void invalidate(K id) {
+<span class="nc bnc" id="L161" title="All 6 branches missed.">        if (id == null || this.capacity &lt;= 0L || !this.containsKey(id)) {</span>
+<span class="nc" id="L162">            return;</span>
+        }
+<span class="nc" id="L164">        this.remove(id);</span>
+<span class="nc" id="L165">    }</span>
+
+    @Override
+    public void expire(long ms) {
+<span class="nc" id="L169">        this.expire = ms;</span>
+<span class="nc" id="L170">    }</span>
+
+    @Override
+    public final long expire() {
+<span class="nc" id="L174">        return this.expire;</span>
+    }
+
+    @Override
+    public long tick() {
+<span class="nc" id="L179">        long expireTime = this.expire;</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        if (expireTime &lt;= 0) {</span>
+<span class="nc" id="L181">            return 0L;</span>
+        }
+
+<span class="nc" id="L184">        int expireItems = 0;</span>
+<span class="nc" id="L185">        long current = now();</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        for (Iterator&lt;CacheNode&lt;K, V&gt;&gt; it = this.nodes(); it.hasNext();) {</span>
+<span class="nc" id="L187">            CacheNode&lt;K, V&gt; node = it.next();</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">            if (current - node.time() &gt;= expireTime) {</span>
+                // Remove item while iterating map (it must be ConcurrentMap)
+<span class="nc" id="L190">                this.remove(node.key());</span>
+<span class="nc" id="L191">                expireItems++;</span>
+            }
+<span class="nc" id="L193">        }</span>
+
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        if (expireItems &gt; 0) {</span>
+<span class="nc" id="L196">            LOG.debug(&quot;Cache expired {} items cost {}ms (size {}, expire {}ms)&quot;,</span>
+<span class="nc" id="L197">                      expireItems, now() - current, this.size(), expireTime);</span>
+        }
+<span class="nc" id="L199">        return expireItems;</span>
+    }
+
+    @Override
+    public boolean enableMetrics(boolean enabled) {
+<span class="nc" id="L204">        boolean old = this.enabledMetrics;</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        if (!enabled) {</span>
+<span class="nc" id="L206">            this.hits.reset();</span>
+<span class="nc" id="L207">            this.miss.reset();</span>
+        }
+<span class="nc" id="L209">        this.enabledMetrics = enabled;</span>
+<span class="nc" id="L210">        return old;</span>
+    }
+
+    @Override
+    public final long hits() {
+<span class="nc" id="L215">        return this.hits.sum();</span>
+    }
+
+    @Override
+    public final long miss() {
+<span class="nc" id="L220">        return this.miss.sum();</span>
+    }
+
+    @Override
+    public final long capacity() {
+<span class="nc" id="L225">        return this.capacity;</span>
+    }
+
+    @Override
+    public &lt;T&gt; T attachment(T object) {
+<span class="nc" id="L230">        this.attachment.compareAndSet(null, object);</span>
+<span class="nc" id="L231">        return this.attachment();</span>
+    }
+
+    @Override
+    public &lt;T&gt; T attachment() {
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L237">        T attachment = (T) this.attachment.get();</span>
+<span class="nc" id="L238">        return attachment;</span>
+    }
+
+    protected abstract V access(K id);
+
+    protected abstract boolean write(K id, V value, long timeOffset);
+
+    protected abstract void remove(K id);
+
+    protected abstract Iterator&lt;CacheNode&lt;K, V&gt;&gt; nodes();
+
+    protected static final long now() {
+<span class="nc" id="L250">        return System.currentTimeMillis();</span>
+    }
+
+<span class="nc" id="L253">    protected static class CacheNode&lt;K, V&gt; {</span>
+
+        private final K key;
+        private final V value;
+        private final long time;
+
+<span class="nc" id="L259">        public CacheNode(K key, V value, long timeOffset) {</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">            assert key != null;</span>
+<span class="nc" id="L261">            this.time = now() + timeOffset;</span>
+<span class="nc" id="L262">            this.key = key;</span>
+<span class="nc" id="L263">            this.value = value;</span>
+<span class="nc" id="L264">        }</span>
+
+        public final K key() {
+<span class="nc" id="L267">            return this.key;</span>
+        }
+
+        public final V value() {
+<span class="nc" id="L271">            return this.value;</span>
+        }
+
+        public long time() {
+<span class="nc" id="L275">            return this.time;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L280">            return this.key.toString();</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L285">            return this.key.hashCode();</span>
+        }
+
+        @Override
+        public boolean equals(Object object) {
+<span class="nc bnc" id="L290" title="All 2 branches missed.">            if (!(object instanceof CacheNode)) {</span>
+<span class="nc" id="L291">                return false;</span>
+            }
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L294">            CacheNode&lt;K, V&gt; other = (CacheNode&lt;K, V&gt;) object;</span>
+<span class="nc" id="L295">            return this.key.equals(other.key());</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

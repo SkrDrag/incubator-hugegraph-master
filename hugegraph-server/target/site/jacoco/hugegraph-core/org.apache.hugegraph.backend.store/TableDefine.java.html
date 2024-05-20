@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TableDefine.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">TableDefine.java</span></div><h1>TableDefine.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import com.google.common.collect.ImmutableMap;
+
+<span class="nc" id="L31">public class TableDefine {</span>
+
+    private final Map&lt;HugeKeys, String&gt; columns;
+    private final List&lt;HugeKeys&gt; keys;
+    private final Map&lt;String, String&gt; typesMapping;
+
+<span class="nc" id="L37">    public TableDefine() {</span>
+<span class="nc" id="L38">        this.columns = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L39">        this.keys = InsertionOrderUtil.newList();</span>
+<span class="nc" id="L40">        this.typesMapping = ImmutableMap.of();</span>
+<span class="nc" id="L41">    }</span>
+
+<span class="nc" id="L43">    public TableDefine(Map&lt;String, String&gt; typesMapping) {</span>
+<span class="nc" id="L44">        this.columns = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L45">        this.keys = InsertionOrderUtil.newList();</span>
+<span class="nc" id="L46">        this.typesMapping = typesMapping;</span>
+<span class="nc" id="L47">    }</span>
+
+    public TableDefine column(HugeKeys key, String... desc) {
+<span class="nc" id="L50">        StringBuilder sb = new StringBuilder();</span>
+<span class="nc bnc" id="L51" title="All 2 branches missed.">        for (int i = 0; i &lt; desc.length; i++) {</span>
+<span class="nc" id="L52">            String type = desc[i];</span>
+            // The first element of 'desc' is column data type, which may be
+            // mapped to actual data type supported by backend store
+<span class="nc bnc" id="L55" title="All 4 branches missed.">            if (i == 0 &amp;&amp; this.typesMapping.containsKey(type)) {</span>
+<span class="nc" id="L56">                type = this.typesMapping.get(type);</span>
+            }
+<span class="nc bnc" id="L58" title="All 2 branches missed.">            assert type != null;</span>
+<span class="nc" id="L59">            sb.append(type);</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">            if (i != desc.length - 1) {</span>
+<span class="nc" id="L61">                sb.append(&quot; &quot;);</span>
+            }
+        }
+<span class="nc" id="L64">        this.columns.put(key, sb.toString());</span>
+<span class="nc" id="L65">        return this;</span>
+    }
+
+    public Map&lt;HugeKeys, String&gt; columns() {
+<span class="nc" id="L69">        return Collections.unmodifiableMap(this.columns);</span>
+    }
+
+    public Set&lt;HugeKeys&gt; columnNames() {
+<span class="nc" id="L73">        return this.columns.keySet();</span>
+    }
+
+    public Collection&lt;String&gt; columnTypes() {
+<span class="nc" id="L77">        return this.columns.values();</span>
+    }
+
+    public void keys(HugeKeys... keys) {
+<span class="nc" id="L81">        this.keys.addAll(Arrays.asList(keys));</span>
+<span class="nc" id="L82">    }</span>
+
+    public List&lt;HugeKeys&gt; keys() {
+<span class="nc" id="L85">        return Collections.unmodifiableList(this.keys);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

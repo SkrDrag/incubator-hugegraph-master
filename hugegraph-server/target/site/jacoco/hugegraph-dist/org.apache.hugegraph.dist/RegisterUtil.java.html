@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RegisterUtil.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-dist</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.dist</a> &gt; <span class="el_source">RegisterUtil.java</span></div><h1>RegisterUtil.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.dist;
+
+import java.net.URL;
+import java.util.List;
+import java.util.ServiceLoader;
+
+import org.apache.commons.configuration2.PropertiesConfiguration;
+import org.apache.commons.configuration2.builder.fluent.Configurations;
+import org.apache.commons.configuration2.ex.ConfigurationException;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.backend.serializer.SerializerFactory;
+import org.apache.hugegraph.backend.store.BackendProviderFactory;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.OptionSpace;
+import org.apache.hugegraph.masterelection.RoleElectionOptions;
+import org.apache.hugegraph.plugin.HugeGraphPlugin;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.VersionUtil;
+import org.apache.hugegraph.version.CoreVersion;
+import org.slf4j.Logger;
+
+<span class="nc" id="L41">public class RegisterUtil {</span>
+
+<span class="nc" id="L43">    private static final Logger LOG = Log.logger(RegisterUtil.class);</span>
+
+    static {
+<span class="nc" id="L46">        OptionSpace.register(&quot;core&quot;, CoreOptions.instance());</span>
+<span class="nc" id="L47">        OptionSpace.register(&quot;dist&quot;, DistOptions.instance());</span>
+<span class="nc" id="L48">        OptionSpace.register(&quot;masterElection&quot;, RoleElectionOptions.instance());</span>
+<span class="nc" id="L49">    }</span>
+
+    public static void registerBackends() {
+<span class="nc" id="L52">        String confFile = &quot;/backend.properties&quot;;</span>
+<span class="nc" id="L53">        URL input = RegisterUtil.class.getResource(confFile);</span>
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        E.checkState(input != null,</span>
+                     &quot;Can't read file '%s' as stream&quot;, confFile);
+
+        PropertiesConfiguration props;
+        try {
+<span class="nc" id="L59">            props = new Configurations().properties(input);</span>
+<span class="nc" id="L60">        } catch (ConfigurationException e) {</span>
+<span class="nc" id="L61">            throw new HugeException(&quot;Can't load config file: %s&quot;, e, confFile);</span>
+<span class="nc" id="L62">        }</span>
+
+<span class="nc" id="L64">        HugeConfig config = new HugeConfig(props);</span>
+<span class="nc" id="L65">        List&lt;String&gt; backends = config.get(DistOptions.BACKENDS);</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        for (String backend : backends) {</span>
+<span class="nc" id="L67">            registerBackend(backend);</span>
+<span class="nc" id="L68">        }</span>
+<span class="nc" id="L69">    }</span>
+
+    private static void registerBackend(String backend) {
+<span class="nc bnc" id="L72" title="All 8 branches missed.">        switch (backend) {</span>
+            case &quot;cassandra&quot;:
+<span class="nc" id="L74">                registerCassandra();</span>
+<span class="nc" id="L75">                break;</span>
+            case &quot;scylladb&quot;:
+<span class="nc" id="L77">                registerScyllaDB();</span>
+<span class="nc" id="L78">                break;</span>
+            case &quot;hbase&quot;:
+<span class="nc" id="L80">                registerHBase();</span>
+<span class="nc" id="L81">                break;</span>
+            case &quot;rocksdb&quot;:
+<span class="nc" id="L83">                registerRocksDB();</span>
+<span class="nc" id="L84">                break;</span>
+            case &quot;mysql&quot;:
+<span class="nc" id="L86">                registerMysql();</span>
+<span class="nc" id="L87">                break;</span>
+            case &quot;palo&quot;:
+<span class="nc" id="L89">                registerPalo();</span>
+<span class="nc" id="L90">                break;</span>
+            case &quot;postgresql&quot;:
+<span class="nc" id="L92">                registerPostgresql();</span>
+<span class="nc" id="L93">                break;</span>
+            default:
+<span class="nc" id="L95">                throw new HugeException(&quot;Unsupported backend type '%s'&quot;, backend);</span>
+        }
+<span class="nc" id="L97">    }</span>
+
+    public static void registerCassandra() {
+        // Register config
+<span class="nc" id="L101">        OptionSpace.register(&quot;cassandra&quot;,</span>
+                             &quot;org.apache.hugegraph.backend.store.cassandra.CassandraOptions&quot;);
+        // Register serializer
+<span class="nc" id="L104">        SerializerFactory.register(&quot;cassandra&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.cassandra.CassandraSerializer&quot;);
+        // Register backend
+<span class="nc" id="L107">        BackendProviderFactory.register(&quot;cassandra&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.cassandra.CassandraStoreProvider&quot;);
+<span class="nc" id="L109">    }</span>
+
+    public static void registerScyllaDB() {
+        // Register config
+<span class="nc" id="L113">        OptionSpace.register(&quot;scylladb&quot;,</span>
+                             &quot;org.apache.hugegraph.backend.store.cassandra.CassandraOptions&quot;);
+        // Register serializer
+<span class="nc" id="L116">        SerializerFactory.register(&quot;scylladb&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.cassandra.CassandraSerializer&quot;);
+        // Register backend
+<span class="nc" id="L119">        BackendProviderFactory.register(&quot;scylladb&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.scylladb.ScyllaDBStoreProvider&quot;);
+<span class="nc" id="L121">    }</span>
+
+    public static void registerHBase() {
+        // Register config
+<span class="nc" id="L125">        OptionSpace.register(&quot;hbase&quot;,</span>
+                             &quot;org.apache.hugegraph.backend.store.hbase.HbaseOptions&quot;);
+        // Register serializer
+<span class="nc" id="L128">        SerializerFactory.register(&quot;hbase&quot;,</span>
+                                   &quot;org.apache.hugegraph.backend.store.hbase.HbaseSerializer&quot;);
+        // Register backend
+<span class="nc" id="L131">        BackendProviderFactory.register(&quot;hbase&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.hbase.HbaseStoreProvider&quot;);
+<span class="nc" id="L133">    }</span>
+
+    public static void registerRocksDB() {
+        // Register config
+<span class="nc" id="L137">        OptionSpace.register(&quot;rocksdb&quot;,</span>
+                             &quot;org.apache.hugegraph.backend.store.rocksdb.RocksDBOptions&quot;);
+        // Register backend
+<span class="nc" id="L140">        BackendProviderFactory.register(&quot;rocksdb&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.rocksdb.RocksDBStoreProvider&quot;);
+<span class="nc" id="L142">        BackendProviderFactory.register(&quot;rocksdbsst&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.rocksdbsst.RocksDBSstStoreProvider&quot;);
+<span class="nc" id="L144">    }</span>
+
+    public static void registerMysql() {
+        // Register config
+<span class="nc" id="L148">        OptionSpace.register(&quot;mysql&quot;,</span>
+                             &quot;org.apache.hugegraph.backend.store.mysql.MysqlOptions&quot;);
+        // Register serializer
+<span class="nc" id="L151">        SerializerFactory.register(&quot;mysql&quot;,</span>
+                                   &quot;org.apache.hugegraph.backend.store.mysql.MysqlSerializer&quot;);
+        // Register backend
+<span class="nc" id="L154">        BackendProviderFactory.register(&quot;mysql&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.mysql.MysqlStoreProvider&quot;);
+<span class="nc" id="L156">    }</span>
+
+    public static void registerPalo() {
+        // Register config
+<span class="nc" id="L160">        OptionSpace.register(&quot;palo&quot;,</span>
+                             &quot;org.apache.hugegraph.backend.store.palo.PaloOptions&quot;);
+        // Register serializer
+<span class="nc" id="L163">        SerializerFactory.register(&quot;palo&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.palo.PaloSerializer&quot;);
+        // Register backend
+<span class="nc" id="L166">        BackendProviderFactory.register(&quot;palo&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.palo.PaloStoreProvider&quot;);
+<span class="nc" id="L168">    }</span>
+
+    public static void registerPostgresql() {
+        // Register config
+<span class="nc" id="L172">        OptionSpace.register(&quot;postgresql&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.postgresql.PostgresqlOptions&quot;);
+        // Register serializer
+<span class="nc" id="L175">        SerializerFactory.register(&quot;postgresql&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.postgresql.PostgresqlSerializer&quot;);
+        // Register backend
+<span class="nc" id="L178">        BackendProviderFactory.register(&quot;postgresql&quot;,</span>
+                &quot;org.apache.hugegraph.backend.store.postgresql.PostgresqlStoreProvider&quot;);
+<span class="nc" id="L180">    }</span>
+
+    public static void registerServer() {
+        // Register ServerOptions (rest-server)
+<span class="nc" id="L184">        OptionSpace.register(&quot;server&quot;, &quot;org.apache.hugegraph.config.ServerOptions&quot;);</span>
+        // Register RpcOptions (rpc-server)
+<span class="nc" id="L186">        OptionSpace.register(&quot;rpc&quot;, &quot;org.apache.hugegraph.config.RpcOptions&quot;);</span>
+        // Register AuthOptions (auth-server)
+<span class="nc" id="L188">        OptionSpace.register(&quot;auth&quot;, &quot;org.apache.hugegraph.config.AuthOptions&quot;);</span>
+<span class="nc" id="L189">    }</span>
+
+    /**
+     * Scan the jars in plugins directory and load them
+     */
+    public static void registerPlugins() {
+<span class="nc" id="L195">        ServiceLoader&lt;HugeGraphPlugin&gt; plugins = ServiceLoader.load(HugeGraphPlugin.class);</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        for (HugeGraphPlugin plugin : plugins) {</span>
+<span class="nc" id="L197">            LOG.info(&quot;Loading plugin {}({})&quot;,</span>
+<span class="nc" id="L198">                     plugin.name(), plugin.getClass().getCanonicalName());</span>
+<span class="nc" id="L199">            String minVersion = plugin.supportsMinVersion();</span>
+<span class="nc" id="L200">            String maxVersion = plugin.supportsMaxVersion();</span>
+
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            if (!VersionUtil.match(CoreVersion.VERSION, minVersion,</span>
+                                   maxVersion)) {
+<span class="nc" id="L204">                LOG.warn(&quot;Skip loading plugin '{}' due to the version range &quot; +</span>
+                         &quot;'[{}, {})' that it's supported doesn't cover &quot; +
+<span class="nc" id="L206">                         &quot;current core version '{}'&quot;, plugin.name(),</span>
+<span class="nc" id="L207">                         minVersion, maxVersion, CoreVersion.VERSION.get());</span>
+<span class="nc" id="L208">                continue;</span>
+            }
+            try {
+<span class="nc" id="L211">                plugin.register();</span>
+<span class="nc" id="L212">                LOG.info(&quot;Loaded plugin '{}'&quot;, plugin.name());</span>
+<span class="nc" id="L213">            } catch (Exception e) {</span>
+<span class="nc" id="L214">                throw new HugeException(&quot;Failed to load plugin '%s'&quot;, plugin.name(), e);</span>
+<span class="nc" id="L215">            }</span>
+<span class="nc" id="L216">        }</span>
+<span class="nc" id="L217">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

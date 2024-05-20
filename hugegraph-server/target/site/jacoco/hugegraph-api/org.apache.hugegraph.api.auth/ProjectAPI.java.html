@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ProjectAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.auth</a> &gt; <span class="el_source">ProjectAPI.java</span></div><h1>ProjectAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.auth;
+
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang.StringUtils;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.auth.AuthManager;
+import org.apache.hugegraph.auth.HugeProject;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Path(&quot;graphs/{graph}/auth/projects&quot;)
+@Singleton
+@Tag(name = &quot;ProjectAPI&quot;)
+<span class="nc" id="L60">public class ProjectAPI extends API {</span>
+
+<span class="nc" id="L62">    private static final Logger LOG = Log.logger(ProjectAPI.class);</span>
+    private static final String ACTION_ADD_GRAPH = &quot;add_graph&quot;;
+    private static final String ACTION_REMOVE_GRAPH = &quot;remove_graph&quot;;
+
+    @POST
+    @Timed
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonProject jsonProject) {
+<span class="nc" id="L74">        LOG.debug(&quot;Graph [{}] create project: {}&quot;, graph, jsonProject);</span>
+<span class="nc" id="L75">        checkCreatingBody(jsonProject);</span>
+
+<span class="nc" id="L77">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L78">        HugeProject project = jsonProject.build();</span>
+<span class="nc" id="L79">        Id projectId = manager.authManager().createProject(project);</span>
+        /*
+         * Some fields of project(like admin_group) can only be known after
+         * created
+         */
+<span class="nc" id="L84">        project = manager.authManager().getProject(projectId);</span>
+<span class="nc" id="L85">        return manager.serializer(g).writeAuthElement(project);</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;id&quot;) String id,
+                         @QueryParam(&quot;action&quot;) String action,
+                         JsonProject jsonProject) {
+<span class="nc" id="L98">        LOG.debug(&quot;Graph [{}] update {} project: {}&quot;, graph, action,</span>
+                  jsonProject);
+<span class="nc" id="L100">        checkUpdatingBody(jsonProject);</span>
+
+<span class="nc" id="L102">        HugeGraph g = graph(manager, graph);</span>
+        HugeProject project;
+<span class="nc" id="L104">        Id projectId = UserAPI.parseId(id);</span>
+<span class="nc" id="L105">        AuthManager authManager = manager.authManager();</span>
+        try {
+<span class="nc" id="L107">            project = authManager.getProject(projectId);</span>
+<span class="nc" id="L108">        } catch (NotFoundException e) {</span>
+<span class="nc" id="L109">            throw new IllegalArgumentException(&quot;Invalid project id: &quot; + id);</span>
+<span class="nc" id="L110">        }</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (ProjectAPI.isAddGraph(action)) {</span>
+<span class="nc" id="L112">            project = jsonProject.buildAddGraph(project);</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        } else if (ProjectAPI.isRemoveGraph(action)) {</span>
+<span class="nc" id="L114">            project = jsonProject.buildRemoveGraph(project);</span>
+        } else {
+<span class="nc" id="L116">            E.checkArgument(StringUtils.isEmpty(action),</span>
+                            &quot;The action parameter can only be either &quot; +
+                            &quot;%s or %s or '', but got '%s'&quot;,
+                            ProjectAPI.ACTION_ADD_GRAPH,
+                            ProjectAPI.ACTION_REMOVE_GRAPH,
+                            action);
+<span class="nc" id="L122">            project = jsonProject.buildUpdateDescription(project);</span>
+        }
+<span class="nc" id="L124">        authManager.updateProject(project);</span>
+<span class="nc" id="L125">        return manager.serializer(g).writeAuthElement(project);</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;limit&quot;) @DefaultValue(&quot;100&quot;) long limit) {
+<span class="nc" id="L134">        LOG.debug(&quot;Graph [{}] list project&quot;, graph);</span>
+
+<span class="nc" id="L136">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L137">        List&lt;HugeProject&gt; projects = manager.authManager()</span>
+<span class="nc" id="L138">                                            .listAllProject(limit);</span>
+<span class="nc" id="L139">        return manager.serializer(g).writeAuthElements(&quot;projects&quot;, projects);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L149">        LOG.debug(&quot;Graph [{}] get project: {}&quot;, graph, id);</span>
+
+<span class="nc" id="L151">        HugeGraph g = graph(manager, graph);</span>
+        HugeProject project;
+        try {
+<span class="nc" id="L154">            project = manager.authManager().getProject(UserAPI.parseId(id));</span>
+<span class="nc" id="L155">        } catch (NotFoundException e) {</span>
+<span class="nc" id="L156">            throw new IllegalArgumentException(&quot;Invalid project id: &quot; + id);</span>
+<span class="nc" id="L157">        }</span>
+<span class="nc" id="L158">        return manager.serializer(g).writeAuthElement(project);</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    public void delete(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L168">        LOG.debug(&quot;Graph [{}] delete project: {}&quot;, graph, id);</span>
+
+        @SuppressWarnings(&quot;unused&quot;) // just check if the graph exists
+<span class="nc" id="L171">        HugeGraph g = graph(manager, graph);</span>
+        try {
+<span class="nc" id="L173">            manager.authManager().deleteProject(UserAPI.parseId(id));</span>
+<span class="nc" id="L174">        } catch (NotFoundException e) {</span>
+<span class="nc" id="L175">            throw new IllegalArgumentException(&quot;Invalid project id: &quot; + id);</span>
+<span class="nc" id="L176">        }</span>
+<span class="nc" id="L177">    }</span>
+
+    public static boolean isAddGraph(String action) {
+<span class="nc" id="L180">        return ACTION_ADD_GRAPH.equals(action);</span>
+    }
+
+    public static boolean isRemoveGraph(String action) {
+<span class="nc" id="L184">        return ACTION_REMOVE_GRAPH.equals(action);</span>
+    }
+
+    @JsonIgnoreProperties(value = {&quot;id&quot;, &quot;target_creator&quot;,
+                                   &quot;target_create&quot;, &quot;target_update&quot;,
+                                   &quot;project_admin_group&quot;, &quot;project_op_group&quot;,
+                                   &quot;project_target&quot;})
+    private static class JsonProject implements Checkable {
+
+        @JsonProperty(&quot;project_name&quot;)
+        private String name;
+        @JsonProperty(&quot;project_graphs&quot;)
+        private Set&lt;String&gt; graphs;
+        @JsonProperty(&quot;project_description&quot;)
+        private String description;
+
+        public HugeProject build() {
+<span class="nc" id="L201">            HugeProject project = new HugeProject(this.name, this.description);</span>
+<span class="nc" id="L202">            return project;</span>
+        }
+
+        private HugeProject buildAddGraph(HugeProject project) {
+<span class="nc bnc" id="L206" title="All 2 branches missed.">            E.checkArgument(this.name == null ||</span>
+<span class="nc bnc" id="L207" title="All 2 branches missed.">                            this.name.equals(project.name()),</span>
+                            &quot;The name of project can't be updated&quot;);
+<span class="nc bnc" id="L209" title="All 2 branches missed.">            E.checkArgument(!CollectionUtils.isEmpty(this.graphs),</span>
+                            &quot;The graphs of project can't be empty &quot; +
+                            &quot;when adding graphs&quot;);
+<span class="nc" id="L212">            E.checkArgument(StringUtils.isEmpty(this.description),</span>
+                            &quot;The description of project can't be updated &quot; +
+                            &quot;when adding graphs&quot;);
+<span class="nc" id="L215">            Set&lt;String&gt; sourceGraphs = new HashSet&lt;&gt;(project.graphs());</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            E.checkArgument(!sourceGraphs.containsAll(this.graphs),</span>
+                            &quot;There are graphs '%s' of project '%s' that &quot; +
+                            &quot;have been added in the graph collection&quot;,
+<span class="nc" id="L219">                            this.graphs, project.id());</span>
+<span class="nc" id="L220">            sourceGraphs.addAll(this.graphs);</span>
+<span class="nc" id="L221">            project.graphs(sourceGraphs);</span>
+<span class="nc" id="L222">            return project;</span>
+        }
+
+        private HugeProject buildRemoveGraph(HugeProject project) {
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            E.checkArgument(this.name == null ||</span>
+<span class="nc bnc" id="L227" title="All 2 branches missed.">                            this.name.equals(project.name()),</span>
+                            &quot;The name of project can't be updated&quot;);
+<span class="nc bnc" id="L229" title="All 2 branches missed.">            E.checkArgument(!CollectionUtils.isEmpty(this.graphs),</span>
+                            &quot;The graphs of project can't be empty &quot; +
+                            &quot;when removing graphs&quot;);
+<span class="nc" id="L232">            E.checkArgument(StringUtils.isEmpty(this.description),</span>
+                            &quot;The description of project can't be updated &quot; +
+                            &quot;when removing graphs&quot;);
+<span class="nc" id="L235">            Set&lt;String&gt; sourceGraphs = new HashSet&lt;&gt;(project.graphs());</span>
+<span class="nc" id="L236">            sourceGraphs.removeAll(this.graphs);</span>
+<span class="nc" id="L237">            project.graphs(sourceGraphs);</span>
+<span class="nc" id="L238">            return project;</span>
+        }
+
+        private HugeProject buildUpdateDescription(HugeProject project) {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">            E.checkArgument(this.name == null ||</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">                            this.name.equals(project.name()),</span>
+                            &quot;The name of project can't be updated&quot;);
+<span class="nc" id="L245">            E.checkArgumentNotNull(this.description,</span>
+                                   &quot;The description of project &quot; +
+                                   &quot;can't be null&quot;);
+<span class="nc" id="L248">            E.checkArgument(CollectionUtils.isEmpty(this.graphs),</span>
+                            &quot;The graphs of project can't be updated&quot;);
+<span class="nc" id="L250">            project.description(this.description);</span>
+<span class="nc" id="L251">            return project;</span>
+        }
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L256">            E.checkArgumentNotNull(this.name,</span>
+                                   &quot;The name of project can't be null&quot;);
+<span class="nc" id="L258">            E.checkArgument(CollectionUtils.isEmpty(this.graphs),</span>
+                            &quot;The graphs '%s' of project can't be added when&quot; +
+                            &quot;creating the project '%s'&quot;,
+                            this.graphs, this.name);
+<span class="nc" id="L262">        }</span>
+
+        @Override
+        public void checkUpdate() {
+<span class="nc bnc" id="L266" title="All 4 branches missed.">            E.checkArgument(!CollectionUtils.isEmpty(this.graphs) ||</span>
+                            this.description != null,
+                            &quot;Must specify 'graphs' or 'description' &quot; +
+                            &quot;field that need to be updated&quot;);
+<span class="nc" id="L270">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

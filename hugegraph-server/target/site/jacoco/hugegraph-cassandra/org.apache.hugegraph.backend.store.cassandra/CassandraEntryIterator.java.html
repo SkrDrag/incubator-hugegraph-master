@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CassandraEntryIterator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-cassandra</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.cassandra</a> &gt; <span class="el_source">CassandraEntryIterator.java</span></div><h1>CassandraEntryIterator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.cassandra;
+
+import java.util.Iterator;
+import java.util.List;
+import java.util.function.BiFunction;
+
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntryIterator;
+import org.apache.hugegraph.util.E;
+
+import com.datastax.driver.core.ExecutionInfo;
+import com.datastax.driver.core.PagingState;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.Row;
+
+<span class="nc" id="L35">public class CassandraEntryIterator extends BackendEntryIterator {</span>
+
+    private final ResultSet results;
+    private final Iterator&lt;Row&gt; rows;
+    private final BiFunction&lt;BackendEntry, Row, BackendEntry&gt; merger;
+
+    private int fetchedPageSize;
+    private long expected;
+    private BackendEntry next;
+
+    public CassandraEntryIterator(ResultSet results, Query query,
+           BiFunction&lt;BackendEntry, Row, BackendEntry&gt; merger) {
+<span class="nc" id="L47">        super(query);</span>
+<span class="nc" id="L48">        this.results = results;</span>
+<span class="nc" id="L49">        this.rows = results.iterator();</span>
+<span class="nc" id="L50">        this.merger = merger;</span>
+
+<span class="nc" id="L52">        this.fetchedPageSize = results.getAvailableWithoutFetching();</span>
+<span class="nc" id="L53">        this.next = null;</span>
+
+<span class="nc bnc" id="L55" title="All 2 branches missed.">        if (query.paging()) {</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">            assert query.offset() == 0L;</span>
+<span class="nc bnc" id="L57" title="All 4 branches missed.">            assert query.limit() &gt;= 0L || query.noLimit() : query.limit();</span>
+            // Skip page offset
+<span class="nc" id="L59">            this.expected = PageState.fromString(query.page()).offset();</span>
+<span class="nc" id="L60">            this.skipPageOffset(query.page());</span>
+            // Check the number of available rows
+<span class="nc bnc" id="L62" title="All 2 branches missed.">            E.checkState(this.fetchedPageSize &lt;= query.limit(),</span>
+                         &quot;Unexpected fetched page size: %s&quot;,
+<span class="nc" id="L64">                         this.fetchedPageSize);</span>
+<span class="nc bnc" id="L65" title="All 2 branches missed.">            if (results.isFullyFetched()) {</span>
+                /*
+                 * All results fetched
+                 * NOTE: it may be enough or not enough for the entire page
+                 */
+<span class="nc" id="L70">                this.expected = this.fetchedPageSize;</span>
+            } else {
+                /*
+                 * Not fully fetched, that's fetchedPageSize == query.limit(),
+                 *
+                 * NOTE: but there may be fetchedPageSize &lt; query.limit(), means
+                 * not fetched the entire page (ScyllaDB may go here #1340),
+                 * try to fetch next page later until got the expected count.
+                 * Can simulate by: `select.setFetchSize(total - 1)`
+                 */
+<span class="nc" id="L80">                this.expected = query.total();</span>
+            }
+        } else {
+<span class="nc" id="L83">            this.expected = query.total();</span>
+<span class="nc" id="L84">            this.skipOffset();</span>
+        }
+<span class="nc" id="L86">    }</span>
+
+    @Override
+    public void close() throws Exception {
+        // pass
+<span class="nc" id="L91">    }</span>
+
+    @Override
+    protected final boolean fetch() {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        assert this.current == null;</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">        if (this.next != null) {</span>
+<span class="nc" id="L97">            this.current = this.next;</span>
+<span class="nc" id="L98">            this.next = null;</span>
+        }
+
+<span class="nc bnc" id="L101" title="All 4 branches missed.">        while (this.expected &gt; 0L &amp;&amp; this.rows.hasNext()) {</span>
+            // Limit expected count, due to rows.hasNext() will fetch next page
+<span class="nc" id="L103">            this.expected--;</span>
+<span class="nc" id="L104">            Row row = this.rows.next();</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">            if (this.query.paging()) {</span>
+                // Update fetchedPageSize if auto fetch the next page
+<span class="nc bnc" id="L107" title="All 4 branches missed.">                if (this.expected &gt; 0L &amp;&amp; this.availableLocal() == 0) {</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">                    if (this.rows.hasNext()) {</span>
+<span class="nc" id="L109">                        this.fetchedPageSize = this.availableLocal();</span>
+                    }
+                }
+            }
+<span class="nc" id="L113">            BackendEntry merged = this.merger.apply(this.current, row);</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            if (this.current == null) {</span>
+                // The first time to read
+<span class="nc" id="L116">                this.current = merged;</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">            } else if (merged == this.current) {</span>
+                // The next entry belongs to the current entry
+<span class="nc bnc" id="L119" title="All 2 branches missed.">                assert merged != null;</span>
+            } else {
+                // New entry
+<span class="nc bnc" id="L122" title="All 2 branches missed.">                assert this.next == null;</span>
+<span class="nc" id="L123">                this.next = merged;</span>
+<span class="nc" id="L124">                break;</span>
+            }
+<span class="nc" id="L126">        }</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        return this.current != null;</span>
+    }
+
+    @Override
+    protected final long sizeOf(BackendEntry entry) {
+<span class="nc" id="L132">        CassandraBackendEntry e = (CassandraBackendEntry) entry;</span>
+<span class="nc" id="L133">        int subRowsSize = e.subRows().size();</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        return subRowsSize &gt; 0 ? subRowsSize : 1L;</span>
+    }
+
+    @Override
+    protected final long skip(BackendEntry entry, long skip) {
+<span class="nc" id="L139">        CassandraBackendEntry e = (CassandraBackendEntry) entry;</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">        E.checkState(e.subRows().size() &gt; skip, &quot;Invalid entry to skip&quot;);</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        for (long i = 0; i &lt; skip; i++) {</span>
+<span class="nc" id="L142">            e.subRows().remove(0);</span>
+        }
+<span class="nc" id="L144">        return e.subRows().size();</span>
+    }
+
+    @Override
+    protected PageState pageState() {
+        byte[] position;
+<span class="nc" id="L150">        int offset = 0;</span>
+<span class="nc" id="L151">        int count = (int) this.count();</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        assert this.fetched() == count;</span>
+<span class="nc" id="L153">        int extra = this.availableLocal();</span>
+<span class="nc" id="L154">        List&lt;ExecutionInfo&gt; infos = this.results.getAllExecutionInfo();</span>
+<span class="nc bnc" id="L155" title="All 4 branches missed.">        if (extra &gt; 0 &amp;&amp; infos.size() &gt;= 2) {</span>
+            /*
+             * Go back to the previous page if there are still available
+             * results fetched to local memory but not consumed, and set page
+             * offset with consumed amount of results.
+             *
+             * Safely, we should get the remaining size of the current page by:
+             *  `Whitebox.getInternalState(results, &quot;currentPage&quot;).size()`
+             * instead of
+             *  `results.getAvailableWithoutFetching()`
+             */
+<span class="nc" id="L166">            ExecutionInfo previous = infos.get(infos.size() - 2);</span>
+<span class="nc" id="L167">            PagingState page = previous.getPagingState();</span>
+<span class="nc" id="L168">            position = page.toBytes();</span>
+<span class="nc" id="L169">            offset = this.fetchedPageSize - extra;</span>
+<span class="nc" id="L170">        } else {</span>
+<span class="nc" id="L171">            PagingState page = this.results.getExecutionInfo().getPagingState();</span>
+<span class="nc bnc" id="L172" title="All 4 branches missed.">            if (page == null || this.expected &gt; 0L) {</span>
+                // Call isExhausted() will lead to try to fetch the next page
+<span class="nc" id="L174">                E.checkState(this.results.isExhausted(),</span>
+                             &quot;Unexpected paging state with expected=%s, &quot; +
+                             &quot;ensure consume all the fetched results before &quot; +
+<span class="nc" id="L177">                             &quot;calling pageState()&quot;, this.expected);</span>
+<span class="nc" id="L178">                position = PageState.EMPTY_BYTES;</span>
+            } else {
+                /*
+                 * Exist page position which used to fetch the next page.
+                 * Maybe it happens to the last page (that's the position is
+                 * at the end of results and next page is empty)
+                 */
+<span class="nc" id="L185">                position = page.toBytes();</span>
+            }
+        }
+
+<span class="nc" id="L189">        return new PageState(position, offset, count);</span>
+    }
+
+    private int availableLocal() {
+<span class="nc" id="L193">        return this.results.getAvailableWithoutFetching();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

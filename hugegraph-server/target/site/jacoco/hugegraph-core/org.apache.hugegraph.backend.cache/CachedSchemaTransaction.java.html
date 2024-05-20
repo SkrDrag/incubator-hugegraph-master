@@ -1,0 +1,445 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CachedSchemaTransaction.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.cache</a> &gt; <span class="el_source">CachedSchemaTransaction.java</span></div><h1>CachedSchemaTransaction.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.cache;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
+
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.backend.store.ram.IntObjectMap;
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.event.EventListener;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Events;
+import com.google.common.collect.ImmutableSet;
+
+public final class CachedSchemaTransaction extends SchemaTransaction {
+
+    private final Cache&lt;Id, Object&gt; idCache;
+    private final Cache&lt;Id, Object&gt; nameCache;
+
+    private final SchemaCaches&lt;SchemaElement&gt; arrayCaches;
+
+    private EventListener storeEventListener;
+    private EventListener cacheEventListener;
+
+    public CachedSchemaTransaction(HugeGraphParams graph, BackendStore store) {
+<span class="nc" id="L53">        super(graph, store);</span>
+
+<span class="nc" id="L55">        final long capacity = graph.configuration()</span>
+<span class="nc" id="L56">                                   .get(CoreOptions.SCHEMA_CACHE_CAPACITY);</span>
+<span class="nc" id="L57">        this.idCache = this.cache(&quot;schema-id&quot;, capacity);</span>
+<span class="nc" id="L58">        this.nameCache = this.cache(&quot;schema-name&quot;, capacity);</span>
+
+<span class="nc" id="L60">        SchemaCaches&lt;SchemaElement&gt; attachment = this.idCache.attachment();</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        if (attachment == null) {</span>
+<span class="nc" id="L62">            int acSize = (int) (capacity &gt;&gt; 3);</span>
+<span class="nc" id="L63">            attachment = this.idCache.attachment(new SchemaCaches&lt;&gt;(acSize));</span>
+        }
+<span class="nc" id="L65">        this.arrayCaches = attachment;</span>
+
+<span class="nc" id="L67">        this.listenChanges();</span>
+<span class="nc" id="L68">    }</span>
+
+    @Override
+    public void close() {
+        try {
+<span class="nc" id="L73">            super.close();</span>
+        } finally {
+<span class="nc" id="L75">            this.clearCache(false);</span>
+<span class="nc" id="L76">            this.unlistenChanges();</span>
+        }
+<span class="nc" id="L78">    }</span>
+
+    private Cache&lt;Id, Object&gt; cache(String prefix, long capacity) {
+<span class="nc" id="L81">        final String name = prefix + &quot;-&quot; + this.graphName();</span>
+        // NOTE: must disable schema cache-expire due to getAllSchema()
+<span class="nc" id="L83">        return CacheManager.instance().cache(name, capacity);</span>
+    }
+
+    private void listenChanges() {
+        // Listen store event: &quot;store.init&quot;, &quot;store.clear&quot;, ...
+<span class="nc" id="L88">        Set&lt;String&gt; storeEvents = ImmutableSet.of(Events.STORE_INIT,</span>
+                                                  Events.STORE_CLEAR,
+                                                  Events.STORE_TRUNCATE);
+<span class="nc" id="L91">        this.storeEventListener = event -&gt; {</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">            if (storeEvents.contains(event.name())) {</span>
+<span class="nc" id="L93">                LOG.debug(&quot;Graph {} clear schema cache on event '{}'&quot;,</span>
+<span class="nc" id="L94">                          this.graph(), event.name());</span>
+<span class="nc" id="L95">                this.clearCache(true);</span>
+<span class="nc" id="L96">                return true;</span>
+            }
+<span class="nc" id="L98">            return false;</span>
+        };
+<span class="nc" id="L100">        this.store().provider().listen(this.storeEventListener);</span>
+
+        // Listen cache event: &quot;cache&quot;(invalid cache item)
+<span class="nc" id="L103">        this.cacheEventListener = event -&gt; {</span>
+<span class="nc" id="L104">            LOG.debug(&quot;Graph {} received schema cache event: {}&quot;,</span>
+<span class="nc" id="L105">                      this.graph(), event);</span>
+<span class="nc" id="L106">            Object[] args = event.args();</span>
+<span class="nc bnc" id="L107" title="All 4 branches missed.">            E.checkArgument(args.length &gt; 0 &amp;&amp; args[0] instanceof String,</span>
+                            &quot;Expect event action argument&quot;);
+<span class="nc bnc" id="L109" title="All 2 branches missed.">            if (Cache.ACTION_INVALID.equals(args[0])) {</span>
+<span class="nc" id="L110">                event.checkArgs(String.class, HugeType.class, Id.class);</span>
+<span class="nc" id="L111">                HugeType type = (HugeType) args[1];</span>
+<span class="nc" id="L112">                Id id = (Id) args[2];</span>
+<span class="nc" id="L113">                this.invalidateCache(type, id);</span>
+<span class="nc" id="L114">                this.resetCachedAll(type);</span>
+<span class="nc" id="L115">                return true;</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            } else if (Cache.ACTION_CLEAR.equals(args[0])) {</span>
+<span class="nc" id="L117">                event.checkArgs(String.class, HugeType.class);</span>
+<span class="nc" id="L118">                this.clearCache(false);</span>
+<span class="nc" id="L119">                return true;</span>
+            }
+<span class="nc" id="L121">            return false;</span>
+        };
+<span class="nc" id="L123">        EventHub schemaEventHub = this.params().schemaEventHub();</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        if (!schemaEventHub.containsListener(Events.CACHE)) {</span>
+<span class="nc" id="L125">            schemaEventHub.listen(Events.CACHE, this.cacheEventListener);</span>
+        }
+<span class="nc" id="L127">    }</span>
+
+    private void unlistenChanges() {
+        // Unlisten store event
+<span class="nc" id="L131">        this.store().provider().unlisten(this.storeEventListener);</span>
+
+        // Unlisten cache event
+<span class="nc" id="L134">        EventHub schemaEventHub = this.params().schemaEventHub();</span>
+<span class="nc" id="L135">        schemaEventHub.unlisten(Events.CACHE, this.cacheEventListener);</span>
+<span class="nc" id="L136">    }</span>
+
+    private void notifyChanges(String action, HugeType type, Id id) {
+<span class="nc" id="L139">        EventHub graphEventHub = this.params().schemaEventHub();</span>
+<span class="nc" id="L140">        graphEventHub.notify(Events.CACHE, action, type, id);</span>
+<span class="nc" id="L141">    }</span>
+
+    private void notifyChanges(String action, HugeType type) {
+<span class="nc" id="L144">        EventHub graphEventHub = this.params().schemaEventHub();</span>
+<span class="nc" id="L145">        graphEventHub.notify(Events.CACHE, action, type);</span>
+<span class="nc" id="L146">    }</span>
+
+    private void resetCachedAll(HugeType type) {
+        // Set the cache all flag of the schema type to false
+<span class="nc" id="L150">        this.cachedTypes().put(type, false);</span>
+<span class="nc" id="L151">    }</span>
+
+    private void resetCachedAllIfReachedCapacity() {
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (this.idCache.size() &gt;= this.idCache.capacity()) {</span>
+<span class="nc" id="L155">            LOG.warn(&quot;Schema cache reached capacity({}): {}&quot;,</span>
+<span class="nc" id="L156">                     this.idCache.capacity(), this.idCache.size());</span>
+<span class="nc" id="L157">            this.cachedTypes().clear();</span>
+        }
+<span class="nc" id="L159">    }</span>
+
+    private CachedTypes cachedTypes() {
+<span class="nc" id="L162">        return this.arrayCaches.cachedTypes();</span>
+    }
+
+    private void clearCache(boolean notify) {
+<span class="nc" id="L166">        this.idCache.clear();</span>
+<span class="nc" id="L167">        this.nameCache.clear();</span>
+<span class="nc" id="L168">        this.arrayCaches.clear();</span>
+
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        if (notify) {</span>
+<span class="nc" id="L171">            this.notifyChanges(Cache.ACTION_CLEARED, null);</span>
+        }
+<span class="nc" id="L173">    }</span>
+
+    private void updateCache(SchemaElement schema) {
+<span class="nc" id="L176">        this.resetCachedAllIfReachedCapacity();</span>
+
+        // update id cache
+<span class="nc" id="L179">        Id prefixedId = generateId(schema.type(), schema.id());</span>
+<span class="nc" id="L180">        this.idCache.update(prefixedId, schema);</span>
+
+        // update name cache
+<span class="nc" id="L183">        Id prefixedName = generateId(schema.type(), schema.name());</span>
+<span class="nc" id="L184">        this.nameCache.update(prefixedName, schema);</span>
+
+        // update optimized array cache
+<span class="nc" id="L187">        this.arrayCaches.updateIfNeeded(schema);</span>
+<span class="nc" id="L188">    }</span>
+
+    private void invalidateCache(HugeType type, Id id) {
+        // remove from id cache and name cache
+<span class="nc" id="L192">        Id prefixedId = generateId(type, id);</span>
+<span class="nc" id="L193">        Object value = this.idCache.get(prefixedId);</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        if (value != null) {</span>
+<span class="nc" id="L195">            this.idCache.invalidate(prefixedId);</span>
+
+<span class="nc" id="L197">            SchemaElement schema = (SchemaElement) value;</span>
+<span class="nc" id="L198">            Id prefixedName = generateId(schema.type(), schema.name());</span>
+<span class="nc" id="L199">            this.nameCache.invalidate(prefixedName);</span>
+        }
+
+        // remove from optimized array cache
+<span class="nc" id="L203">        this.arrayCaches.remove(type, id);</span>
+<span class="nc" id="L204">    }</span>
+
+    private static Id generateId(HugeType type, Id id) {
+        // NOTE: it's slower performance to use:
+        // String.format(&quot;%x-%s&quot;, type.code(), name)
+<span class="nc" id="L209">        return IdGenerator.of(type.string() + &quot;-&quot; + id.asString());</span>
+    }
+
+    private static Id generateId(HugeType type, String name) {
+<span class="nc" id="L213">        return IdGenerator.of(type.string() + &quot;-&quot; + name);</span>
+    }
+
+    @Override
+    protected void updateSchema(SchemaElement schema,
+                                Consumer&lt;SchemaElement&gt; updateCallback) {
+<span class="nc" id="L219">        super.updateSchema(schema, updateCallback);</span>
+
+<span class="nc" id="L221">        this.updateCache(schema);</span>
+
+<span class="nc" id="L223">        this.notifyChanges(Cache.ACTION_INVALIDED, schema.type(), schema.id());</span>
+<span class="nc" id="L224">    }</span>
+
+    @Override
+    protected void addSchema(SchemaElement schema) {
+<span class="nc" id="L228">        super.addSchema(schema);</span>
+
+<span class="nc" id="L230">        this.updateCache(schema);</span>
+
+<span class="nc" id="L232">        this.notifyChanges(Cache.ACTION_INVALIDED, schema.type(), schema.id());</span>
+<span class="nc" id="L233">    }</span>
+
+    @Override
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected &lt;T extends SchemaElement&gt; T getSchema(HugeType type, Id id) {
+        // try get from optimized array cache
+<span class="nc bnc" id="L239" title="All 4 branches missed.">        if (id.number() &amp;&amp; id.asLong() &gt; 0L) {</span>
+<span class="nc" id="L240">            SchemaElement value = this.arrayCaches.get(type, id);</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            if (value != null) {</span>
+<span class="nc" id="L242">                return (T) value;</span>
+            }
+        }
+
+<span class="nc" id="L246">        Id prefixedId = generateId(type, id);</span>
+<span class="nc" id="L247">        Object value = this.idCache.get(prefixedId);</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L249">            value = super.getSchema(type, id);</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">            if (value != null) {</span>
+<span class="nc" id="L251">                SchemaElement schema = (SchemaElement) value;</span>
+                // update id cache, name cache and optimized array cache
+<span class="nc" id="L253">                this.updateCache(schema);</span>
+<span class="nc" id="L254">            }</span>
+        } else {
+            // update optimized array cache for the result from id cache
+<span class="nc" id="L257">            this.arrayCaches.updateIfNeeded((SchemaElement) value);</span>
+        }
+
+<span class="nc" id="L260">        return (T) value;</span>
+    }
+
+    @Override
+    @SuppressWarnings(&quot;unchecked&quot;)
+    protected &lt;T extends SchemaElement&gt; T getSchema(HugeType type,
+                                                    String name) {
+<span class="nc" id="L267">        Id prefixedName = generateId(type, name);</span>
+<span class="nc" id="L268">        Object value = this.nameCache.get(prefixedName);</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L270">            value = super.getSchema(type, name);</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            if (value != null) {</span>
+<span class="nc" id="L272">                SchemaElement schema = (SchemaElement) value;</span>
+<span class="nc" id="L273">                this.updateCache(schema);</span>
+            }
+        }
+<span class="nc" id="L276">        return (T) value;</span>
+    }
+
+    @Override
+    protected void removeSchema(SchemaElement schema) {
+<span class="nc" id="L281">        super.removeSchema(schema);</span>
+
+<span class="nc" id="L283">        this.invalidateCache(schema.type(), schema.id());</span>
+
+<span class="nc" id="L285">        this.notifyChanges(Cache.ACTION_INVALIDED, schema.type(), schema.id());</span>
+<span class="nc" id="L286">    }</span>
+
+    @Override
+    protected &lt;T extends SchemaElement&gt; List&lt;T&gt; getAllSchema(HugeType type) {
+<span class="nc" id="L290">        Boolean cachedAll = this.cachedTypes().getOrDefault(type, false);</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">        if (cachedAll) {</span>
+<span class="nc" id="L292">            List&lt;T&gt; results = new ArrayList&lt;&gt;();</span>
+            // Get from cache
+<span class="nc" id="L294">            this.idCache.traverse(value -&gt; {</span>
+                @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L296">                T schema = (T) value;</span>
+<span class="nc bnc" id="L297" title="All 2 branches missed.">                if (schema.type() == type) {</span>
+<span class="nc" id="L298">                    results.add(schema);</span>
+                }
+<span class="nc" id="L300">            });</span>
+<span class="nc" id="L301">            return results;</span>
+        } else {
+<span class="nc" id="L303">            this.cachedTypes().remove(type);</span>
+<span class="nc" id="L304">            List&lt;T&gt; results = super.getAllSchema(type);</span>
+<span class="nc" id="L305">            long free = this.idCache.capacity() - this.idCache.size();</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">            if (results.size() &lt;= free) {</span>
+                // Update cache
+<span class="nc bnc" id="L308" title="All 2 branches missed.">                for (T schema : results) {</span>
+<span class="nc" id="L309">                    this.updateCache(schema);</span>
+<span class="nc" id="L310">                }</span>
+<span class="nc" id="L311">                this.cachedTypes().putIfAbsent(type, true);</span>
+            }
+<span class="nc" id="L313">            return results;</span>
+        }
+    }
+
+<span class="nc" id="L317">    private static final class SchemaCaches&lt;V extends SchemaElement&gt; {</span>
+
+        private final int size;
+
+        private final IntObjectMap&lt;V&gt; pks;
+        private final IntObjectMap&lt;V&gt; vls;
+        private final IntObjectMap&lt;V&gt; els;
+        private final IntObjectMap&lt;V&gt; ils;
+
+        private final CachedTypes cachedTypes;
+
+<span class="nc" id="L328">        public SchemaCaches(int size) {</span>
+            // TODO: improve size of each type for optimized array cache
+<span class="nc" id="L330">            this.size = size;</span>
+
+<span class="nc" id="L332">            this.pks = new IntObjectMap&lt;&gt;(size);</span>
+<span class="nc" id="L333">            this.vls = new IntObjectMap&lt;&gt;(size);</span>
+<span class="nc" id="L334">            this.els = new IntObjectMap&lt;&gt;(size);</span>
+<span class="nc" id="L335">            this.ils = new IntObjectMap&lt;&gt;(size);</span>
+
+<span class="nc" id="L337">            this.cachedTypes = new CachedTypes();</span>
+<span class="nc" id="L338">        }</span>
+
+        public void updateIfNeeded(V schema) {
+<span class="nc bnc" id="L341" title="All 2 branches missed.">            if (schema == null) {</span>
+<span class="nc" id="L342">                return;</span>
+            }
+<span class="nc" id="L344">            Id id = schema.id();</span>
+<span class="nc bnc" id="L345" title="All 4 branches missed.">            if (id.number() &amp;&amp; id.asLong() &gt; 0L) {</span>
+<span class="nc" id="L346">                this.set(schema.type(), id, schema);</span>
+            }
+<span class="nc" id="L348">        }</span>
+
+        @Watched
+        public V get(HugeType type, Id id) {
+<span class="nc bnc" id="L352" title="All 2 branches missed.">            assert id.number();</span>
+<span class="nc" id="L353">            long longId = id.asLong();</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">            if (longId &lt;= 0L) {</span>
+<span class="nc" id="L355">                assert false : id;</span>
+<span class="nc" id="L356">                return null;</span>
+            }
+<span class="nc" id="L358">            int key = (int) longId;</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">            if (key &gt;= this.size) {</span>
+<span class="nc" id="L360">                return null;</span>
+            }
+<span class="nc bnc" id="L362" title="All 5 branches missed.">            switch (type) {</span>
+                case PROPERTY_KEY:
+<span class="nc" id="L364">                    return this.pks.get(key);</span>
+                case VERTEX_LABEL:
+<span class="nc" id="L366">                    return this.vls.get(key);</span>
+                case EDGE_LABEL:
+<span class="nc" id="L368">                    return this.els.get(key);</span>
+                case INDEX_LABEL:
+<span class="nc" id="L370">                    return this.ils.get(key);</span>
+                default:
+<span class="nc" id="L372">                    return null;</span>
+            }
+        }
+
+        public void set(HugeType type, Id id, V value) {
+<span class="nc bnc" id="L377" title="All 2 branches missed.">            assert id.number();</span>
+<span class="nc" id="L378">            long longId = id.asLong();</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">            if (longId &lt;= 0L) {</span>
+<span class="nc" id="L380">                assert false : id;</span>
+<span class="nc" id="L381">                return;</span>
+            }
+<span class="nc" id="L383">            int key = (int) longId;</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">            if (key &gt;= this.size) {</span>
+<span class="nc" id="L385">                return;</span>
+            }
+
+<span class="nc" id="L388">            this.setValue(type, key, value);</span>
+<span class="nc" id="L389">        }</span>
+
+        public void remove(HugeType type, Id id) {
+<span class="nc bnc" id="L392" title="All 2 branches missed.">            assert id.number();</span>
+<span class="nc" id="L393">            long longId = id.asLong();</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">            if (longId &lt;= 0L) {</span>
+<span class="nc" id="L395">                return;</span>
+            }
+<span class="nc" id="L397">            int key = (int) longId;</span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">            if (key &gt;= this.size) {</span>
+<span class="nc" id="L399">                return;</span>
+            }
+
+<span class="nc" id="L402">            this.setValue(type, key, null);</span>
+<span class="nc" id="L403">        }</span>
+
+        public void clear() {
+<span class="nc" id="L406">            this.pks.clear();</span>
+<span class="nc" id="L407">            this.vls.clear();</span>
+<span class="nc" id="L408">            this.els.clear();</span>
+<span class="nc" id="L409">            this.ils.clear();</span>
+
+<span class="nc" id="L411">            this.cachedTypes.clear();</span>
+<span class="nc" id="L412">        }</span>
+
+        public CachedTypes cachedTypes() {
+<span class="nc" id="L415">            return this.cachedTypes;</span>
+        }
+
+        private void setValue(HugeType type, int key, V value) {
+<span class="nc bnc" id="L419" title="All 5 branches missed.">            switch (type) {</span>
+                case PROPERTY_KEY:
+<span class="nc" id="L421">                    this.pks.set(key, value);</span>
+<span class="nc" id="L422">                    break;</span>
+                case VERTEX_LABEL:
+<span class="nc" id="L424">                    this.vls.set(key, value);</span>
+<span class="nc" id="L425">                    break;</span>
+                case EDGE_LABEL:
+<span class="nc" id="L427">                    this.els.set(key, value);</span>
+<span class="nc" id="L428">                    break;</span>
+                case INDEX_LABEL:
+<span class="nc" id="L430">                    this.ils.set(key, value);</span>
+<span class="nc" id="L431">                    break;</span>
+                default:
+                    // pass
+                    break;
+            }
+<span class="nc" id="L436">        }</span>
+    }
+
+    private static class CachedTypes
+                   extends ConcurrentHashMap&lt;HugeType, Boolean&gt; {
+
+        private static final long serialVersionUID = -2215549791679355996L;
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

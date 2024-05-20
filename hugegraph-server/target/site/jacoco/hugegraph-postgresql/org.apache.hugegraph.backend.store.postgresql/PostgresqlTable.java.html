@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>PostgresqlTable.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-postgresql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.postgresql</a> &gt; <span class="el_source">PostgresqlTable.java</span></div><h1>PostgresqlTable.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.postgresql;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.logging.log4j.util.Strings;
+
+import org.apache.hugegraph.backend.serializer.TableBackendEntry.Row;
+import org.apache.hugegraph.backend.store.mysql.MysqlBackendEntry;
+import org.apache.hugegraph.backend.store.mysql.MysqlSessions.Session;
+import org.apache.hugegraph.backend.store.mysql.MysqlTable;
+import org.apache.hugegraph.backend.store.mysql.WhereBuilder;
+import org.apache.hugegraph.type.define.HugeKeys;
+
+public abstract class PostgresqlTable extends MysqlTable {
+
+<span class="nc" id="L34">    private String orderByKeysTemplate = null;</span>
+
+    public PostgresqlTable(String table) {
+<span class="nc" id="L37">        super(table);</span>
+<span class="nc" id="L38">    }</span>
+
+    @Override
+    protected String buildDropTemplate() {
+<span class="nc" id="L42">        return String.format(&quot;DROP TABLE IF EXISTS %s CASCADE;&quot;, this.table());</span>
+    }
+
+    @Override
+    protected String buildTruncateTemplate() {
+<span class="nc" id="L47">        return String.format(&quot;TRUNCATE TABLE %s CASCADE;&quot;, this.table());</span>
+    }
+
+    @Override
+    protected String engine(Session session) {
+<span class="nc" id="L52">        return Strings.EMPTY;</span>
+    }
+
+    @Override
+    protected String buildUpdateForcedTemplate(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L57">        return this.buildInsertKeys(entry, false);</span>
+    }
+
+    @Override
+    protected List&lt;?&gt; buildUpdateForcedParams(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L62">        List&lt;Object&gt; params = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L63">        List&lt;Object&gt; allColumns = this.buildColumnsParams(entry);</span>
+<span class="nc" id="L64">        params.addAll(allColumns);</span>
+<span class="nc" id="L65">        params.addAll(allColumns);</span>
+<span class="nc" id="L66">        return params;</span>
+    }
+
+    @Override
+    protected String buildUpdateIfAbsentTemplate(Row entry) {
+<span class="nc" id="L71">        return this.buildInsertKeys(entry, true);</span>
+    }
+
+    @Override
+    protected List&lt;?&gt; buildUpdateIfAbsentParams(MysqlBackendEntry.Row entry) {
+<span class="nc" id="L76">        return this.buildColumnsParams(entry);</span>
+    }
+
+    protected String buildInsertKeys(MysqlBackendEntry.Row entry,
+                                     boolean ignoreConflicts) {
+<span class="nc" id="L81">        StringBuilder insert = new StringBuilder();</span>
+<span class="nc" id="L82">        insert.append(&quot;INSERT INTO &quot;).append(this.table()).append(&quot; (&quot;);</span>
+
+<span class="nc" id="L84">        int i = 0;</span>
+<span class="nc" id="L85">        int size = entry.columns().size();</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        for (HugeKeys key : entry.columns().keySet()) {</span>
+<span class="nc" id="L87">            insert.append(formatKey(key));</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">            if (++i != size) {</span>
+<span class="nc" id="L89">                insert.append(&quot;, &quot;);</span>
+            }
+<span class="nc" id="L91">        }</span>
+<span class="nc" id="L92">        insert.append(&quot;) VALUES (&quot;);</span>
+
+<span class="nc bnc" id="L94" title="All 2 branches missed.">        for (i = 0; i &lt; size; i++) {</span>
+<span class="nc" id="L95">            insert.append(&quot;?&quot;);</span>
+<span class="nc bnc" id="L96" title="All 2 branches missed.">            if (i != size - 1) {</span>
+<span class="nc" id="L97">                insert.append(&quot;, &quot;);</span>
+            }
+        }
+<span class="nc" id="L100">        insert.append(&quot;)&quot;);</span>
+
+<span class="nc" id="L102">        i = 0;</span>
+<span class="nc" id="L103">        size = this.tableDefine().keys().size();</span>
+<span class="nc" id="L104">        insert.append(&quot; ON CONFLICT (&quot;);</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">        for (HugeKeys key : this.tableDefine().keys()) {</span>
+<span class="nc" id="L106">            insert.append(formatKey(key));</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">            if (++i != size) {</span>
+<span class="nc" id="L108">                insert.append(&quot;, &quot;);</span>
+            }
+<span class="nc" id="L110">        }</span>
+<span class="nc" id="L111">        insert.append(&quot;)&quot;);</span>
+
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        if (ignoreConflicts) {</span>
+<span class="nc" id="L114">            insert.append(&quot; DO NOTHING&quot;);</span>
+        } else {
+<span class="nc" id="L116">            i = 0;</span>
+<span class="nc" id="L117">            size = entry.columns().keySet().size();</span>
+<span class="nc" id="L118">            insert.append(&quot; DO UPDATE SET &quot;);</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">            for (HugeKeys key : entry.columns().keySet()) {</span>
+<span class="nc" id="L120">                insert.append(formatKey(key)).append(&quot; = ?&quot;);</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">                if (++i != size) {</span>
+<span class="nc" id="L122">                    insert.append(&quot;, &quot;);</span>
+                }
+<span class="nc" id="L124">            }</span>
+        }
+
+<span class="nc" id="L127">        return insert.toString();</span>
+    }
+
+    @Override
+    protected String orderByKeys() {
+        // Set order-by to keep results order consistence for PostgreSQL result
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (this.orderByKeysTemplate != null) {</span>
+<span class="nc" id="L134">            return this.orderByKeysTemplate;</span>
+        }
+<span class="nc" id="L136">        int i = 0;</span>
+<span class="nc" id="L137">        int size = this.tableDefine().keys().size();</span>
+<span class="nc" id="L138">        StringBuilder select = new StringBuilder(&quot; ORDER BY &quot;);</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        for (HugeKeys hugeKey : this.tableDefine().keys()) {</span>
+<span class="nc" id="L140">            String key = formatKey(hugeKey);</span>
+<span class="nc" id="L141">            select.append(key).append(&quot; &quot;);</span>
+<span class="nc" id="L142">            select.append(&quot;ASC &quot;);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">            if (++i != size) {</span>
+<span class="nc" id="L144">                select.append(&quot;, &quot;);</span>
+            }
+<span class="nc" id="L146">        }</span>
+<span class="nc" id="L147">        this.orderByKeysTemplate = select.toString();</span>
+<span class="nc" id="L148">        return this.orderByKeysTemplate;</span>
+    }
+
+    @Override
+    protected WhereBuilder newWhereBuilder(boolean startWithWhere) {
+<span class="nc" id="L153">        return new PgWhereBuilder(startWithWhere);</span>
+    }
+
+    private static class PgWhereBuilder extends WhereBuilder {
+
+        public PgWhereBuilder(boolean startWithWhere) {
+<span class="nc" id="L159">            super(startWithWhere);</span>
+<span class="nc" id="L160">        }</span>
+
+        @Override
+        protected String escapeAndWrapString(String value) {
+<span class="nc bnc" id="L164" title="All 2 branches missed.">            if (value.equals(&quot;\u0000&quot;)) {</span>
+<span class="nc" id="L165">                return &quot;\'\'&quot;;</span>
+            }
+<span class="nc" id="L167">            return PostgresqlSessions.escapeAndWrapString(value);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

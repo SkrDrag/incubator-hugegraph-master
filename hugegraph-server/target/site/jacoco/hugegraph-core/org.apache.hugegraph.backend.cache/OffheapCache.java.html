@@ -1,0 +1,409 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>OffheapCache.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.cache</a> &gt; <span class="el_source">OffheapCache.java</span></div><h1>OffheapCache.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.cache;
+
+import java.nio.ByteBuffer;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.function.Consumer;
+
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumn;
+import org.caffinitas.ohc.CacheSerializer;
+import org.caffinitas.ohc.CloseableIterator;
+import org.caffinitas.ohc.Eviction;
+import org.caffinitas.ohc.OHCache;
+import org.caffinitas.ohc.OHCacheBuilder;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.serializer.AbstractSerializer;
+import org.apache.hugegraph.backend.serializer.BinaryBackendEntry;
+import org.apache.hugegraph.backend.serializer.BinarySerializer;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+
+<span class="nc" id="L50">public class OffheapCache extends AbstractCache&lt;Id, Object&gt; {</span>
+
+    private static final long VALUE_SIZE_TO_SKIP = 100 * Bytes.KB;
+
+    private final OHCache&lt;Id, Value&gt; cache;
+    private final HugeGraph graph;
+    private final AbstractSerializer serializer;
+
+    public OffheapCache(HugeGraph graph, long capacity, long avgEntryBytes) {
+        // NOTE: capacity unit is bytes, the super capacity expect elements size
+<span class="nc" id="L60">        super(capacity);</span>
+<span class="nc" id="L61">        long capacityInBytes = capacity * (avgEntryBytes + 64L);</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        if (capacityInBytes &lt;= 0L) {</span>
+<span class="nc" id="L63">            capacityInBytes = 1L;</span>
+        }
+<span class="nc" id="L65">        this.graph = graph;</span>
+<span class="nc" id="L66">        this.cache = this.builder().capacity(capacityInBytes).build();</span>
+<span class="nc" id="L67">        this.serializer = new BinarySerializer();</span>
+<span class="nc" id="L68">    }</span>
+
+    private HugeGraph graph() {
+<span class="nc" id="L71">        return this.graph;</span>
+    }
+
+    private AbstractSerializer serializer() {
+<span class="nc" id="L75">        return this.serializer;</span>
+    }
+
+    @Override
+    public void traverse(Consumer&lt;Object&gt; consumer) {
+<span class="nc" id="L80">        CloseableIterator&lt;Id&gt; iter = this.cache.keyIterator();</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">        while (iter.hasNext()) {</span>
+<span class="nc" id="L82">            Id key = iter.next();</span>
+<span class="nc" id="L83">            Value value = this.cache.get(key);</span>
+<span class="nc" id="L84">            consumer.accept(value.value());</span>
+<span class="nc" id="L85">        }</span>
+<span class="nc" id="L86">    }</span>
+
+    @Override
+    public void clear() {
+<span class="nc" id="L90">        this.cache.clear();</span>
+<span class="nc" id="L91">    }</span>
+
+    @Override
+    public long size() {
+<span class="nc" id="L95">        return this.cache.size();</span>
+    }
+
+    @Override
+    public boolean containsKey(Id id) {
+<span class="nc" id="L100">        return this.cache.containsKey(id);</span>
+    }
+
+    @Override
+    protected Object access(Id id) {
+<span class="nc" id="L105">        Value value = this.cache.get(id);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        return value == null ? null : value.value();</span>
+    }
+
+    @Override
+    protected boolean write(Id id, Object value, long timeOffset) {
+<span class="nc" id="L111">        Value serializedValue = new Value(value);</span>
+        int serializedSize;
+        try {
+<span class="nc" id="L114">            serializedSize = serializedValue.serializedSize();</span>
+<span class="nc" id="L115">        } catch (Throwable e) {</span>
+            // May can't cache value that failed to serialize, like 0x00 byte
+<span class="nc" id="L117">            LOG.warn(&quot;Can't cache '{}' due to {}&quot;, id, e.toString());</span>
+<span class="nc" id="L118">            return false;</span>
+<span class="nc" id="L119">        }</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (serializedSize &gt; VALUE_SIZE_TO_SKIP) {</span>
+<span class="nc" id="L121">            LOG.info(&quot;Skip to cache '{}' due to value size {} &gt; limit {}&quot;,</span>
+<span class="nc" id="L122">                      id, serializedSize, VALUE_SIZE_TO_SKIP);</span>
+<span class="nc" id="L123">            return false;</span>
+        }
+
+<span class="nc" id="L126">        long expireTime = this.expire();</span>
+        boolean success;
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        if (expireTime &lt;= 0L) {</span>
+<span class="nc" id="L129">            success = this.cache.put(id, serializedValue);</span>
+        } else {
+<span class="nc" id="L131">            expireTime += now() + timeOffset;</span>
+            /*
+             * Seems only the linked implementation support expiring entries,
+             * the chunked implementation does not support it.
+             */
+<span class="nc" id="L136">            success = this.cache.put(id, serializedValue, expireTime);</span>
+        }
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        assert success;</span>
+<span class="nc" id="L139">        return success;</span>
+    }
+
+    @Override
+    protected void remove(Id id) {
+<span class="nc" id="L144">        this.cache.remove(id);</span>
+<span class="nc" id="L145">    }</span>
+
+    @Override
+    protected Iterator&lt;CacheNode&lt;Id, Object&gt;&gt; nodes() {
+        // No needed to expire by timer, return none. use OHCache TTL instead
+<span class="nc" id="L150">        return Collections.emptyIterator();</span>
+    }
+
+    private OHCacheBuilder&lt;Id, Value&gt; builder() {
+<span class="nc" id="L154">        return OHCacheBuilder.&lt;Id, Value&gt;newBuilder()</span>
+<span class="nc" id="L155">                             .keySerializer(new IdSerializer())</span>
+<span class="nc" id="L156">                             .valueSerializer(new ValueSerializer())</span>
+<span class="nc" id="L157">                             .eviction(Eviction.LRU)</span>
+<span class="nc" id="L158">                             .throwOOME(true)</span>
+<span class="nc" id="L159">                             .timeouts(true);</span>
+    }
+
+<span class="nc" id="L162">    private class IdSerializer implements CacheSerializer&lt;Id&gt; {</span>
+
+        @Override
+        public Id deserialize(ByteBuffer input) {
+<span class="nc" id="L166">            return BytesBuffer.wrap(input).readId(true);</span>
+        }
+
+        @Override
+        public void serialize(Id id, ByteBuffer output) {
+<span class="nc" id="L171">            BytesBuffer.wrap(output).writeId(id, true);</span>
+<span class="nc" id="L172">        }</span>
+
+        @Override
+        public int serializedSize(Id id) {
+            // NOTE: return size must be == actual bytes to write
+<span class="nc" id="L177">            return BytesBuffer.allocate(id.length() + 2)</span>
+<span class="nc" id="L178">                              .writeId(id, true).position();</span>
+        }
+    }
+
+<span class="nc" id="L182">    private class ValueSerializer implements CacheSerializer&lt;Value&gt; {</span>
+
+        @Override
+        public Value deserialize(ByteBuffer input) {
+<span class="nc" id="L186">            return new Value(input);</span>
+        }
+
+        @Override
+        public void serialize(Value value, ByteBuffer output) {
+<span class="nc" id="L191">            output.put(value.asBuffer());</span>
+<span class="nc" id="L192">        }</span>
+
+        @Override
+        public int serializedSize(Value value) {
+            // NOTE: return size must be &gt;= actual bytes to write
+<span class="nc" id="L197">            return value.serializedSize();</span>
+        }
+    }
+
+<span class="nc" id="L201">    private class Value {</span>
+
+        private final Object value;
+<span class="nc" id="L204">        private BytesBuffer svalue = null;</span>
+<span class="nc" id="L205">        private int serializedSize = 0;</span>
+
+<span class="nc" id="L207">        public Value(Object value) {</span>
+<span class="nc" id="L208">            E.checkNotNull(value, &quot;value&quot;);</span>
+<span class="nc" id="L209">            this.value = value;</span>
+<span class="nc" id="L210">        }</span>
+
+<span class="nc" id="L212">        public Value(ByteBuffer input) {</span>
+<span class="nc" id="L213">            this.value = this.deserialize(BytesBuffer.wrap(input));</span>
+<span class="nc" id="L214">        }</span>
+
+        public Object value() {
+<span class="nc" id="L217">            return this.value;</span>
+        }
+
+        public int serializedSize() {
+<span class="nc" id="L221">            this.asBuffer();</span>
+<span class="nc" id="L222">            return this.serializedSize;</span>
+        }
+
+        public ByteBuffer asBuffer() {
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            if (this.svalue == null) {</span>
+<span class="nc" id="L227">                int listSize = 1;</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">                if (this.value instanceof List) {</span>
+<span class="nc" id="L229">                    listSize = ((List&lt;?&gt;) this.value).size();</span>
+                }
+
+<span class="nc" id="L232">                BytesBuffer buffer = BytesBuffer.allocate(64 * listSize);</span>
+
+                // May fail to serialize and throw exception here
+<span class="nc" id="L235">                this.serialize(this.value, buffer);</span>
+
+<span class="nc" id="L237">                this.serializedSize = buffer.position();</span>
+<span class="nc" id="L238">                buffer.forReadWritten();</span>
+<span class="nc" id="L239">                this.svalue = buffer;</span>
+            }
+<span class="nc" id="L241">            return this.svalue.asByteBuffer();</span>
+        }
+
+        private void serialize(Object element, BytesBuffer buffer) {
+<span class="nc" id="L245">            ValueType type = ValueType.valueOf(element);</span>
+<span class="nc" id="L246">            buffer.write(type.code());</span>
+<span class="nc bnc" id="L247" title="All 4 branches missed.">            switch (type) {</span>
+                case LIST:
+                    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L250">                    Collection&lt;Object&gt; list = (Collection&lt;Object&gt;) element;</span>
+<span class="nc" id="L251">                    serializeList(buffer, list);</span>
+<span class="nc" id="L252">                    break;</span>
+                case VERTEX:
+                case EDGE:
+<span class="nc" id="L255">                    serializeElement(buffer, type, element);</span>
+<span class="nc" id="L256">                    break;</span>
+                case UNKNOWN:
+<span class="nc" id="L258">                    throw unsupported(this.value);</span>
+                default:
+<span class="nc" id="L260">                    buffer.writeProperty(type.dataType(), element);</span>
+                    break;
+            }
+<span class="nc" id="L263">        }</span>
+
+        private Object deserialize(BytesBuffer buffer) {
+<span class="nc" id="L266">            ValueType type = ValueType.valueOf(buffer.read());</span>
+<span class="nc bnc" id="L267" title="All 4 branches missed.">            switch (type) {</span>
+                case LIST:
+<span class="nc" id="L269">                    return deserializeList(buffer);</span>
+                case VERTEX:
+                case EDGE:
+<span class="nc" id="L272">                    return deserializeElement(type, buffer);</span>
+                case UNKNOWN:
+<span class="nc" id="L274">                    throw unsupported(type);</span>
+                default:
+<span class="nc" id="L276">                    return buffer.readProperty(type.dataType());</span>
+            }
+        }
+
+        private void serializeList(BytesBuffer buffer,
+                                   Collection&lt;Object&gt; list) {
+            // Write list
+<span class="nc" id="L283">            buffer.writeVInt(list.size());</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">            for (Object i : list) {</span>
+<span class="nc" id="L285">                this.serialize(i, buffer);</span>
+<span class="nc" id="L286">            }</span>
+<span class="nc" id="L287">        }</span>
+
+        private List&lt;Object&gt; deserializeList(BytesBuffer buffer) {
+            // Read list
+<span class="nc" id="L291">            int length = buffer.readVInt();</span>
+<span class="nc" id="L292">            List&lt;Object&gt; list = InsertionOrderUtil.newList();</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">            for (int i = 0; i &lt; length; i++) {</span>
+<span class="nc" id="L294">                list.add(this.deserialize(buffer));</span>
+            }
+<span class="nc" id="L296">            return list;</span>
+        }
+
+        private void serializeElement(BytesBuffer buffer,
+                                      ValueType type, Object value) {
+<span class="nc" id="L301">            E.checkNotNull(value, &quot;serialize value&quot;);</span>
+            BackendEntry entry;
+<span class="nc bnc" id="L303" title="All 2 branches missed.">            if (type == ValueType.VERTEX) {</span>
+<span class="nc" id="L304">                entry = serializer().writeVertex((HugeVertex) value);</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">            } else if (type == ValueType.EDGE) {</span>
+<span class="nc" id="L306">                entry = serializer().writeEdge((HugeEdge) value);</span>
+            } else {
+<span class="nc" id="L308">                throw unsupported(type);</span>
+            }
+
+<span class="nc bnc" id="L311" title="All 2 branches missed.">            assert entry.columnsSize() == 1;</span>
+<span class="nc" id="L312">            BackendColumn column = entry.columns().iterator().next();</span>
+
+<span class="nc" id="L314">            buffer.writeBytes(column.name);</span>
+<span class="nc" id="L315">            buffer.writeBigBytes(column.value);</span>
+<span class="nc" id="L316">        }</span>
+
+        private Object deserializeElement(ValueType type, BytesBuffer buffer) {
+<span class="nc" id="L319">            byte[] key = buffer.readBytes();</span>
+<span class="nc" id="L320">            byte[] value = buffer.readBigBytes();</span>
+            BinaryBackendEntry entry;
+<span class="nc bnc" id="L322" title="All 2 branches missed.">            if (type == ValueType.VERTEX) {</span>
+<span class="nc" id="L323">                entry = new BinaryBackendEntry(HugeType.VERTEX, key);</span>
+<span class="nc" id="L324">                entry.column(key, value);</span>
+<span class="nc" id="L325">                return serializer().readVertex(graph(), entry);</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">            } else if (type == ValueType.EDGE) {</span>
+<span class="nc" id="L327">                entry = new BinaryBackendEntry(HugeType.EDGE, key);</span>
+<span class="nc" id="L328">                entry.column(key, value);</span>
+<span class="nc" id="L329">                return serializer().readEdge(graph(), entry);</span>
+            } else {
+<span class="nc" id="L331">                throw unsupported(type);</span>
+            }
+        }
+
+        private HugeException unsupported(ValueType type) {
+<span class="nc" id="L336">            throw new HugeException(</span>
+                      &quot;Unsupported deserialize type: %s&quot;, type);
+        }
+
+        private HugeException unsupported(Object value) {
+<span class="nc" id="L341">            throw new HugeException(</span>
+                      &quot;Unsupported type of serialize value: '%s'(%s)&quot;,
+<span class="nc" id="L343">                      value, value.getClass());</span>
+        }
+    }
+
+<span class="nc" id="L347">    private enum ValueType {</span>
+
+<span class="nc" id="L349">        UNKNOWN,</span>
+<span class="nc" id="L350">        LIST,</span>
+<span class="nc" id="L351">        VERTEX,</span>
+<span class="nc" id="L352">        EDGE,</span>
+<span class="nc" id="L353">        BOOLEAN(DataType.BOOLEAN),</span>
+<span class="nc" id="L354">        BYTE(DataType.BYTE),</span>
+<span class="nc" id="L355">        BLOB(DataType.BLOB),</span>
+<span class="nc" id="L356">        STRING(DataType.TEXT),</span>
+<span class="nc" id="L357">        INT(DataType.INT),</span>
+<span class="nc" id="L358">        LONG(DataType.LONG),</span>
+<span class="nc" id="L359">        FLOAT(DataType.FLOAT),</span>
+<span class="nc" id="L360">        DOUBLE(DataType.DOUBLE),</span>
+<span class="nc" id="L361">        DATE(DataType.DATE),</span>
+<span class="nc" id="L362">        UUID(DataType.UUID);</span>
+
+        private final DataType dataType;
+
+        ValueType() {
+<span class="nc" id="L367">            this(DataType.UNKNOWN);</span>
+<span class="nc" id="L368">        }</span>
+
+<span class="nc" id="L370">        ValueType(DataType dataType) {</span>
+<span class="nc" id="L371">            this.dataType = dataType;</span>
+<span class="nc" id="L372">        }</span>
+
+        public int code() {
+<span class="nc" id="L375">            return this.ordinal();</span>
+        }
+
+        public DataType dataType() {
+<span class="nc" id="L379">            return this.dataType;</span>
+        }
+
+        public static ValueType valueOf(int index) {
+<span class="nc" id="L383">            ValueType[] values = values();</span>
+<span class="nc bnc" id="L384" title="All 4 branches missed.">            E.checkArgument(0 &lt;= index &amp;&amp; index &lt; values.length,</span>
+<span class="nc" id="L385">                            &quot;Invalid ValueType index %s&quot;, index);</span>
+<span class="nc" id="L386">            return values[index];</span>
+        }
+
+        public static ValueType valueOf(Object object) {
+<span class="nc" id="L390">            E.checkNotNull(object, &quot;object&quot;);</span>
+<span class="nc" id="L391">            Class&lt;?&gt; clazz = object.getClass();</span>
+<span class="nc bnc" id="L392" title="All 2 branches missed.">            if (Collection.class.isAssignableFrom(clazz)) {</span>
+<span class="nc" id="L393">                return ValueType.LIST;</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">            } else if (HugeVertex.class.isAssignableFrom(clazz)) {</span>
+<span class="nc" id="L395">                return ValueType.VERTEX;</span>
+<span class="nc bnc" id="L396" title="All 2 branches missed.">            } else if (HugeEdge.class.isAssignableFrom(clazz)) {</span>
+<span class="nc" id="L397">                return ValueType.EDGE;</span>
+            } else {
+<span class="nc bnc" id="L399" title="All 2 branches missed.">                for (ValueType type : values()) {</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">                    if (clazz == type.dataType().clazz()) {</span>
+<span class="nc" id="L401">                        return type;</span>
+                    }
+                }
+            }
+<span class="nc" id="L405">            return ValueType.UNKNOWN;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

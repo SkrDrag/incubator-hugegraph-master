@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CassandraSessionPool.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-cassandra</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.cassandra</a> &gt; <span class="el_source">CassandraSessionPool.java</span></div><h1>CassandraSessionPool.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.cassandra;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.BackendSession.AbstractBackendSession;
+import org.apache.hugegraph.backend.store.BackendSessionPool;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.util.E;
+import com.datastax.driver.core.BatchStatement;
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.Cluster.Builder;
+import com.datastax.driver.core.Metadata;
+import com.datastax.driver.core.ProtocolOptions.Compression;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.ResultSetFuture;
+import com.datastax.driver.core.SocketOptions;
+import com.datastax.driver.core.Statement;
+import com.datastax.driver.core.exceptions.InvalidQueryException;
+
+<span class="nc" id="L40">public class CassandraSessionPool extends BackendSessionPool {</span>
+
+    private static final int SECOND = 1000;
+
+    private Cluster cluster;
+    private final String keyspace;
+
+    public CassandraSessionPool(HugeConfig config,
+                                String keyspace, String store) {
+<span class="nc" id="L49">        super(config, keyspace + &quot;/&quot; + store);</span>
+<span class="nc" id="L50">        this.cluster = null;</span>
+<span class="nc" id="L51">        this.keyspace = keyspace;</span>
+<span class="nc" id="L52">    }</span>
+
+    @Override
+    public synchronized void open() {
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (this.opened()) {</span>
+<span class="nc" id="L57">            throw new BackendException(&quot;Please close the old SessionPool &quot; +</span>
+                                       &quot;before opening a new one&quot;);
+        }
+
+<span class="nc" id="L61">        HugeConfig config = this.config();</span>
+        // Contact options
+<span class="nc" id="L63">        String hosts = config.get(CassandraOptions.CASSANDRA_HOST);</span>
+<span class="nc" id="L64">        int port = config.get(CassandraOptions.CASSANDRA_PORT);</span>
+
+<span class="nc bnc" id="L66" title="All 4 branches missed.">        assert this.cluster == null || this.cluster.isClosed();</span>
+        /*
+         * We disable cassandra metrics through withoutMetrics(), due to
+         * metrics versions are incompatible, java11 glassfish use metrics 4,
+         * but cassandra use metrics 3.
+         * TODO: fix it after after cassandra upgrade metrics version
+         */
+<span class="nc" id="L73">        Builder builder = Cluster.builder()</span>
+<span class="nc" id="L74">                                 .addContactPoints(hosts.split(&quot;,&quot;))</span>
+<span class="nc" id="L75">                                 .withoutMetrics()</span>
+<span class="nc" id="L76">                                 .withPort(port);</span>
+
+        // Timeout options
+<span class="nc" id="L79">        int connTimeout = config.get(CassandraOptions.CASSANDRA_CONN_TIMEOUT);</span>
+<span class="nc" id="L80">        int readTimeout = config.get(CassandraOptions.CASSANDRA_READ_TIMEOUT);</span>
+
+<span class="nc" id="L82">        SocketOptions socketOptions = new SocketOptions();</span>
+<span class="nc" id="L83">        socketOptions.setConnectTimeoutMillis(connTimeout * SECOND);</span>
+<span class="nc" id="L84">        socketOptions.setReadTimeoutMillis(readTimeout * SECOND);</span>
+
+<span class="nc" id="L86">        builder.withSocketOptions(socketOptions);</span>
+
+        // Credential options
+<span class="nc" id="L89">        String username = config.get(CassandraOptions.CASSANDRA_USERNAME);</span>
+<span class="nc" id="L90">        String password = config.get(CassandraOptions.CASSANDRA_PASSWORD);</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">        if (!username.isEmpty()) {</span>
+<span class="nc" id="L92">            builder.withCredentials(username, password);</span>
+        }
+
+        // Compression options
+<span class="nc" id="L96">        String compression = config.get(CassandraOptions.CASSANDRA_COMPRESSION);</span>
+<span class="nc" id="L97">        builder.withCompression(Compression.valueOf(compression.toUpperCase()));</span>
+
+<span class="nc" id="L99">        this.cluster = builder.build();</span>
+<span class="nc" id="L100">    }</span>
+
+    @Override
+    public final synchronized boolean opened() {
+<span class="nc bnc" id="L104" title="All 4 branches missed.">        return (this.cluster != null &amp;&amp; !this.cluster.isClosed());</span>
+    }
+
+    protected final synchronized Cluster cluster() {
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        E.checkState(this.cluster != null,</span>
+                     &quot;Cassandra cluster has not been initialized&quot;);
+<span class="nc" id="L110">        return this.cluster;</span>
+    }
+
+    @Override
+    public final Session session() {
+<span class="nc" id="L115">        return (Session) super.getOrNewSession();</span>
+    }
+
+    @Override
+    protected Session newSession() {
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        E.checkState(this.cluster != null,</span>
+                     &quot;Cassandra cluster has not been initialized&quot;);
+<span class="nc" id="L122">        return new Session();</span>
+    }
+
+    @Override
+    protected synchronized void doClose() {
+<span class="nc bnc" id="L127" title="All 4 branches missed.">        if (this.cluster != null &amp;&amp; !this.cluster.isClosed()) {</span>
+<span class="nc" id="L128">            this.cluster.close();</span>
+        }
+<span class="nc" id="L130">    }</span>
+
+    public final boolean clusterConnected() {
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        E.checkState(this.cluster != null,</span>
+                     &quot;Cassandra cluster has not been initialized&quot;);
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        return !this.cluster.isClosed();</span>
+    }
+
+    /**
+     * The Session class is a wrapper of driver Session
+     * Expect every thread hold its own session(wrapper)
+     */
+<span class="nc" id="L142">    public final class Session extends AbstractBackendSession {</span>
+
+        private com.datastax.driver.core.Session session;
+        private BatchStatement batch;
+
+<span class="nc" id="L147">        public Session() {</span>
+<span class="nc" id="L148">            this.session = null;</span>
+<span class="nc" id="L149">            this.batch = new BatchStatement(); // LOGGED</span>
+<span class="nc" id="L150">        }</span>
+
+        public BatchStatement add(Statement statement) {
+<span class="nc" id="L153">            return this.batch.add(statement);</span>
+        }
+
+        @Override
+        public void rollback() {
+<span class="nc" id="L158">            this.batch.clear();</span>
+<span class="nc" id="L159">        }</span>
+
+        @Override
+        public ResultSet commit() {
+<span class="nc" id="L163">            ResultSet rs = this.session.execute(this.batch);</span>
+            // Clear batch if execute() successfully (retained if failed)
+<span class="nc" id="L165">            this.batch.clear();</span>
+<span class="nc" id="L166">            return rs;</span>
+        }
+
+        public void commitAsync() {
+<span class="nc" id="L170">            Collection&lt;Statement&gt; statements = this.batch.getStatements();</span>
+
+<span class="nc" id="L172">            int count = 0;</span>
+<span class="nc" id="L173">            int processors = Math.min(statements.size(), 1023);</span>
+<span class="nc" id="L174">            List&lt;ResultSetFuture&gt; results = new ArrayList&lt;&gt;(processors + 1);</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">            for (Statement s : statements) {</span>
+<span class="nc" id="L176">                ResultSetFuture future = this.session.executeAsync(s);</span>
+<span class="nc" id="L177">                results.add(future);</span>
+
+<span class="nc bnc" id="L179" title="All 2 branches missed.">                if (++count &gt; processors) {</span>
+<span class="nc" id="L180">                    results.forEach(ResultSetFuture::getUninterruptibly);</span>
+<span class="nc" id="L181">                    results.clear();</span>
+<span class="nc" id="L182">                    count = 0;</span>
+                }
+<span class="nc" id="L184">            }</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">            for (ResultSetFuture future : results) {</span>
+<span class="nc" id="L186">                future.getUninterruptibly();</span>
+<span class="nc" id="L187">            }</span>
+
+            // Clear batch if execute() successfully (retained if failed)
+<span class="nc" id="L190">            this.batch.clear();</span>
+<span class="nc" id="L191">        }</span>
+
+        public ResultSet query(Statement statement) {
+<span class="nc bnc" id="L194" title="All 2 branches missed.">            assert !this.hasChanges();</span>
+<span class="nc" id="L195">            return this.execute(statement);</span>
+        }
+
+        public ResultSet execute(Statement statement) {
+<span class="nc" id="L199">            return this.session.execute(statement);</span>
+        }
+
+        public ResultSet execute(String statement) {
+<span class="nc" id="L203">            return this.session.execute(statement);</span>
+        }
+
+        public ResultSet execute(String statement, Object... args) {
+<span class="nc" id="L207">            return this.session.execute(statement, args);</span>
+        }
+
+        private void tryOpen() {
+<span class="nc bnc" id="L211" title="All 2 branches missed.">            assert this.session == null;</span>
+            try {
+<span class="nc" id="L213">                this.open();</span>
+<span class="nc" id="L214">            } catch (InvalidQueryException ignored) {</span>
+                // ignore
+<span class="nc" id="L216">            }</span>
+<span class="nc" id="L217">        }</span>
+
+        @Override
+        public void open() {
+<span class="nc" id="L221">            this.opened = true;</span>
+<span class="nc bnc" id="L222" title="All 2 branches missed.">            assert this.session == null;</span>
+<span class="nc" id="L223">            this.session = cluster().connect(keyspace());</span>
+<span class="nc" id="L224">        }</span>
+
+        @Override
+        public boolean opened() {
+<span class="nc bnc" id="L228" title="All 4 branches missed.">            if (this.opened &amp;&amp; this.session == null) {</span>
+<span class="nc" id="L229">                this.tryOpen();</span>
+            }
+<span class="nc bnc" id="L231" title="All 4 branches missed.">            return this.opened &amp;&amp; this.session != null;</span>
+        }
+
+        @Override
+        public boolean closed() {
+<span class="nc bnc" id="L236" title="All 4 branches missed.">            if (!this.opened || this.session == null) {</span>
+<span class="nc" id="L237">                return true;</span>
+            }
+<span class="nc" id="L239">            return this.session.isClosed();</span>
+        }
+
+        @Override
+        public void close() {
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            assert this.closeable();</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            if (this.session == null) {</span>
+<span class="nc" id="L246">                return;</span>
+            }
+<span class="nc" id="L248">            this.session.close();</span>
+<span class="nc" id="L249">            this.session = null;</span>
+<span class="nc" id="L250">        }</span>
+
+        @Override
+        public boolean hasChanges() {
+<span class="nc bnc" id="L254" title="All 2 branches missed.">            return this.batch.size() &gt; 0;</span>
+        }
+
+        public Collection&lt;Statement&gt; statements() {
+<span class="nc" id="L258">            return this.batch.getStatements();</span>
+        }
+
+        public String keyspace() {
+<span class="nc" id="L262">            return CassandraSessionPool.this.keyspace;</span>
+        }
+
+        public Metadata metadata() {
+<span class="nc" id="L266">            return CassandraSessionPool.this.cluster.getMetadata();</span>
+        }
+
+        public int aggregateTimeout() {
+<span class="nc" id="L270">            HugeConfig conf = CassandraSessionPool.this.config();</span>
+<span class="nc" id="L271">            return conf.get(CassandraOptions.AGGR_TIMEOUT);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,681 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CassandraTable.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-cassandra</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.cassandra</a> &gt; <span class="el_source">CassandraTable.java</span></div><h1>CassandraTable.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.cassandra;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.BiFunction;
+import java.util.function.Function;
+
+import org.apache.tinkerpop.gremlin.util.iterator.IteratorUtils;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.query.Aggregate;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.Condition.Relation;
+import org.apache.hugegraph.backend.query.IdQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.Query.Order;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendTable;
+import org.apache.hugegraph.backend.store.Shard;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.iterator.ExtendableIterator;
+import org.apache.hugegraph.iterator.WrappedIterator;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.CopyUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.datastax.driver.core.ColumnDefinitions.Definition;
+import com.datastax.driver.core.DataType;
+import com.datastax.driver.core.PagingState;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.Row;
+import com.datastax.driver.core.Statement;
+import com.datastax.driver.core.exceptions.DriverException;
+import com.datastax.driver.core.exceptions.PagingStateException;
+import com.datastax.driver.core.querybuilder.Clause;
+import com.datastax.driver.core.querybuilder.Clauses;
+import com.datastax.driver.core.querybuilder.Delete;
+import com.datastax.driver.core.querybuilder.Insert;
+import com.datastax.driver.core.querybuilder.QueryBuilder;
+import com.datastax.driver.core.querybuilder.Select;
+import com.datastax.driver.core.querybuilder.Select.Selection;
+import com.datastax.driver.core.querybuilder.Update;
+import com.datastax.driver.core.schemabuilder.Create;
+import com.datastax.driver.core.schemabuilder.SchemaBuilder;
+import com.datastax.driver.core.schemabuilder.SchemaStatement;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+
+public abstract class CassandraTable
+                extends BackendTable&lt;CassandraSessionPool.Session, CassandraBackendEntry.Row&gt; {
+
+<span class="nc" id="L79">    private static final Logger LOG = Log.logger(CassandraTable.class);</span>
+    private static final int MAX_ELEMENTS_IN_CLAUSE = 65535;
+
+    public CassandraTable(String table) {
+<span class="nc" id="L83">        super(table);</span>
+<span class="nc" id="L84">    }</span>
+
+    @Override
+    protected void registerMetaHandlers() {
+<span class="nc" id="L88">        this.registerMetaHandler(&quot;splits&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            E.checkArgument(args.length == 1,</span>
+                            &quot;The args count of %s must be 1&quot;, meta);
+<span class="nc" id="L91">            long splitSize = (long) args[0];</span>
+<span class="nc" id="L92">            CassandraShard splitter = new CassandraShard(session,</span>
+<span class="nc" id="L93">                                                        session.keyspace(),</span>
+<span class="nc" id="L94">                                                        this.table());</span>
+<span class="nc" id="L95">            return splitter.getSplits(0, splitSize);</span>
+        });
+<span class="nc" id="L97">    }</span>
+
+    @Override
+    public boolean queryExist(CassandraSessionPool.Session session,
+                              CassandraBackendEntry.Row entry) {
+<span class="nc" id="L102">        Query query = new IdQuery.OneIdQuery(HugeType.UNKNOWN, entry.id());</span>
+<span class="nc" id="L103">        Iterator&lt;BackendEntry&gt; iter = this.query(session, query);</span>
+        try {
+<span class="nc" id="L105">            return iter.hasNext();</span>
+        } finally {
+<span class="nc" id="L107">            WrappedIterator.close(iter);</span>
+        }
+    }
+
+    @Override
+    public Number queryNumber(CassandraSessionPool.Session session,
+                              Query query) {
+<span class="nc" id="L114">        Aggregate aggregate = query.aggregateNotNull();</span>
+<span class="nc" id="L115">        Iterator&lt;Number&gt; results = this.query(query, statement -&gt; {</span>
+            // Set request timeout to a large value
+<span class="nc" id="L117">            int timeout = session.aggregateTimeout();</span>
+<span class="nc" id="L118">            statement.setReadTimeoutMillis(timeout * 1000);</span>
+<span class="nc" id="L119">            return session.query(statement);</span>
+        }, (q, rs) -&gt; {
+<span class="nc" id="L121">                Row row = rs.one();</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">                if (row == null) {</span>
+<span class="nc" id="L123">                    return IteratorUtils.of(aggregate.defaultValue());</span>
+                }
+<span class="nc" id="L125">                return IteratorUtils.of(row.getLong(0));</span>
+            });
+<span class="nc" id="L127">        return aggregate.reduce(results);</span>
+    }
+
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(CassandraSessionPool.Session session,
+                                        Query query) {
+<span class="nc" id="L133">        return this.query(query, session::query, this::results2Entries);</span>
+    }
+
+    protected &lt;R&gt; Iterator&lt;R&gt; query(Query query,
+                                    Function&lt;Statement, ResultSet&gt; fetcher,
+                                    BiFunction&lt;Query, ResultSet, Iterator&lt;R&gt;&gt;
+                                    parser) {
+<span class="nc" id="L140">        ExtendableIterator&lt;R&gt; rs = new ExtendableIterator&lt;&gt;();</span>
+
+<span class="nc bnc" id="L142" title="All 4 branches missed.">        if (query.limit() == 0L &amp;&amp; !query.noLimit()) {</span>
+<span class="nc" id="L143">            LOG.debug(&quot;Return empty result(limit=0) for query {}&quot;, query);</span>
+<span class="nc" id="L144">            return rs;</span>
+        }
+
+<span class="nc" id="L147">        List&lt;Select&gt; selects = this.query2Select(this.table(), query);</span>
+        try {
+<span class="nc bnc" id="L149" title="All 2 branches missed.">            for (Select select : selects) {</span>
+<span class="nc" id="L150">                ResultSet results = fetcher.apply(select);</span>
+<span class="nc" id="L151">                rs.extend(parser.apply(query, results));</span>
+<span class="nc" id="L152">            }</span>
+<span class="nc" id="L153">        } catch (DriverException e) {</span>
+<span class="nc" id="L154">            LOG.debug(&quot;Failed to query [{}], detail statement: {}&quot;,</span>
+                      query, selects, e);
+            // Closing the iterator
+            try {
+<span class="nc" id="L158">                rs.close();</span>
+<span class="nc" id="L159">            } catch (Exception e2) {</span>
+<span class="nc" id="L160">                LOG.error(&quot;Got error {} when closing iterator for query {}&quot;, e2, query);</span>
+<span class="nc" id="L161">            }</span>
+<span class="nc" id="L162">            throw new BackendException(&quot;Failed to query [%s]&quot;, e, query);</span>
+<span class="nc" id="L163">        }</span>
+
+<span class="nc" id="L165">        LOG.debug(&quot;Return {} for query {}&quot;, rs, query);</span>
+<span class="nc" id="L166">        return rs;</span>
+    }
+
+    protected List&lt;Select&gt; query2Select(String table, Query query) {
+        // Build query
+<span class="nc" id="L171">        Selection selection = QueryBuilder.select();</span>
+
+        // Set aggregate
+<span class="nc" id="L174">        Aggregate aggregate = query.aggregate();</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (aggregate != null) {</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">            if (aggregate.countAll()) {</span>
+<span class="nc" id="L177">                selection.countAll();</span>
+            } else {
+<span class="nc" id="L179">                selection.fcall(aggregate.func().string(), aggregate.column());</span>
+            }
+        }
+
+        // Set table
+<span class="nc" id="L184">        Select select = selection.from(table);</span>
+
+        // NOTE: Cassandra does not support query.offset()
+<span class="nc bnc" id="L187" title="All 2 branches missed.">        if (query.offset() != 0) {</span>
+<span class="nc" id="L188">            LOG.debug(&quot;Query offset is not supported on Cassandra store &quot; +</span>
+                      &quot;currently, it will be replaced by [0, offset + limit)&quot;);
+        }
+
+        // Set order-by
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        for (Map.Entry&lt;HugeKeys, Order&gt; order : query.orders().entrySet()) {</span>
+<span class="nc" id="L194">            String name = formatKey(order.getKey());</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if (order.getValue() == Order.ASC) {</span>
+<span class="nc" id="L196">                select.orderBy(QueryBuilder.asc(name));</span>
+            } else {
+<span class="nc bnc" id="L198" title="All 2 branches missed.">                assert order.getValue() == Order.DESC;</span>
+<span class="nc" id="L199">                select.orderBy(QueryBuilder.desc(name));</span>
+            }
+<span class="nc" id="L201">        }</span>
+
+        // Is query by id?
+<span class="nc" id="L204">        List&lt;Select&gt; ids = this.queryId2Select(query, select);</span>
+
+<span class="nc bnc" id="L206" title="All 2 branches missed.">        if (query.conditionsSize() == 0) {</span>
+            // Query only by id
+<span class="nc" id="L208">            this.setPageState(query, ids);</span>
+<span class="nc" id="L209">            LOG.debug(&quot;Query only by id(s): {}&quot;, ids);</span>
+<span class="nc" id="L210">            return ids;</span>
+        } else {
+<span class="nc" id="L212">            List&lt;Select&gt; conds = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">            for (Select id : ids) {</span>
+                // Query by condition
+<span class="nc" id="L215">                conds.addAll(this.queryCondition2Select(query, id));</span>
+<span class="nc" id="L216">            }</span>
+<span class="nc" id="L217">            this.setPageState(query, conds);</span>
+<span class="nc" id="L218">            LOG.debug(&quot;Query by conditions: {}&quot;, conds);</span>
+<span class="nc" id="L219">            return conds;</span>
+        }
+    }
+
+    protected void setPageState(Query query, List&lt;Select&gt; selects) {
+<span class="nc bnc" id="L224" title="All 4 branches missed.">        if (query.noLimit() &amp;&amp; !query.paging()) {</span>
+<span class="nc" id="L225">            return;</span>
+        }
+<span class="nc bnc" id="L227" title="All 2 branches missed.">        for (Select select : selects) {</span>
+<span class="nc" id="L228">            int total = (int) query.total();</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">            if (!query.noLimit()) {</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">                E.checkArgument(total == query.total(),</span>
+<span class="nc" id="L231">                                &quot;Invalid query limit %s&quot;, query.limit());</span>
+            } else {
+<span class="nc bnc" id="L233" title="All 2 branches missed.">                assert total == -1 : total;</span>
+            }
+
+<span class="nc" id="L236">            String page = query.page();</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">            if (page == null) {</span>
+                // Set limit
+<span class="nc bnc" id="L239" title="All 2 branches missed.">                assert total &gt; 0 : total;</span>
+<span class="nc" id="L240">                select.limit(total);</span>
+            } else {
+                /*
+                 * NOTE: the `total` may be -1 when query.noLimit(),
+                 * setFetchSize(-1) means the default fetch size will be used.
+                 */
+<span class="nc bnc" id="L246" title="All 4 branches missed.">                assert total &gt; 0 || total == -1 : total;</span>
+<span class="nc" id="L247">                select.setFetchSize(total);</span>
+
+                /*
+                 * Can't set limit here `select.limit(total)`
+                 * due to it will cause can't get the next page-state.
+                 * Also, can't set `select.limit(total + 1)` due to it will
+                 * cause error &quot;Paging state mismatch&quot; when setPagingState().
+                 */
+
+                // It's the first time if page is empty, skip setPagingState
+<span class="nc bnc" id="L257" title="All 2 branches missed.">                if (!page.isEmpty()) {</span>
+<span class="nc" id="L258">                    byte[] position = PageState.fromString(page).position();</span>
+                    try {
+<span class="nc" id="L260">                        select.setPagingState(PagingState.fromBytes(position));</span>
+<span class="nc" id="L261">                    } catch (PagingStateException e) {</span>
+<span class="nc" id="L262">                        throw new BackendException(e);</span>
+<span class="nc" id="L263">                    }</span>
+                }
+            }
+<span class="nc" id="L266">        }</span>
+<span class="nc" id="L267">    }</span>
+
+    protected List&lt;Select&gt; queryId2Select(Query query, Select select) {
+        // Query by id(s)
+<span class="nc bnc" id="L271" title="All 2 branches missed.">        if (query.idsSize() == 0) {</span>
+<span class="nc" id="L272">            return ImmutableList.of(select);</span>
+        }
+
+<span class="nc" id="L275">        List&lt;HugeKeys&gt; nameParts = this.idColumnName();</span>
+
+<span class="nc" id="L277">        List&lt;List&lt;Object&gt;&gt; ids = new ArrayList&lt;&gt;(query.idsSize());</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        for (Id id : query.ids()) {</span>
+<span class="nc" id="L279">            List&lt;Object&gt; idParts = this.idColumnValue(id);</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">            if (nameParts.size() != idParts.size()) {</span>
+<span class="nc" id="L281">                throw new NotFoundException(</span>
+                          &quot;Unsupported ID format: '%s' (should contain %s)&quot;,
+                          id, nameParts);
+            }
+<span class="nc" id="L285">            ids.add(idParts);</span>
+<span class="nc" id="L286">        }</span>
+
+        // Query only by partition-key
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        if (nameParts.size() == 1) {</span>
+<span class="nc" id="L290">            List&lt;Object&gt; idList = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">            for (List&lt;Object&gt; id : ids) {</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">                assert id.size() == 1;</span>
+<span class="nc" id="L293">                idList.add(id.get(0));</span>
+<span class="nc" id="L294">            }</span>
+<span class="nc" id="L295">            return this.ids2IdSelects(select, nameParts.get(0), idList);</span>
+        }
+
+        /*
+         * Query by partition-key + clustering-key
+         * NOTE: Error if multi-column IN clause include partition key:
+         * error: multi-column relations can only be applied to clustering
+         * columns when using: select.where(QueryBuilder.in(names, idList));
+         * So we use multi-query instead of IN
+         */
+<span class="nc" id="L305">        List&lt;Select&gt; selects = new ArrayList&lt;&gt;(ids.size());</span>
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        for (List&lt;Object&gt; id : ids) {</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">            assert nameParts.size() == id.size();</span>
+<span class="nc" id="L308">            Select idSelect = cloneSelect(select, this.table());</span>
+            /*
+             * NOTE: concat with AND relation, like:
+             * &quot;pk = id and ck1 = v1 and ck2 = v2&quot;
+             */
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            for (int i = 0, n = nameParts.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L314">                idSelect.where(formatEQ(nameParts.get(i), id.get(i)));</span>
+            }
+<span class="nc" id="L316">            selects.add(idSelect);</span>
+<span class="nc" id="L317">        }</span>
+<span class="nc" id="L318">        return selects;</span>
+    }
+
+    protected Collection&lt;Select&gt; queryCondition2Select(Query query,
+                                                       Select select) {
+        // Query by conditions
+<span class="nc" id="L324">        Collection&lt;Condition&gt; conditions = query.conditions();</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        for (Condition condition : conditions) {</span>
+<span class="nc" id="L326">            Clause clause = condition2Cql(condition);</span>
+<span class="nc" id="L327">            select.where(clause);</span>
+<span class="nc bnc" id="L328" title="All 2 branches missed.">            if (Clauses.needAllowFiltering(clause)) {</span>
+<span class="nc" id="L329">                select.allowFiltering();</span>
+            }
+<span class="nc" id="L331">        }</span>
+<span class="nc" id="L332">        return ImmutableList.of(select);</span>
+    }
+
+    protected Clause condition2Cql(Condition condition) {
+<span class="nc bnc" id="L336" title="All 4 branches missed.">        switch (condition.type()) {</span>
+            case AND:
+<span class="nc" id="L338">                Condition.And and = (Condition.And) condition;</span>
+<span class="nc" id="L339">                Clause left = condition2Cql(and.left());</span>
+<span class="nc" id="L340">                Clause right = condition2Cql(and.right());</span>
+<span class="nc" id="L341">                return Clauses.and(left, right);</span>
+            case OR:
+<span class="nc" id="L343">                throw new BackendException(&quot;Not support OR currently&quot;);</span>
+            case RELATION:
+<span class="nc" id="L345">                Condition.Relation r = (Condition.Relation) condition;</span>
+<span class="nc" id="L346">                return relation2Cql(r);</span>
+            default:
+<span class="nc" id="L348">                final String msg = &quot;Unsupported condition: &quot; + condition;</span>
+<span class="nc" id="L349">                throw new AssertionError(msg);</span>
+        }
+    }
+
+    protected Clause relation2Cql(Relation relation) {
+<span class="nc" id="L354">        String key = relation.serialKey().toString();</span>
+<span class="nc" id="L355">        Object value = relation.serialValue();</span>
+
+<span class="nc bnc" id="L357" title="All 10 branches missed.">        switch (relation.relation()) {</span>
+            case EQ:
+<span class="nc" id="L359">                return QueryBuilder.eq(key, value);</span>
+            case GT:
+<span class="nc" id="L361">                return QueryBuilder.gt(key, value);</span>
+            case GTE:
+<span class="nc" id="L363">                return QueryBuilder.gte(key, value);</span>
+            case LT:
+<span class="nc" id="L365">                return QueryBuilder.lt(key, value);</span>
+            case LTE:
+<span class="nc" id="L367">                return QueryBuilder.lte(key, value);</span>
+            case IN:
+<span class="nc" id="L369">                return Clauses.in(key, (List&lt;?&gt;) value);</span>
+            case CONTAINS_VALUE:
+<span class="nc" id="L371">                return QueryBuilder.contains(key, value);</span>
+            case CONTAINS_KEY:
+<span class="nc" id="L373">                return QueryBuilder.containsKey(key, value);</span>
+            case SCAN:
+<span class="nc" id="L375">                String[] col = pkColumnName().stream()</span>
+<span class="nc" id="L376">                                             .map(pk -&gt; formatKey(pk))</span>
+<span class="nc" id="L377">                                             .toArray(String[]::new);</span>
+<span class="nc" id="L378">                Shard shard = (Shard) value;</span>
+<span class="nc" id="L379">                Object start = QueryBuilder.raw(shard.start());</span>
+<span class="nc" id="L380">                Object end = QueryBuilder.raw(shard.end());</span>
+<span class="nc" id="L381">                return Clauses.and(</span>
+<span class="nc" id="L382">                        QueryBuilder.gte(QueryBuilder.token(col), start),</span>
+<span class="nc" id="L383">                        QueryBuilder.lt(QueryBuilder.token(col), end));</span>
+            /*
+             * Currently we can't support LIKE due to error:
+             * &quot;cassandra no viable alternative at input 'like'...&quot;
+             */
+            // case LIKE:
+            //    return QueryBuilder.like(key, value);
+            case NEQ:
+            default:
+<span class="nc" id="L392">                throw new NotSupportException(&quot;relation '%s'&quot;, relation);</span>
+        }
+    }
+
+    private List&lt;Select&gt; ids2IdSelects(Select select, HugeKeys key,
+                                       List&lt;Object&gt; ids) {
+<span class="nc" id="L398">        int size = ids.size();</span>
+<span class="nc" id="L399">        List&lt;Select&gt; selects = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">        for (int i = 0, j; i &lt; size; i = j) {</span>
+<span class="nc" id="L401">            j = Math.min(i + MAX_ELEMENTS_IN_CLAUSE, size);</span>
+<span class="nc" id="L402">            Select idSelect = cloneSelect(select, this.table());</span>
+<span class="nc" id="L403">            idSelect.where(QueryBuilder.in(formatKey(key), ids.subList(i, j)));</span>
+<span class="nc" id="L404">            selects.add(idSelect);</span>
+        }
+<span class="nc" id="L406">        return selects;</span>
+    }
+
+    protected static Select cloneSelect(Select select, String table) {
+        // NOTE: there is no Select.clone(), just use copy instead
+<span class="nc" id="L411">        return CopyUtil.copy(select, QueryBuilder.select().from(table));</span>
+    }
+
+    protected Iterator&lt;BackendEntry&gt; results2Entries(Query q, ResultSet r) {
+<span class="nc" id="L415">        return new CassandraEntryIterator(r, q, (e1, row) -&gt; {</span>
+<span class="nc" id="L416">            CassandraBackendEntry e2 = row2Entry(q.resultType(), row);</span>
+<span class="nc" id="L417">            return this.mergeEntries(e1, e2);</span>
+        });
+    }
+
+    protected static CassandraBackendEntry row2Entry(HugeType type, Row row) {
+<span class="nc" id="L422">        CassandraBackendEntry entry = new CassandraBackendEntry(type);</span>
+
+<span class="nc" id="L424">        List&lt;Definition&gt; cols = row.getColumnDefinitions().asList();</span>
+<span class="nc bnc" id="L425" title="All 2 branches missed.">        for (Definition col : cols) {</span>
+<span class="nc" id="L426">            String name = col.getName();</span>
+<span class="nc" id="L427">            HugeKeys key = CassandraTable.parseKey(name);</span>
+<span class="nc" id="L428">            Object value = row.getObject(name);</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">            if (value == null) {</span>
+<span class="nc bnc" id="L430" title="All 2 branches missed.">                assert key == HugeKeys.EXPIRED_TIME;</span>
+                continue;
+            }
+<span class="nc" id="L433">            entry.column(key, value);</span>
+<span class="nc" id="L434">        }</span>
+
+<span class="nc" id="L436">        return entry;</span>
+    }
+
+    protected List&lt;HugeKeys&gt; pkColumnName() {
+<span class="nc" id="L440">        return idColumnName();</span>
+    }
+
+    protected List&lt;HugeKeys&gt; idColumnName() {
+<span class="nc" id="L444">        return ImmutableList.of(HugeKeys.ID);</span>
+    }
+
+    protected List&lt;Object&gt; idColumnValue(Id id) {
+<span class="nc" id="L448">        return ImmutableList.of(id.asObject());</span>
+    }
+
+    protected List&lt;Long&gt; idColumnValue(CassandraBackendEntry.Row entry) {
+<span class="nc" id="L452">        return ImmutableList.of(entry.id().asLong());</span>
+    }
+
+    protected List&lt;HugeKeys&gt; modifiableColumnName() {
+<span class="nc" id="L456">        return ImmutableList.of(HugeKeys.PROPERTIES);</span>
+    }
+
+    protected BackendEntry mergeEntries(BackendEntry e1, BackendEntry e2) {
+        // Return the next entry (not merged)
+<span class="nc" id="L461">        return e2;</span>
+    }
+
+    public static final String formatKey(HugeKeys key) {
+<span class="nc" id="L465">        return key.name();</span>
+    }
+
+    public static final HugeKeys parseKey(String name) {
+<span class="nc" id="L469">        return HugeKeys.valueOf(name.toUpperCase());</span>
+    }
+
+    public static final Clause formatEQ(HugeKeys key, Object value) {
+<span class="nc" id="L473">        return QueryBuilder.eq(formatKey(key), value);</span>
+    }
+
+    /**
+     * Insert an entire row
+     */
+    @Override
+    public void insert(CassandraSessionPool.Session session,
+                       CassandraBackendEntry.Row entry) {
+<span class="nc" id="L482">        session.add(this.buildInsert(entry));</span>
+<span class="nc" id="L483">    }</span>
+
+    /**
+     * Append several elements to the collection column of a row
+     */
+    @Override
+    public void append(CassandraSessionPool.Session session,
+                       CassandraBackendEntry.Row entry) {
+<span class="nc" id="L491">        session.add(this.buildAppend(entry));</span>
+<span class="nc" id="L492">    }</span>
+
+    /**
+     * Eliminate several elements from the collection column of a row
+     */
+    @Override
+    public void eliminate(CassandraSessionPool.Session session,
+                          CassandraBackendEntry.Row entry) {
+<span class="nc" id="L500">        session.add(this.buildEliminate(entry));</span>
+<span class="nc" id="L501">    }</span>
+
+    /**
+     * Delete an entire row
+     */
+    @Override
+    public void delete(CassandraSessionPool.Session session,
+                       CassandraBackendEntry.Row entry) {
+<span class="nc" id="L509">        session.add(this.buildDelete(entry));</span>
+<span class="nc" id="L510">    }</span>
+
+    protected Insert buildInsert(CassandraBackendEntry.Row entry) {
+<span class="nc bnc" id="L513" title="All 2 branches missed.">        assert entry.columns().size() &gt; 0;</span>
+<span class="nc" id="L514">        Insert insert = QueryBuilder.insertInto(this.table());</span>
+
+<span class="nc bnc" id="L516" title="All 2 branches missed.">        for (Map.Entry&lt;HugeKeys, Object&gt; c : entry.columns().entrySet()) {</span>
+<span class="nc" id="L517">            insert.value(formatKey(c.getKey()), c.getValue());</span>
+<span class="nc" id="L518">        }</span>
+<span class="nc" id="L519">        return insert;</span>
+    }
+
+    protected Update buildAppend(CassandraBackendEntry.Row entry) {
+<span class="nc" id="L523">        List&lt;HugeKeys&gt; idNames = this.idColumnName();</span>
+<span class="nc" id="L524">        List&lt;HugeKeys&gt; colNames = this.modifiableColumnName();</span>
+
+<span class="nc" id="L526">        Map&lt;HugeKeys, Object&gt; columns = entry.columns();</span>
+
+<span class="nc" id="L528">        Update update = QueryBuilder.update(table());</span>
+
+<span class="nc bnc" id="L530" title="All 2 branches missed.">        for (HugeKeys key : colNames) {</span>
+<span class="nc bnc" id="L531" title="All 2 branches missed.">            if (!columns.containsKey(key)) {</span>
+<span class="nc" id="L532">                continue;</span>
+            }
+
+<span class="nc" id="L535">            String name = formatKey(key);</span>
+<span class="nc" id="L536">            Object value = columns.get(key);</span>
+
+<span class="nc bnc" id="L538" title="All 2 branches missed.">            if (value instanceof Map) {</span>
+<span class="nc" id="L539">                update.with(QueryBuilder.putAll(name, (Map&lt;?, ?&gt;) value));</span>
+<span class="nc bnc" id="L540" title="All 2 branches missed.">            } else if (value instanceof List) {</span>
+<span class="nc" id="L541">                update.with(QueryBuilder.appendAll(name, (List&lt;?&gt;) value));</span>
+            } else {
+<span class="nc" id="L543">                update.with(QueryBuilder.append(name, value));</span>
+            }
+<span class="nc" id="L545">        }</span>
+
+<span class="nc bnc" id="L547" title="All 2 branches missed.">        for (HugeKeys idName : idNames) {</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">            assert columns.containsKey(idName);</span>
+<span class="nc" id="L549">            update.where(formatEQ(idName, columns.get(idName)));</span>
+<span class="nc" id="L550">        }</span>
+<span class="nc" id="L551">        return update;</span>
+    }
+
+    protected Update buildEliminate(CassandraBackendEntry.Row entry) {
+<span class="nc" id="L555">        List&lt;HugeKeys&gt; idNames = this.idColumnName();</span>
+<span class="nc" id="L556">        List&lt;HugeKeys&gt; colNames = this.modifiableColumnName();</span>
+
+<span class="nc" id="L558">        Map&lt;HugeKeys, Object&gt; columns = entry.columns();</span>
+
+        // Update by id
+<span class="nc" id="L561">        Update update = QueryBuilder.update(table());</span>
+
+<span class="nc bnc" id="L563" title="All 2 branches missed.">        for (HugeKeys key : colNames) {</span>
+            /*
+             * NOTE: eliminate from map&lt;text, text&gt; should just pass key,
+             * if we use the following statement:
+             * UPDATE vertices SET PROPERTIES=PROPERTIES-{'city':'&quot;Wuhan&quot;'}
+             * WHERE LABEL='person' AND PRIMARY_VALUES='josh';
+             * it will throw a cassandra exception:
+             * Invalid map literal for properties of type-frozen&lt;set&lt;text&gt;&gt;
+             */
+<span class="nc bnc" id="L572" title="All 2 branches missed.">            if (!columns.containsKey(key)) {</span>
+<span class="nc" id="L573">                continue;</span>
+            }
+
+<span class="nc" id="L576">            String name = formatKey(key);</span>
+<span class="nc" id="L577">            Object value = columns.get(key);</span>
+<span class="nc bnc" id="L578" title="All 2 branches missed.">            if (value instanceof Map) {</span>
+                @SuppressWarnings(&quot;rawtypes&quot;)
+<span class="nc" id="L580">                Set&lt;?&gt; keySet = ((Map) value).keySet();</span>
+<span class="nc" id="L581">                update.with(QueryBuilder.removeAll(name, keySet));</span>
+<span class="nc bnc" id="L582" title="All 2 branches missed.">            } else if (value instanceof Set) {</span>
+<span class="nc" id="L583">                update.with(QueryBuilder.removeAll(name, (Set&lt;?&gt;) value));</span>
+<span class="nc bnc" id="L584" title="All 2 branches missed.">            } else if (value instanceof List) {</span>
+<span class="nc" id="L585">                Set&lt;?&gt; keySet = new HashSet&lt;&gt;((List&lt;?&gt;) value);</span>
+<span class="nc" id="L586">                update.with(QueryBuilder.removeAll(name, keySet));</span>
+<span class="nc" id="L587">            } else {</span>
+<span class="nc" id="L588">                update.with(QueryBuilder.remove(name, value));</span>
+            }
+<span class="nc" id="L590">        }</span>
+
+<span class="nc bnc" id="L592" title="All 2 branches missed.">        for (HugeKeys idName : idNames) {</span>
+<span class="nc bnc" id="L593" title="All 2 branches missed.">            assert columns.containsKey(idName);</span>
+<span class="nc" id="L594">            update.where(formatEQ(idName, columns.get(idName)));</span>
+<span class="nc" id="L595">        }</span>
+<span class="nc" id="L596">        return update;</span>
+    }
+
+    protected Delete buildDelete(CassandraBackendEntry.Row entry) {
+<span class="nc" id="L600">        List&lt;HugeKeys&gt; idNames = this.idColumnName();</span>
+<span class="nc" id="L601">        Delete delete = QueryBuilder.delete().from(this.table());</span>
+
+<span class="nc bnc" id="L603" title="All 2 branches missed.">        if (entry.columns().isEmpty()) {</span>
+            // Delete just by id
+<span class="nc" id="L605">            List&lt;Long&gt; idValues = this.idColumnValue(entry);</span>
+<span class="nc bnc" id="L606" title="All 2 branches missed.">            assert idNames.size() == idValues.size();</span>
+
+<span class="nc bnc" id="L608" title="All 2 branches missed.">            for (int i = 0, n = idNames.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L609">                delete.where(formatEQ(idNames.get(i), idValues.get(i)));</span>
+            }
+<span class="nc" id="L611">        } else {</span>
+            // Delete just by column keys(must be id columns)
+<span class="nc bnc" id="L613" title="All 2 branches missed.">            for (HugeKeys idName : idNames) {</span>
+                // TODO: should support other filters (like containsKey)
+<span class="nc" id="L615">                delete.where(formatEQ(idName, entry.column(idName)));</span>
+<span class="nc" id="L616">            }</span>
+            /*
+             * TODO: delete by id + keys(like index element-ids -- it seems
+             * has been replaced by eliminate() method)
+             */
+        }
+<span class="nc" id="L622">        return delete;</span>
+    }
+
+    protected void createTable(CassandraSessionPool.Session session,
+                               ImmutableMap&lt;HugeKeys, DataType&gt; partitionKeys,
+                               ImmutableMap&lt;HugeKeys, DataType&gt; clusteringKeys,
+                               ImmutableMap&lt;HugeKeys, DataType&gt; columns) {
+
+<span class="nc" id="L630">        Create table = SchemaBuilder.createTable(this.table()).ifNotExists();</span>
+
+<span class="nc bnc" id="L632" title="All 2 branches missed.">        for (Map.Entry&lt;HugeKeys, DataType&gt; entry : partitionKeys.entrySet()) {</span>
+<span class="nc" id="L633">            table.addPartitionKey(formatKey(entry.getKey()), entry.getValue());</span>
+<span class="nc" id="L634">        }</span>
+<span class="nc bnc" id="L635" title="All 2 branches missed.">        for (Map.Entry&lt;HugeKeys, DataType&gt; entry : clusteringKeys.entrySet()) {</span>
+<span class="nc" id="L636">            table.addClusteringColumn(formatKey(entry.getKey()),</span>
+<span class="nc" id="L637">                                      entry.getValue());</span>
+<span class="nc" id="L638">        }</span>
+<span class="nc bnc" id="L639" title="All 2 branches missed.">        for (Map.Entry&lt;HugeKeys, DataType&gt; entry : columns.entrySet()) {</span>
+<span class="nc" id="L640">            table.addColumn(formatKey(entry.getKey()), entry.getValue());</span>
+<span class="nc" id="L641">        }</span>
+
+<span class="nc" id="L643">        LOG.debug(&quot;Create table: {}&quot;, table);</span>
+<span class="nc" id="L644">        session.execute(table);</span>
+<span class="nc" id="L645">    }</span>
+
+    protected void dropTable(CassandraSessionPool.Session session) {
+<span class="nc" id="L648">        LOG.debug(&quot;Drop table: {}&quot;, this.table());</span>
+<span class="nc" id="L649">        session.execute(SchemaBuilder.dropTable(this.table()).ifExists());</span>
+<span class="nc" id="L650">    }</span>
+
+    protected void truncateTable(CassandraSessionPool.Session session) {
+<span class="nc" id="L653">        LOG.debug(&quot;Truncate table: {}&quot;, this.table());</span>
+<span class="nc" id="L654">        session.execute(QueryBuilder.truncate(this.table()));</span>
+<span class="nc" id="L655">    }</span>
+
+    protected void createIndex(CassandraSessionPool.Session session,
+                               String indexLabel, HugeKeys column) {
+<span class="nc" id="L659">        String indexName = joinTableName(this.table(), indexLabel);</span>
+<span class="nc" id="L660">        SchemaStatement index = SchemaBuilder.createIndex(indexName)</span>
+<span class="nc" id="L661">                                             .ifNotExists()</span>
+<span class="nc" id="L662">                                             .onTable(this.table())</span>
+<span class="nc" id="L663">                                             .andColumn(formatKey(column));</span>
+<span class="nc" id="L664">        LOG.debug(&quot;Create index: {}&quot;, index);</span>
+<span class="nc" id="L665">        session.execute(index);</span>
+<span class="nc" id="L666">    }</span>
+
+    @Override
+    public void clear(CassandraSessionPool.Session session) {
+<span class="nc" id="L670">        this.dropTable(session);</span>
+<span class="nc" id="L671">    }</span>
+
+    public void truncate(CassandraSessionPool.Session session) {
+<span class="nc" id="L674">        this.truncateTable(session);</span>
+<span class="nc" id="L675">    }</span>
+
+    public boolean isOlap() {
+<span class="nc" id="L678">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeAccess.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">HugeAccess.java</span></div><h1>HugeAccess.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Graph.Hidden;
+import org.apache.tinkerpop.gremlin.structure.T;
+
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.auth.SchemaDefine.Relationship;
+import org.apache.hugegraph.util.E;
+
+public class HugeAccess extends Relationship {
+
+    private static final long serialVersionUID = -7644007602408729385L;
+
+    private final Id group;
+    private final Id target;
+    private HugePermission permission;
+    private String description;
+
+    public HugeAccess(Id group, Id target) {
+<span class="nc" id="L46">        this(group, target, null);</span>
+<span class="nc" id="L47">    }</span>
+
+<span class="nc" id="L49">    public HugeAccess(Id group, Id target, HugePermission permission) {</span>
+<span class="nc" id="L50">        this.group = group;</span>
+<span class="nc" id="L51">        this.target = target;</span>
+<span class="nc" id="L52">        this.permission = permission;</span>
+<span class="nc" id="L53">        this.description = null;</span>
+<span class="nc" id="L54">    }</span>
+
+    @Override
+    public ResourceType type() {
+<span class="nc" id="L58">        return ResourceType.GRANT;</span>
+    }
+
+    @Override
+    public String label() {
+<span class="nc" id="L63">        return P.ACCESS;</span>
+    }
+
+    @Override
+    public String sourceLabel() {
+<span class="nc" id="L68">        return P.GROUP;</span>
+    }
+
+    @Override
+    public String targetLabel() {
+<span class="nc" id="L73">        return P.TARGET;</span>
+    }
+
+    @Override
+    public Id source() {
+<span class="nc" id="L78">        return this.group;</span>
+    }
+
+    @Override
+    public Id target() {
+<span class="nc" id="L83">        return this.target;</span>
+    }
+
+    public HugePermission permission() {
+<span class="nc" id="L87">        return this.permission;</span>
+    }
+
+    public void permission(HugePermission permission) {
+<span class="nc" id="L91">        this.permission = permission;</span>
+<span class="nc" id="L92">    }</span>
+
+    public String description() {
+<span class="nc" id="L95">        return this.description;</span>
+    }
+
+    public void description(String description) {
+<span class="nc" id="L99">        this.description = description;</span>
+<span class="nc" id="L100">    }</span>
+
+    @Override
+    public String toString() {
+<span class="nc" id="L104">        return String.format(&quot;HugeAccess(%s-&gt;%s)%s&quot;,</span>
+<span class="nc" id="L105">                             this.group, this.target, this.asMap());</span>
+    }
+
+    @Override
+    protected boolean property(String key, Object value) {
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (super.property(key, value)) {</span>
+<span class="nc" id="L111">            return true;</span>
+        }
+<span class="nc bnc" id="L113" title="All 3 branches missed.">        switch (key) {</span>
+            case P.PERMISSION:
+<span class="nc" id="L115">                this.permission = HugePermission.fromCode((Byte) value);</span>
+<span class="nc" id="L116">                break;</span>
+            case P.DESCRIPTION:
+<span class="nc" id="L118">                this.description = (String) value;</span>
+<span class="nc" id="L119">                break;</span>
+            default:
+<span class="nc" id="L121">                throw new AssertionError(&quot;Unsupported key: &quot; + key);</span>
+        }
+<span class="nc" id="L123">        return true;</span>
+    }
+
+    @Override
+    protected Object[] asArray() {
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        E.checkState(this.permission != null,</span>
+                     &quot;Access permission can't be null&quot;);
+
+<span class="nc" id="L131">        List&lt;Object&gt; list = new ArrayList&lt;&gt;(12);</span>
+
+<span class="nc" id="L133">        list.add(T.label);</span>
+<span class="nc" id="L134">        list.add(P.ACCESS);</span>
+
+<span class="nc" id="L136">        list.add(P.PERMISSION);</span>
+<span class="nc" id="L137">        list.add(this.permission.code());</span>
+
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        if (this.description != null) {</span>
+<span class="nc" id="L140">            list.add(P.DESCRIPTION);</span>
+<span class="nc" id="L141">            list.add(this.description);</span>
+        }
+
+<span class="nc" id="L144">        return super.asArray(list);</span>
+    }
+
+    @Override
+    public Map&lt;String, Object&gt; asMap() {
+<span class="nc bnc" id="L149" title="All 2 branches missed.">        E.checkState(this.permission != null,</span>
+                     &quot;Access permission can't be null&quot;);
+
+<span class="nc" id="L152">        Map&lt;String, Object&gt; map = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L154">        map.put(Hidden.unHide(P.GROUP), this.group);</span>
+<span class="nc" id="L155">        map.put(Hidden.unHide(P.TARGET), this.target);</span>
+
+<span class="nc" id="L157">        map.put(Hidden.unHide(P.PERMISSION), this.permission);</span>
+
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (this.description != null) {</span>
+<span class="nc" id="L160">            map.put(Hidden.unHide(P.DESCRIPTION), this.description);</span>
+        }
+
+<span class="nc" id="L163">        return super.asMap(map);</span>
+    }
+
+    public static HugeAccess fromEdge(Edge edge) {
+<span class="nc" id="L167">        HugeAccess access = new HugeAccess((Id) edge.outVertex().id(),</span>
+<span class="nc" id="L168">                                           (Id) edge.inVertex().id());</span>
+<span class="nc" id="L169">        return fromEdge(edge, access);</span>
+    }
+
+    public static Schema schema(HugeGraphParams graph) {
+<span class="nc" id="L173">        return new Schema(graph);</span>
+    }
+
+<span class="nc" id="L176">    public static final class P {</span>
+
+<span class="nc" id="L178">        public static final String ACCESS = Hidden.hide(&quot;access&quot;);</span>
+
+<span class="nc" id="L180">        public static final String LABEL = T.label.getAccessor();</span>
+
+<span class="nc" id="L182">        public static final String GROUP = HugeGroup.P.GROUP;</span>
+<span class="nc" id="L183">        public static final String TARGET = HugeTarget.P.TARGET;</span>
+
+        public static final String PERMISSION = &quot;~access_permission&quot;;
+        public static final String DESCRIPTION = &quot;~access_description&quot;;
+
+        public static String unhide(String key) {
+<span class="nc" id="L189">            final String prefix = Hidden.hide(&quot;access_&quot;);</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">            if (key.startsWith(prefix)) {</span>
+<span class="nc" id="L191">                return key.substring(prefix.length());</span>
+            }
+<span class="nc" id="L193">            return key;</span>
+        }
+    }
+
+    public static final class Schema extends SchemaDefine {
+
+        public Schema(HugeGraphParams graph) {
+<span class="nc" id="L200">            super(graph, P.ACCESS);</span>
+<span class="nc" id="L201">        }</span>
+
+        @Override
+        public void initSchemaIfNeeded() {
+<span class="nc bnc" id="L205" title="All 2 branches missed.">            if (this.existEdgeLabel(this.label)) {</span>
+<span class="nc" id="L206">                return;</span>
+            }
+
+<span class="nc" id="L209">            String[] properties = this.initProperties();</span>
+
+            // Create edge label
+<span class="nc" id="L212">            EdgeLabel label = this.schema().edgeLabel(this.label)</span>
+<span class="nc" id="L213">                                  .sourceLabel(P.GROUP)</span>
+<span class="nc" id="L214">                                  .targetLabel(P.TARGET)</span>
+<span class="nc" id="L215">                                  .properties(properties)</span>
+<span class="nc" id="L216">                                  .nullableKeys(P.DESCRIPTION)</span>
+<span class="nc" id="L217">                                  .sortKeys(P.PERMISSION)</span>
+<span class="nc" id="L218">                                  .enableLabelIndex(true)</span>
+<span class="nc" id="L219">                                  .build();</span>
+<span class="nc" id="L220">            this.graph.schemaTransaction().addEdgeLabel(label);</span>
+<span class="nc" id="L221">        }</span>
+
+        private String[] initProperties() {
+<span class="nc" id="L224">            List&lt;String&gt; props = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L226">            props.add(createPropertyKey(P.PERMISSION, DataType.BYTE));</span>
+<span class="nc" id="L227">            props.add(createPropertyKey(P.DESCRIPTION));</span>
+
+<span class="nc" id="L229">            return super.initProperties(props);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

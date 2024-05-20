@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>VertexLabelRemoveJob.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.schema</a> &gt; <span class="el_source">VertexLabelRemoveJob.java</span></div><h1>VertexLabelRemoveJob.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.schema;
+
+import java.util.List;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.define.SchemaStatus;
+import org.apache.hugegraph.util.LockUtil;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraphParams;
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L34">public class VertexLabelRemoveJob extends SchemaJob {</span>
+
+    @Override
+    public String type() {
+<span class="nc" id="L38">        return REMOVE_SCHEMA;</span>
+    }
+
+    @Override
+    public Object execute() {
+<span class="nc" id="L43">        removeVertexLabel(this.params(), this.schemaId());</span>
+<span class="nc" id="L44">        return null;</span>
+    }
+
+    private static void removeVertexLabel(HugeGraphParams graph, Id id) {
+<span class="nc" id="L48">        GraphTransaction graphTx = graph.graphTransaction();</span>
+<span class="nc" id="L49">        SchemaTransaction schemaTx = graph.schemaTransaction();</span>
+<span class="nc" id="L50">        VertexLabel vertexLabel = schemaTx.getVertexLabel(id);</span>
+        // If the vertex label does not exist, return directly
+<span class="nc bnc" id="L52" title="All 2 branches missed.">        if (vertexLabel == null) {</span>
+<span class="nc" id="L53">            return;</span>
+        }
+<span class="nc bnc" id="L55" title="All 2 branches missed.">        if (vertexLabel.status().deleting()) {</span>
+<span class="nc" id="L56">            LOG.info(&quot;The vertex label '{}' has been in {} status, &quot; +</span>
+                     &quot;please check if it's expected to delete it again&quot;,
+<span class="nc" id="L58">                     vertexLabel, vertexLabel.status());</span>
+        }
+
+        // Check no edge label use the vertex label
+<span class="nc" id="L62">        List&lt;EdgeLabel&gt; edgeLabels = schemaTx.getEdgeLabels();</span>
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        for (EdgeLabel edgeLabel : edgeLabels) {</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">            if (edgeLabel.linkWithLabel(id)) {</span>
+<span class="nc" id="L65">                throw new HugeException(</span>
+                          &quot;Not allowed to remove vertex label '%s' &quot; +
+                          &quot;because the edge label '%s' still link with it&quot;,
+<span class="nc" id="L68">                          vertexLabel.name(), edgeLabel.name());</span>
+            }
+<span class="nc" id="L70">        }</span>
+
+        /*
+         * Copy index label ids because removeIndexLabel will mutate
+         * vertexLabel.indexLabels()
+         */
+<span class="nc" id="L76">        Set&lt;Id&gt; indexLabelIds = ImmutableSet.copyOf(vertexLabel.indexLabels());</span>
+<span class="nc" id="L77">        LockUtil.Locks locks = new LockUtil.Locks(graph.name());</span>
+        try {
+<span class="nc" id="L79">            locks.lockWrites(LockUtil.VERTEX_LABEL_DELETE, id);</span>
+<span class="nc" id="L80">            schemaTx.updateSchemaStatus(vertexLabel, SchemaStatus.DELETING);</span>
+            try {
+<span class="nc bnc" id="L82" title="All 2 branches missed.">                for (Id ilId : indexLabelIds) {</span>
+<span class="nc" id="L83">                    IndexLabelRemoveJob.removeIndexLabel(graph, ilId);</span>
+<span class="nc" id="L84">                }</span>
+                // TODO: use event to replace direct call
+                // Deleting a vertex will automatically deletes the held edge
+<span class="nc" id="L87">                graphTx.removeVertices(vertexLabel);</span>
+                /*
+                 * Should commit changes to backend store before release
+                 * delete lock
+                 */
+<span class="nc" id="L92">                graph.graph().tx().commit();</span>
+                // Remove vertex label
+<span class="nc" id="L94">                removeSchema(schemaTx, vertexLabel);</span>
+<span class="nc" id="L95">            } catch (Throwable e) {</span>
+<span class="nc" id="L96">                schemaTx.updateSchemaStatus(vertexLabel,</span>
+                                            SchemaStatus.UNDELETED);
+<span class="nc" id="L98">                throw e;</span>
+<span class="nc" id="L99">            }</span>
+        } finally {
+<span class="nc" id="L101">            locks.unlock();</span>
+        }
+<span class="nc" id="L103">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

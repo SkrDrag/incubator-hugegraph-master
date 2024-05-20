@@ -1,0 +1,428 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CachedGraphTransaction.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.cache</a> &gt; <span class="el_source">CachedGraphTransaction.java</span></div><h1>CachedGraphTransaction.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.cache;
+
+import java.lang.reflect.Array;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.cache.CachedBackendStore.QueryId;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.backend.store.ram.RamTable;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.IdQuery;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.event.EventListener;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.iterator.ExtendableIterator;
+import org.apache.hugegraph.iterator.ListIterator;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Events;
+import com.google.common.collect.ImmutableSet;
+
+public final class CachedGraphTransaction extends GraphTransaction {
+
+    private static final int MAX_CACHE_PROPS_PER_VERTEX = 10000;
+    private static final int MAX_CACHE_EDGES_PER_QUERY = 100;
+    private static final float DEFAULT_LEVEL_RATIO = 0.001f;
+    private static final long AVG_VERTEX_ENTRY_SIZE = 40L;
+    private static final long AVG_EDGE_ENTRY_SIZE = 100L;
+
+    private final Cache&lt;Id, Object&gt; verticesCache;
+    private final Cache&lt;Id, Object&gt; edgesCache;
+
+    private EventListener storeEventListener;
+    private EventListener cacheEventListener;
+
+    public CachedGraphTransaction(HugeGraphParams graph, BackendStore store) {
+<span class="nc" id="L69">        super(graph, store);</span>
+
+<span class="nc" id="L71">        HugeConfig conf = graph.configuration();</span>
+
+<span class="nc" id="L73">        String type = conf.get(CoreOptions.VERTEX_CACHE_TYPE);</span>
+<span class="nc" id="L74">        long capacity = conf.get(CoreOptions.VERTEX_CACHE_CAPACITY);</span>
+<span class="nc" id="L75">        int expire = conf.get(CoreOptions.VERTEX_CACHE_EXPIRE);</span>
+<span class="nc" id="L76">        this.verticesCache = this.cache(&quot;vertex&quot;, type, capacity,</span>
+                                        AVG_VERTEX_ENTRY_SIZE, expire);
+
+<span class="nc" id="L79">        type = conf.get(CoreOptions.EDGE_CACHE_TYPE);</span>
+<span class="nc" id="L80">        capacity = conf.get(CoreOptions.EDGE_CACHE_CAPACITY);</span>
+<span class="nc" id="L81">        expire = conf.get(CoreOptions.EDGE_CACHE_EXPIRE);</span>
+<span class="nc" id="L82">        this.edgesCache = this.cache(&quot;edge&quot;, type, capacity,</span>
+                                     AVG_EDGE_ENTRY_SIZE, expire);
+
+<span class="nc" id="L85">        this.listenChanges();</span>
+<span class="nc" id="L86">    }</span>
+
+    @Override
+    public void close() {
+        try {
+<span class="nc" id="L91">            super.close();</span>
+        } finally {
+<span class="nc" id="L93">            this.unlistenChanges();</span>
+        }
+<span class="nc" id="L95">    }</span>
+
+    private Cache&lt;Id, Object&gt; cache(String prefix, String type, long capacity,
+                                    long entrySize, long expire) {
+<span class="nc" id="L99">        String name = prefix + &quot;-&quot; + this.params().name();</span>
+        Cache&lt;Id, Object&gt; cache;
+<span class="nc bnc" id="L101" title="All 3 branches missed.">        switch (type) {</span>
+            case &quot;l1&quot;:
+<span class="nc" id="L103">                cache = CacheManager.instance().cache(name, capacity);</span>
+<span class="nc" id="L104">                break;</span>
+            case &quot;l2&quot;:
+<span class="nc" id="L106">                long heapCapacity = (long) (DEFAULT_LEVEL_RATIO * capacity);</span>
+<span class="nc" id="L107">                cache = CacheManager.instance().levelCache(super.graph(),</span>
+                                                           name, heapCapacity,
+                                                           capacity, entrySize);
+<span class="nc" id="L110">                break;</span>
+            default:
+<span class="nc" id="L112">                throw new NotSupportException(&quot;cache type '%s'&quot;, type);</span>
+        }
+        // Convert the unit from seconds to milliseconds
+<span class="nc" id="L115">        cache.expire(expire * 1000L);</span>
+        // Enable metrics for graph cache by default
+<span class="nc" id="L117">        cache.enableMetrics(true);</span>
+<span class="nc" id="L118">        return cache;</span>
+    }
+
+    private void listenChanges() {
+        // Listen store event: &quot;store.init&quot;, &quot;store.clear&quot;, ...
+<span class="nc" id="L123">        Set&lt;String&gt; storeEvents = ImmutableSet.of(Events.STORE_INIT,</span>
+                                                  Events.STORE_CLEAR,
+                                                  Events.STORE_TRUNCATE);
+<span class="nc" id="L126">        this.storeEventListener = event -&gt; {</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">            if (storeEvents.contains(event.name())) {</span>
+<span class="nc" id="L128">                LOG.debug(&quot;Graph {} clear graph cache on event '{}'&quot;,</span>
+<span class="nc" id="L129">                          this.graph(), event.name());</span>
+<span class="nc" id="L130">                this.clearCache(null, true);</span>
+<span class="nc" id="L131">                return true;</span>
+            }
+<span class="nc" id="L133">            return false;</span>
+        };
+<span class="nc" id="L135">        this.store().provider().listen(this.storeEventListener);</span>
+
+        // Listen cache event: &quot;cache&quot;(invalid cache item)
+<span class="nc" id="L138">        this.cacheEventListener = event -&gt; {</span>
+<span class="nc" id="L139">            LOG.debug(&quot;Graph {} received graph cache event: {}&quot;,</span>
+<span class="nc" id="L140">                      this.graph(), event);</span>
+<span class="nc" id="L141">            Object[] args = event.args();</span>
+<span class="nc bnc" id="L142" title="All 4 branches missed.">            E.checkArgument(args.length &gt; 0 &amp;&amp; args[0] instanceof String,</span>
+                            &quot;Expect event action argument&quot;);
+<span class="nc bnc" id="L144" title="All 2 branches missed.">            if (Cache.ACTION_INVALID.equals(args[0])) {</span>
+<span class="nc" id="L145">                event.checkArgs(String.class, HugeType.class, Object.class);</span>
+<span class="nc" id="L146">                HugeType type = (HugeType) args[1];</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">                if (type.isVertex()) {</span>
+                    // Invalidate vertex cache
+<span class="nc" id="L149">                    Object arg2 = args[2];</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                    if (arg2 instanceof Id) {</span>
+<span class="nc" id="L151">                        Id id = (Id) arg2;</span>
+<span class="nc" id="L152">                        this.verticesCache.invalidate(id);</span>
+<span class="nc bnc" id="L153" title="All 4 branches missed.">                    } else if (arg2 != null &amp;&amp; arg2.getClass().isArray()) {</span>
+<span class="nc" id="L154">                        int size = Array.getLength(arg2);</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">                        for (int i = 0; i &lt; size; i++) {</span>
+<span class="nc" id="L156">                            Object id = Array.get(arg2, i);</span>
+<span class="nc" id="L157">                            E.checkArgument(id instanceof Id,</span>
+                                            &quot;Expect instance of Id in array, &quot; +
+<span class="nc" id="L159">                                            &quot;but got '%s'&quot;, id.getClass());</span>
+<span class="nc" id="L160">                            this.verticesCache.invalidate((Id) id);</span>
+                        }
+<span class="nc" id="L162">                    } else {</span>
+<span class="nc" id="L163">                        E.checkArgument(false,</span>
+                                        &quot;Expect Id or Id[], but got: %s&quot;,
+                                        arg2);
+                    }
+<span class="nc bnc" id="L167" title="All 2 branches missed.">                } else if (type.isEdge()) {</span>
+                    /*
+                     * Invalidate edge cache via clear instead of invalidate
+                     * because of the cacheKey is QueryId not EdgeId
+                     */
+                    // this.edgesCache.invalidate(id);
+<span class="nc" id="L173">                    this.edgesCache.clear();</span>
+                }
+<span class="nc" id="L175">                return true;</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">            } else if (Cache.ACTION_CLEAR.equals(args[0])) {</span>
+<span class="nc" id="L177">                event.checkArgs(String.class, HugeType.class);</span>
+<span class="nc" id="L178">                HugeType type = (HugeType) args[1];</span>
+<span class="nc" id="L179">                this.clearCache(type, false);</span>
+<span class="nc" id="L180">                return true;</span>
+            }
+<span class="nc" id="L182">            return false;</span>
+        };
+<span class="nc" id="L184">        EventHub graphEventHub = this.params().graphEventHub();</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (!graphEventHub.containsListener(Events.CACHE)) {</span>
+<span class="nc" id="L186">            graphEventHub.listen(Events.CACHE, this.cacheEventListener);</span>
+        }
+<span class="nc" id="L188">    }</span>
+
+    private void unlistenChanges() {
+        // Unlisten store event
+<span class="nc" id="L192">        this.store().provider().unlisten(this.storeEventListener);</span>
+
+        // Unlisten cache event
+<span class="nc" id="L195">        EventHub graphEventHub = this.params().graphEventHub();</span>
+<span class="nc" id="L196">        graphEventHub.unlisten(Events.CACHE, this.cacheEventListener);</span>
+<span class="nc" id="L197">    }</span>
+
+    private void notifyChanges(String action, HugeType type, Id[] ids) {
+<span class="nc" id="L200">        EventHub graphEventHub = this.params().graphEventHub();</span>
+<span class="nc" id="L201">        graphEventHub.notify(Events.CACHE, action, type, ids);</span>
+<span class="nc" id="L202">    }</span>
+
+    private void notifyChanges(String action, HugeType type) {
+<span class="nc" id="L205">        EventHub graphEventHub = this.params().graphEventHub();</span>
+<span class="nc" id="L206">        graphEventHub.notify(Events.CACHE, action, type);</span>
+<span class="nc" id="L207">    }</span>
+
+    private void clearCache(HugeType type, boolean notify) {
+<span class="nc bnc" id="L210" title="All 4 branches missed.">        if (type == null || type == HugeType.VERTEX) {</span>
+<span class="nc" id="L211">            this.verticesCache.clear();</span>
+        }
+<span class="nc bnc" id="L213" title="All 4 branches missed.">        if (type == null || type == HugeType.EDGE) {</span>
+<span class="nc" id="L214">            this.edgesCache.clear();</span>
+        }
+
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (notify) {</span>
+<span class="nc" id="L218">            this.notifyChanges(Cache.ACTION_CLEARED, null);</span>
+        }
+<span class="nc" id="L220">    }</span>
+
+    private boolean enableCacheVertex() {
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        return this.verticesCache.capacity() &gt; 0L;</span>
+    }
+
+    private boolean enableCacheEdge() {
+<span class="nc bnc" id="L227" title="All 2 branches missed.">        return this.edgesCache.capacity() &gt; 0L;</span>
+    }
+
+    private boolean needCacheVertex(HugeVertex vertex) {
+<span class="nc bnc" id="L231" title="All 2 branches missed.">        return vertex.sizeOfSubProperties() &lt;= MAX_CACHE_PROPS_PER_VERTEX;</span>
+    }
+
+    @Override
+    @Watched(prefix = &quot;graphcache&quot;)
+    protected Iterator&lt;HugeVertex&gt; queryVerticesFromBackend(Query query) {
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        if (this.enableCacheVertex() &amp;&amp;</span>
+<span class="nc bnc" id="L238" title="All 4 branches missed.">            query.idsSize() &gt; 0 &amp;&amp; query.conditionsSize() == 0) {</span>
+<span class="nc" id="L239">            return this.queryVerticesByIds((IdQuery) query);</span>
+        } else {
+<span class="nc" id="L241">            return super.queryVerticesFromBackend(query);</span>
+        }
+    }
+
+    @Watched(prefix = &quot;graphcache&quot;)
+    private Iterator&lt;HugeVertex&gt; queryVerticesByIds(IdQuery query) {
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (query.idsSize() == 1) {</span>
+<span class="nc" id="L248">            Id vertexId = query.ids().iterator().next();</span>
+<span class="nc" id="L249">            HugeVertex vertex = (HugeVertex) this.verticesCache.get(vertexId);</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">            if (vertex != null) {</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">                if (!vertex.expired()) {</span>
+<span class="nc" id="L252">                    return QueryResults.iterator(vertex);</span>
+                }
+<span class="nc" id="L254">                this.verticesCache.invalidate(vertexId);</span>
+            }
+<span class="nc" id="L256">            Iterator&lt;HugeVertex&gt; rs = super.queryVerticesFromBackend(query);</span>
+<span class="nc" id="L257">            vertex = QueryResults.one(rs);</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">            if (vertex == null) {</span>
+<span class="nc" id="L259">                return QueryResults.emptyIterator();</span>
+            }
+<span class="nc bnc" id="L261" title="All 2 branches missed.">            if (needCacheVertex(vertex)) {</span>
+<span class="nc" id="L262">                this.verticesCache.update(vertex.id(), vertex);</span>
+            }
+<span class="nc" id="L264">            return QueryResults.iterator(vertex);</span>
+        }
+
+<span class="nc" id="L267">        IdQuery newQuery = new IdQuery(HugeType.VERTEX, query);</span>
+<span class="nc" id="L268">        List&lt;HugeVertex&gt; vertices = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        for (Id vertexId : query.ids()) {</span>
+<span class="nc" id="L270">            HugeVertex vertex = (HugeVertex) this.verticesCache.get(vertexId);</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            if (vertex == null) {</span>
+<span class="nc" id="L272">                newQuery.query(vertexId);</span>
+<span class="nc bnc" id="L273" title="All 2 branches missed.">            } else if (vertex.expired()) {</span>
+<span class="nc" id="L274">                newQuery.query(vertexId);</span>
+<span class="nc" id="L275">                this.verticesCache.invalidate(vertexId);</span>
+            } else {
+<span class="nc" id="L277">                vertices.add(vertex);</span>
+            }
+<span class="nc" id="L279">        }</span>
+
+        // Join results from cache and backend
+<span class="nc" id="L282">        ExtendableIterator&lt;HugeVertex&gt; results = new ExtendableIterator&lt;&gt;();</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">        if (!vertices.isEmpty()) {</span>
+<span class="nc" id="L284">            results.extend(vertices.iterator());</span>
+        } else {
+            // Just use the origin query if find none from the cache
+<span class="nc" id="L287">            newQuery = query;</span>
+        }
+
+<span class="nc bnc" id="L290" title="All 2 branches missed.">        if (!newQuery.empty()) {</span>
+<span class="nc" id="L291">            Iterator&lt;HugeVertex&gt; rs = super.queryVerticesFromBackend(newQuery);</span>
+            // Generally there are not too much data with id query
+<span class="nc" id="L293">            ListIterator&lt;HugeVertex&gt; listIterator = QueryResults.toList(rs);</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">            for (HugeVertex vertex : listIterator.list()) {</span>
+                // Skip large vertex
+<span class="nc bnc" id="L296" title="All 2 branches missed.">                if (needCacheVertex(vertex)) {</span>
+<span class="nc" id="L297">                    this.verticesCache.update(vertex.id(), vertex);</span>
+                }
+<span class="nc" id="L299">            }</span>
+<span class="nc" id="L300">            results.extend(listIterator);</span>
+        }
+
+<span class="nc" id="L303">        return results;</span>
+    }
+
+    @Override
+    @Watched(prefix = &quot;graphcache&quot;)
+    protected Iterator&lt;HugeEdge&gt; queryEdgesFromBackend(Query query) {
+<span class="nc" id="L309">        RamTable ramtable = this.params().ramtable();</span>
+<span class="nc bnc" id="L310" title="All 4 branches missed.">        if (ramtable != null &amp;&amp; ramtable.matched(query)) {</span>
+<span class="nc" id="L311">            return ramtable.query(query);</span>
+        }
+
+<span class="nc bnc" id="L314" title="All 4 branches missed.">        if (!this.enableCacheEdge() || query.empty() ||</span>
+<span class="nc bnc" id="L315" title="All 4 branches missed.">            query.paging() || query.bigCapacity()) {</span>
+            // Query all edges or query edges in paging, don't cache it
+<span class="nc" id="L317">            return super.queryEdgesFromBackend(query);</span>
+        }
+
+<span class="nc" id="L320">        Id cacheKey = new QueryId(query);</span>
+<span class="nc" id="L321">        Object value = this.edgesCache.get(cacheKey);</span>
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L323">        Collection&lt;HugeEdge&gt; edges = (Collection&lt;HugeEdge&gt;) value;</span>
+<span class="nc bnc" id="L324" title="All 2 branches missed.">        if (value != null) {</span>
+<span class="nc bnc" id="L325" title="All 2 branches missed.">            for (HugeEdge edge : edges) {</span>
+<span class="nc bnc" id="L326" title="All 2 branches missed.">                if (edge.expired()) {</span>
+<span class="nc" id="L327">                    this.edgesCache.invalidate(cacheKey);</span>
+<span class="nc" id="L328">                    value = null;</span>
+<span class="nc" id="L329">                    break;</span>
+                }
+<span class="nc" id="L331">            }</span>
+        }
+
+<span class="nc bnc" id="L334" title="All 2 branches missed.">        if (value != null) {</span>
+            // Not cached or the cache expired
+<span class="nc" id="L336">            return edges.iterator();</span>
+        }
+
+<span class="nc" id="L339">        Iterator&lt;HugeEdge&gt; rs = super.queryEdgesFromBackend(query);</span>
+
+        /*
+         * Iterator can't be cached, caching list instead
+         * there may be super node and too many edges in a query,
+         * try fetch a few of the head results and determine whether to cache.
+         */
+<span class="nc" id="L346">        final int tryMax = 1 + MAX_CACHE_EDGES_PER_QUERY;</span>
+<span class="nc" id="L347">        edges = new ArrayList&lt;&gt;(tryMax);</span>
+<span class="nc bnc" id="L348" title="All 4 branches missed.">        for (int i = 0; rs.hasNext() &amp;&amp; i &lt; tryMax; i++) {</span>
+<span class="nc" id="L349">            edges.add(rs.next());</span>
+        }
+
+<span class="nc bnc" id="L352" title="All 2 branches missed.">        if (edges.size() == 0) {</span>
+<span class="nc" id="L353">            this.edgesCache.update(cacheKey, Collections.emptyList());</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">        } else if (edges.size() &lt;= MAX_CACHE_EDGES_PER_QUERY) {</span>
+<span class="nc" id="L355">            this.edgesCache.update(cacheKey, edges);</span>
+        }
+
+<span class="nc" id="L358">        return new ExtendableIterator&lt;&gt;(edges.iterator(), rs);</span>
+    }
+
+    @Override
+    @Watched(prefix = &quot;graphcache&quot;)
+    protected void commitMutation2Backend(BackendMutation... mutations) {
+        // Collect changes before commit
+<span class="nc" id="L365">        Collection&lt;HugeVertex&gt; updates = this.verticesInTxUpdated();</span>
+<span class="nc" id="L366">        Collection&lt;HugeVertex&gt; deletions = this.verticesInTxRemoved();</span>
+<span class="nc" id="L367">        Id[] vertexIds = new Id[updates.size() + deletions.size()];</span>
+<span class="nc" id="L368">        int vertexOffset = 0;</span>
+
+<span class="nc" id="L370">        int edgesInTxSize = this.edgesInTxSize();</span>
+
+        try {
+<span class="nc" id="L373">            super.commitMutation2Backend(mutations);</span>
+            // Update vertex cache
+<span class="nc bnc" id="L375" title="All 2 branches missed.">            if (this.enableCacheVertex()) {</span>
+<span class="nc bnc" id="L376" title="All 2 branches missed.">                for (HugeVertex vertex : updates) {</span>
+<span class="nc" id="L377">                    vertexIds[vertexOffset++] = vertex.id();</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">                    if (needCacheVertex(vertex)) {</span>
+                        // Update cache
+<span class="nc" id="L380">                        this.verticesCache.updateIfPresent(vertex.id(), vertex);</span>
+                    } else {
+                        // Skip large vertex
+<span class="nc" id="L383">                        this.verticesCache.invalidate(vertex.id());</span>
+                    }
+<span class="nc" id="L385">                }</span>
+            }
+        } finally {
+            // Update removed vertex in cache whatever success or fail
+<span class="nc bnc" id="L389" title="All 2 branches missed.">            if (this.enableCacheVertex()) {</span>
+<span class="nc bnc" id="L390" title="All 2 branches missed.">                for (HugeVertex vertex : deletions) {</span>
+<span class="nc" id="L391">                    vertexIds[vertexOffset++] = vertex.id();</span>
+<span class="nc" id="L392">                    this.verticesCache.invalidate(vertex.id());</span>
+<span class="nc" id="L393">                }</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">                if (vertexOffset &gt; 0) {</span>
+<span class="nc" id="L395">                    this.notifyChanges(Cache.ACTION_INVALIDED,</span>
+                                       HugeType.VERTEX, vertexIds);
+                }
+            }
+
+            /*
+             * Update edge cache if any vertex or edge changed
+             * For vertex change, the edges linked with should also be updated
+             * Before we find a more precise strategy, just clear all the edge cache now
+             */
+<span class="nc bnc" id="L405" title="All 2 branches missed.">            boolean invalidEdgesCache = (edgesInTxSize + updates.size() + deletions.size()) &gt; 0;</span>
+<span class="nc bnc" id="L406" title="All 4 branches missed.">            if (invalidEdgesCache &amp;&amp; this.enableCacheEdge()) {</span>
+                // TODO: Use a more precise strategy to update the edge cache
+<span class="nc" id="L408">                this.edgesCache.clear();</span>
+<span class="nc" id="L409">                this.notifyChanges(Cache.ACTION_CLEARED, HugeType.EDGE);</span>
+            }
+        }
+<span class="nc" id="L412">    }</span>
+
+    @Override
+    public void removeIndex(IndexLabel indexLabel) {
+        try {
+<span class="nc" id="L417">            super.removeIndex(indexLabel);</span>
+        } finally {
+            // Update edge cache if needed (any edge-index is deleted)
+<span class="nc bnc" id="L420" title="All 2 branches missed.">            if (indexLabel.baseType() == HugeType.EDGE_LABEL) {</span>
+                // TODO: Use a more precise strategy to update the edge cache
+<span class="nc" id="L422">                this.edgesCache.clear();</span>
+<span class="nc" id="L423">                this.notifyChanges(Cache.ACTION_CLEARED, HugeType.EDGE);</span>
+            }
+        }
+<span class="nc" id="L426">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

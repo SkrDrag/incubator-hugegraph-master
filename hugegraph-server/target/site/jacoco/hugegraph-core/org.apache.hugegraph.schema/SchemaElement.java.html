@@ -1,0 +1,221 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SchemaElement.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.schema</a> &gt; <span class="el_source">SchemaElement.java</span></div><h1>SchemaElement.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.schema;
+
+import java.util.Collections;
+import java.util.Map;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.type.Nameable;
+import org.apache.hugegraph.type.Typeable;
+import org.apache.hugegraph.type.define.SchemaStatus;
+import org.apache.hugegraph.util.E;
+import com.google.common.base.Objects;
+
+public abstract class SchemaElement implements Nameable, Typeable,
+                                               Cloneable {
+
+    public static final int MAX_PRIMITIVE_SYS_ID = 32;
+    public static final int NEXT_PRIMITIVE_SYS_ID = 8;
+
+    // ABS of system schema id must be below MAX_PRIMITIVE_SYS_ID
+    protected static final int VL_IL_ID = -1;
+    protected static final int EL_IL_ID = -2;
+    protected static final int PKN_IL_ID = -3;
+    protected static final int VLN_IL_ID = -4;
+    protected static final int ELN_IL_ID = -5;
+    protected static final int ILN_IL_ID = -6;
+    protected static final int OLAP_VL_ID = -7;
+
+<span class="nc" id="L50">    public static final Id NONE_ID = IdGenerator.ZERO;</span>
+
+    public static final String UNDEF = &quot;~undefined&quot;;
+
+    protected final HugeGraph graph;
+
+    private final Id id;
+    private final String name;
+    private final Userdata userdata;
+    private SchemaStatus status;
+
+<span class="nc" id="L61">    public SchemaElement(final HugeGraph graph, Id id, String name) {</span>
+<span class="nc" id="L62">        E.checkArgumentNotNull(id, &quot;SchemaElement id can't be null&quot;);</span>
+<span class="nc" id="L63">        E.checkArgumentNotNull(name, &quot;SchemaElement name can't be null&quot;);</span>
+<span class="nc" id="L64">        this.graph = graph;</span>
+<span class="nc" id="L65">        this.id = id;</span>
+<span class="nc" id="L66">        this.name = name;</span>
+<span class="nc" id="L67">        this.userdata = new Userdata();</span>
+<span class="nc" id="L68">        this.status = SchemaStatus.CREATED;</span>
+<span class="nc" id="L69">    }</span>
+
+    public HugeGraph graph() {
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        E.checkState(this.graph != null,</span>
+                     &quot;Graph is null of schema '%s'&quot;, this.name);
+<span class="nc" id="L74">        return this.graph;</span>
+    }
+
+    public Id id() {
+<span class="nc" id="L78">        return this.id;</span>
+    }
+
+    public long longId() {
+<span class="nc" id="L82">        return this.id.asLong();</span>
+    }
+
+    @Override
+    public String name() {
+<span class="nc" id="L87">        return this.name;</span>
+    }
+
+    public Map&lt;String, Object&gt; userdata() {
+<span class="nc" id="L91">        return Collections.unmodifiableMap(this.userdata);</span>
+    }
+
+    public void userdata(String key, Object value) {
+<span class="nc" id="L95">        E.checkArgumentNotNull(key, &quot;userdata key&quot;);</span>
+<span class="nc" id="L96">        E.checkArgumentNotNull(value, &quot;userdata value&quot;);</span>
+<span class="nc" id="L97">        this.userdata.put(key, value);</span>
+<span class="nc" id="L98">    }</span>
+
+    public void userdata(Userdata userdata) {
+<span class="nc" id="L101">        this.userdata.putAll(userdata);</span>
+<span class="nc" id="L102">    }</span>
+
+    public void removeUserdata(String key) {
+<span class="nc" id="L105">        E.checkArgumentNotNull(key, &quot;The userdata key can't be null&quot;);</span>
+<span class="nc" id="L106">        this.userdata.remove(key);</span>
+<span class="nc" id="L107">    }</span>
+
+    public void removeUserdata(Userdata userdata) {
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        for (String key : userdata.keySet()) {</span>
+<span class="nc" id="L111">            this.userdata.remove(key);</span>
+<span class="nc" id="L112">        }</span>
+<span class="nc" id="L113">    }</span>
+
+    public SchemaStatus status() {
+<span class="nc" id="L116">        return this.status;</span>
+    }
+
+    public void status(SchemaStatus status) {
+<span class="nc" id="L120">        this.status = status;</span>
+<span class="nc" id="L121">    }</span>
+
+    public boolean system() {
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        return this.longId() &lt; 0L;</span>
+    }
+
+    public boolean primitive() {
+<span class="nc" id="L128">        long id = this.longId();</span>
+<span class="nc bnc" id="L129" title="All 4 branches missed.">        return -MAX_PRIMITIVE_SYS_ID &lt;= id &amp;&amp; id &lt; 0L;</span>
+    }
+
+    public boolean hidden() {
+<span class="nc" id="L133">        return Graph.Hidden.isHidden(this.name());</span>
+    }
+
+    public SchemaElement copy() {
+        try {
+<span class="nc" id="L138">            return (SchemaElement) super.clone();</span>
+<span class="nc" id="L139">        } catch (CloneNotSupportedException e) {</span>
+<span class="nc" id="L140">            throw new HugeException(&quot;Failed to clone schema&quot;, e);</span>
+        }
+    }
+
+    public boolean hasSameContent(SchemaElement other) {
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        return Objects.equal(this.name(), other.name()) &amp;&amp;</span>
+<span class="nc bnc" id="L146" title="All 2 branches missed.">               Objects.equal(this.userdata(), other.userdata());</span>
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        if (!(obj instanceof SchemaElement)) {</span>
+<span class="nc" id="L152">            return false;</span>
+        }
+
+<span class="nc" id="L155">        SchemaElement other = (SchemaElement) obj;</span>
+<span class="nc bnc" id="L156" title="All 4 branches missed.">        return this.type() == other.type() &amp;&amp; this.id.equals(other.id());</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc" id="L161">        return this.type().hashCode() ^  this.id.hashCode();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L166">        return String.format(&quot;%s(id=%s)&quot;, this.name, this.id);</span>
+    }
+
+    public static int schemaId(Id id) {
+<span class="nc" id="L170">        long l = id.asLong();</span>
+        // Currently we limit the schema id to within 4 bytes
+<span class="nc bnc" id="L172" title="All 4 branches missed.">        E.checkArgument(Integer.MIN_VALUE &lt;= l &amp;&amp; l &lt;= Integer.MAX_VALUE,</span>
+<span class="nc" id="L173">                        &quot;Schema id is out of bound: %s&quot;, l);</span>
+<span class="nc" id="L174">        return (int) l;</span>
+    }
+
+    public static class TaskWithSchema {
+
+        private SchemaElement schemaElement;
+        private Id task;
+
+<span class="nc" id="L182">        public TaskWithSchema(SchemaElement schemaElement, Id task) {</span>
+<span class="nc" id="L183">            E.checkNotNull(schemaElement, &quot;schema element&quot;);</span>
+<span class="nc" id="L184">            this.schemaElement = schemaElement;</span>
+<span class="nc" id="L185">            this.task = task;</span>
+<span class="nc" id="L186">        }</span>
+
+        public void propertyKey(PropertyKey propertyKey) {
+<span class="nc" id="L189">            E.checkNotNull(propertyKey, &quot;property key&quot;);</span>
+<span class="nc" id="L190">            this.schemaElement = propertyKey;</span>
+<span class="nc" id="L191">        }</span>
+
+        public void indexLabel(IndexLabel indexLabel) {
+<span class="nc" id="L194">            E.checkNotNull(indexLabel, &quot;index label&quot;);</span>
+<span class="nc" id="L195">            this.schemaElement = indexLabel;</span>
+<span class="nc" id="L196">        }</span>
+
+        public PropertyKey propertyKey() {
+<span class="nc" id="L199">            E.checkState(this.schemaElement instanceof PropertyKey,</span>
+                         &quot;Expect property key, but actual schema type is &quot; +
+<span class="nc" id="L201">                         &quot;'%s'&quot;, this.schemaElement.getClass());</span>
+<span class="nc" id="L202">            return (PropertyKey) this.schemaElement;</span>
+        }
+
+        public IndexLabel indexLabel() {
+<span class="nc" id="L206">            E.checkState(this.schemaElement instanceof IndexLabel,</span>
+                         &quot;Expect index label, but actual schema type is &quot; +
+<span class="nc" id="L208">                         &quot;'%s'&quot;, this.schemaElement.getClass());</span>
+<span class="nc" id="L209">            return (IndexLabel) this.schemaElement;</span>
+        }
+
+        public SchemaElement schemaElement() {
+<span class="nc" id="L213">            return this.schemaElement;</span>
+        }
+
+        public Id task() {
+<span class="nc" id="L217">            return this.task;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,1959 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GraphIndexTransaction.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.tx</a> &gt; <span class="el_source">GraphIndexTransaction.java</span></div><h1>GraphIndexTransaction.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.tx;
+
+import java.nio.CharBuffer;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hugegraph.backend.page.PageIds;
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.task.EphemeralJobQueue;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.analyzer.Analyzer;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.IdHolder;
+import org.apache.hugegraph.backend.page.IdHolder.BatchIdHolder;
+import org.apache.hugegraph.backend.page.IdHolder.FixedIdHolder;
+import org.apache.hugegraph.backend.page.IdHolder.PagingIdHolder;
+import org.apache.hugegraph.backend.page.IdHolderList;
+import org.apache.hugegraph.backend.page.PageInfo;
+import org.apache.hugegraph.backend.page.SortByCountIdHolderList;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.Condition.RangeConditions;
+import org.apache.hugegraph.backend.query.Condition.Relation;
+import org.apache.hugegraph.backend.query.Condition.RelationType;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.ConditionQuery.OptimizedType;
+import org.apache.hugegraph.backend.query.ConditionQueryFlatten;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.serializer.AbstractSerializer;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.NoIndexException;
+import org.apache.hugegraph.exception.NotAllowException;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.iterator.Metadatable;
+import org.apache.hugegraph.job.EphemeralJob;
+import org.apache.hugegraph.job.system.DeleteExpiredJob;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeIndex;
+import org.apache.hugegraph.structure.HugeIndex.IdWithExpiredTime;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Action;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.type.define.IndexType;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.LockUtil;
+import org.apache.hugegraph.util.LongEncoding;
+import org.apache.hugegraph.util.NumericUtil;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L97">public class GraphIndexTransaction extends AbstractTransaction {</span>
+
+    public static final String START_SYMBOL = &quot;(&quot;;
+    public static final String END_SYMBOL = &quot;)&quot;;
+    public static final String WORD_DELIMITER = &quot;|&quot;;
+
+    private final Analyzer textAnalyzer;
+    private final int indexIntersectThresh;
+
+    public GraphIndexTransaction(HugeGraphParams graph, BackendStore store) {
+<span class="nc" id="L107">        super(graph, store);</span>
+
+<span class="nc" id="L109">        this.textAnalyzer = graph.analyzer();</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        assert this.textAnalyzer != null;</span>
+
+<span class="nc" id="L112">        final HugeConfig conf = graph.configuration();</span>
+<span class="nc" id="L113">        this.indexIntersectThresh =</span>
+<span class="nc" id="L114">             conf.get(CoreOptions.QUERY_INDEX_INTERSECT_THRESHOLD);</span>
+<span class="nc" id="L115">    }</span>
+
+    protected void asyncRemoveIndexLeft(ConditionQuery query,
+                                        HugeElement element) {
+<span class="nc" id="L119">        LOG.info(&quot;Remove left index: {}, query: {}&quot;, element, query);</span>
+<span class="nc" id="L120">        RemoveLeftIndexJob job = new RemoveLeftIndexJob(query, element);</span>
+<span class="nc" id="L121">        this.params().submitEphemeralJob(job);</span>
+<span class="nc" id="L122">    }</span>
+
+    @Watched(prefix = &quot;index&quot;)
+    public void updateLabelIndex(HugeElement element, boolean removed) {
+<span class="nc bnc" id="L126" title="All 4 branches missed.">        if (element instanceof HugeVertex &amp;&amp; ((HugeVertex) element).olap()) {</span>
+<span class="nc" id="L127">            return;</span>
+        }
+<span class="nc bnc" id="L129" title="All 2 branches missed.">        if (!this.needIndexForLabel()) {</span>
+<span class="nc" id="L130">            return;</span>
+        }
+
+        // Don't update label index if it's not enabled
+<span class="nc" id="L134">        SchemaLabel label = element.schemaLabel();</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">        if (!label.enableLabelIndex()) {</span>
+<span class="nc" id="L136">            return;</span>
+        }
+
+        // Update label index if backend store not supports label-query
+<span class="nc" id="L140">        HugeIndex index = new HugeIndex(this.graph(),</span>
+<span class="nc" id="L141">                                        IndexLabel.label(element.type()));</span>
+<span class="nc" id="L142">        index.fieldValues(element.schemaLabel().id());</span>
+<span class="nc" id="L143">        index.elementIds(element.id(), element.expiredTime());</span>
+
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        if (removed) {</span>
+<span class="nc" id="L146">            this.doEliminate(this.serializer.writeIndex(index));</span>
+        } else {
+<span class="nc" id="L148">            this.doAppend(this.serializer.writeIndex(index));</span>
+        }
+<span class="nc" id="L150">    }</span>
+
+    @Watched(prefix = &quot;index&quot;)
+    public void updateVertexIndex(HugeVertex vertex, boolean removed) {
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (vertex.olap()) {</span>
+<span class="nc" id="L155">            this.updateVertexOlapIndex(vertex, removed);</span>
+<span class="nc" id="L156">            return;</span>
+        }
+        // Update index(only property, no edge) of a vertex
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        for (Id id : vertex.schemaLabel().indexLabels()) {</span>
+<span class="nc" id="L160">            this.updateIndex(id, vertex, removed);</span>
+<span class="nc" id="L161">        }</span>
+<span class="nc" id="L162">    }</span>
+
+    @Watched(prefix = &quot;index&quot;)
+    public void updateEdgeIndex(HugeEdge edge, boolean removed) {
+        // Update index of an edge
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        for (Id id : edge.schemaLabel().indexLabels()) {</span>
+<span class="nc" id="L168">            this.updateIndex(id, edge, removed);</span>
+<span class="nc" id="L169">        }</span>
+<span class="nc" id="L170">    }</span>
+
+    private void updateVertexOlapIndex(HugeVertex vertex, boolean removed) {
+<span class="nc" id="L173">        Set&lt;Id&gt; propKeys = vertex.getPropertyKeys();</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        E.checkArgument(propKeys.size() == 1,</span>
+                        &quot;Expect only 1 property for olap vertex, but got %s&quot;,
+<span class="nc" id="L176">                        propKeys.size());</span>
+<span class="nc" id="L177">        Id pkId = propKeys.iterator().next();</span>
+<span class="nc" id="L178">        List&lt;IndexLabel&gt; indexLabels = this.params().schemaTransaction()</span>
+<span class="nc" id="L179">                                           .getIndexLabels();</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        for (IndexLabel il : indexLabels) {</span>
+<span class="nc bnc" id="L181" title="All 2 branches missed.">            if (il.indexFields().contains(pkId)) {</span>
+<span class="nc" id="L182">                this.updateIndex(il.id(), vertex, removed);</span>
+            }
+<span class="nc" id="L184">        }</span>
+<span class="nc" id="L185">    }</span>
+
+    /**
+     * Update index(user properties) of vertex or edge
+     * @param ilId      the id of index label
+     * @param element   the properties owner
+     * @param removed   remove or add index
+     */
+    protected void updateIndex(Id ilId, HugeElement element, boolean removed) {
+<span class="nc" id="L194">        SchemaTransaction schema = this.params().schemaTransaction();</span>
+<span class="nc" id="L195">        IndexLabel indexLabel = schema.getIndexLabel(ilId);</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        E.checkArgument(indexLabel != null,</span>
+                        &quot;Not exist index label with id '%s'&quot;, ilId);
+
+        // Collect property values of index fields
+<span class="nc" id="L200">        List&lt;Object&gt; allPropValues = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L201">        int fieldsNum = indexLabel.indexFields().size();</span>
+<span class="nc" id="L202">        int firstNullField = fieldsNum;</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        for (Id fieldId : indexLabel.indexFields()) {</span>
+<span class="nc" id="L204">            HugeProperty&lt;Object&gt; property = element.getProperty(fieldId);</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">            if (property == null) {</span>
+<span class="nc" id="L206">                E.checkState(hasNullableProp(element, fieldId),</span>
+                             &quot;Non-null property '%s' is null for '%s'&quot;,
+<span class="nc" id="L208">                             this.graph().propertyKey(fieldId), element);</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">                if (firstNullField == fieldsNum) {</span>
+<span class="nc" id="L210">                    firstNullField = allPropValues.size();</span>
+                }
+<span class="nc" id="L212">                allPropValues.add(ConditionQuery.INDEX_VALUE_NULL);</span>
+            } else {
+<span class="nc" id="L214">                allPropValues.add(property.value());</span>
+            }
+<span class="nc" id="L216">        }</span>
+
+<span class="nc bnc" id="L218" title="All 4 branches missed.">        if (firstNullField == 0 &amp;&amp; !indexLabel.indexType().isUnique()) {</span>
+            // The property value of first index field is null
+<span class="nc" id="L220">            return;</span>
+        }
+        // Not build index for record with nullable field (except unique index)
+<span class="nc" id="L223">        List&lt;Object&gt; nnPropValues = allPropValues.subList(0, firstNullField);</span>
+
+        // Expired time
+<span class="nc" id="L226">        long expiredTime = element.expiredTime();</span>
+
+        // Update index for each index type
+<span class="nc bnc" id="L229" title="All 6 branches missed.">        switch (indexLabel.indexType()) {</span>
+            case RANGE_INT:
+            case RANGE_FLOAT:
+            case RANGE_LONG:
+            case RANGE_DOUBLE:
+<span class="nc bnc" id="L234" title="All 2 branches missed.">                E.checkState(nnPropValues.size() == 1,</span>
+                             &quot;Expect only one property in range index&quot;);
+<span class="nc" id="L236">                Object value = NumericUtil.convertToNumber(nnPropValues.get(0));</span>
+<span class="nc" id="L237">                this.updateIndex(indexLabel, value, element.id(),</span>
+                                 expiredTime, removed);
+<span class="nc" id="L239">                break;</span>
+            case SEARCH:
+<span class="nc bnc" id="L241" title="All 2 branches missed.">                E.checkState(nnPropValues.size() == 1,</span>
+                             &quot;Expect only one property in search index&quot;);
+<span class="nc" id="L243">                value = nnPropValues.get(0);</span>
+<span class="nc" id="L244">                Set&lt;String&gt; words =</span>
+<span class="nc" id="L245">                            this.segmentWords(propertyValueToString(value));</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">                for (String word : words) {</span>
+<span class="nc" id="L247">                    this.updateIndex(indexLabel, word, element.id(),</span>
+                                     expiredTime, removed);
+<span class="nc" id="L249">                }</span>
+<span class="nc" id="L250">                break;</span>
+            case SECONDARY:
+                // Secondary index maybe include multi prefix index
+<span class="nc bnc" id="L253" title="All 2 branches missed.">                if (isCollectionIndex(nnPropValues)) {</span>
+                    /*
+                     * Property value is a collection
+                     * we should create index for each item
+                     */
+<span class="nc bnc" id="L258" title="All 2 branches missed.">                    for (Object propValue : (Collection&lt;?&gt;) nnPropValues.get(0)) {</span>
+<span class="nc" id="L259">                        value = ConditionQuery.concatValues(propValue);</span>
+<span class="nc" id="L260">                        this.updateIndex(indexLabel, value, element.id(),</span>
+                                         expiredTime, removed);
+<span class="nc" id="L262">                    }</span>
+                } else {
+<span class="nc bnc" id="L264" title="All 2 branches missed.">                    for (int i = 0, n = nnPropValues.size(); i &lt; n; i++) {</span>
+<span class="nc" id="L265">                        List&lt;Object&gt; prefixValues =</span>
+<span class="nc" id="L266">                                     nnPropValues.subList(0, i + 1);</span>
+<span class="nc" id="L267">                        value = ConditionQuery.concatValues(prefixValues);</span>
+<span class="nc" id="L268">                        this.updateIndex(indexLabel, value, element.id(),</span>
+                                         expiredTime, removed);
+                    }
+                }
+<span class="nc" id="L272">                break;</span>
+            case SHARD:
+<span class="nc" id="L274">                value = ConditionQuery.concatValues(nnPropValues);</span>
+<span class="nc" id="L275">                this.updateIndex(indexLabel, value, element.id(),</span>
+                                 expiredTime, removed);
+<span class="nc" id="L277">                break;</span>
+            case UNIQUE:
+<span class="nc" id="L279">                value = ConditionQuery.concatValues(allPropValues);</span>
+<span class="nc bnc" id="L280" title="All 2 branches missed.">                assert !&quot;&quot;.equals(value);</span>
+<span class="nc" id="L281">                Id id = element.id();</span>
+                // TODO: add lock for updating unique index
+<span class="nc bnc" id="L283" title="All 4 branches missed.">                if (!removed &amp;&amp; this.existUniqueValue(indexLabel, value, id)) {</span>
+<span class="nc" id="L284">                    throw new IllegalArgumentException(String.format(</span>
+                              &quot;Unique constraint %s conflict is found for %s&quot;,
+                              indexLabel, element));
+                }
+<span class="nc" id="L288">                this.updateIndex(indexLabel, value, element.id(),</span>
+                                 expiredTime, removed);
+<span class="nc" id="L290">                break;</span>
+            default:
+<span class="nc" id="L292">                throw new AssertionError(String.format(</span>
+<span class="nc" id="L293">                          &quot;Unknown index type '%s'&quot;, indexLabel.indexType()));</span>
+        }
+<span class="nc" id="L295">    }</span>
+
+    private void updateIndex(IndexLabel indexLabel, Object propValue,
+                             Id elementId, long expiredTime, boolean removed) {
+<span class="nc" id="L299">        HugeIndex index = new HugeIndex(this.graph(), indexLabel);</span>
+<span class="nc" id="L300">        index.fieldValues(propValue);</span>
+<span class="nc" id="L301">        index.elementIds(elementId, expiredTime);</span>
+
+<span class="nc bnc" id="L303" title="All 2 branches missed.">        if (removed) {</span>
+<span class="nc" id="L304">            this.doEliminate(this.serializer.writeIndex(index));</span>
+        } else {
+<span class="nc" id="L306">            this.doAppend(this.serializer.writeIndex(index));</span>
+        }
+<span class="nc" id="L308">    }</span>
+
+    private boolean existUniqueValue(IndexLabel indexLabel,
+                                     Object value, Id id) {
+<span class="nc bnc" id="L312" title="All 2 branches missed.">        return !this.hasEliminateInTx(indexLabel, value, id) &amp;&amp;</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">               this.existUniqueValueInStore(indexLabel, value);</span>
+    }
+
+    private boolean hasEliminateInTx(IndexLabel indexLabel, Object value,
+                                     Id elementId) {
+<span class="nc" id="L318">        HugeIndex index = new HugeIndex(this.graph(), indexLabel);</span>
+<span class="nc" id="L319">        index.fieldValues(value);</span>
+<span class="nc" id="L320">        index.elementIds(elementId);</span>
+<span class="nc" id="L321">        BackendEntry entry = this.serializer.writeIndex(index);</span>
+<span class="nc" id="L322">        return this.mutation().contains(entry, Action.ELIMINATE);</span>
+    }
+
+    private boolean existUniqueValueInStore(IndexLabel indexLabel, Object value) {
+<span class="nc" id="L326">        ConditionQuery query = new ConditionQuery(HugeType.UNIQUE_INDEX);</span>
+<span class="nc" id="L327">        query.eq(HugeKeys.INDEX_LABEL_ID, indexLabel.id());</span>
+<span class="nc" id="L328">        query.eq(HugeKeys.FIELD_VALUES, value);</span>
+        boolean exist;
+<span class="nc" id="L330">        Iterator&lt;BackendEntry&gt; iterator = this.query(query).iterator();</span>
+        try {
+<span class="nc" id="L332">            exist = iterator.hasNext();</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">            if (exist) {</span>
+<span class="nc" id="L334">                HugeIndex index = this.serializer.readIndex(graph(), query,</span>
+<span class="nc" id="L335">                                                            iterator.next());</span>
+<span class="nc" id="L336">                this.removeExpiredIndexIfNeeded(index, query.showExpired());</span>
+                // Memory backend might return empty BackendEntry
+<span class="nc bnc" id="L338" title="All 2 branches missed.">                if (index.elementIds().isEmpty()) {</span>
+<span class="nc" id="L339">                    return false;</span>
+                }
+<span class="nc" id="L341">                LOG.debug(&quot;Already has existed unique index record {}&quot;,</span>
+<span class="nc" id="L342">                          index.elementId());</span>
+            }
+<span class="nc bnc" id="L344" title="All 2 branches missed.">            while (iterator.hasNext()) {</span>
+<span class="nc" id="L345">                LOG.warn(&quot;Unique constraint conflict found by record {}&quot;, iterator.next());</span>
+            }
+        } finally {
+<span class="nc" id="L348">            CloseableIterator.closeIterator(iterator);</span>
+        }
+<span class="nc" id="L350">        return exist;</span>
+    }
+
+    /**
+     * Composite index, an index involving multiple columns.
+     * Single index, an index involving only one column.
+     * Joint indexes, join of single indexes, composite indexes or mixed
+     * of single indexes and composite indexes.
+     * @param query original condition query
+     * @return      converted id query
+     */
+    @Watched(prefix = &quot;index&quot;)
+    public IdHolderList queryIndex(ConditionQuery query) {
+        // Index query must have been flattened in Graph tx
+<span class="nc" id="L364">        query.checkFlattened();</span>
+
+        // NOTE: Currently we can't support filter changes in memory
+<span class="nc bnc" id="L367" title="All 2 branches missed.">        if (this.hasUpdate()) {</span>
+<span class="nc" id="L368">            throw new HugeException(&quot;Can't do index query when &quot; +</span>
+                                    &quot;there are changes in transaction&quot;);
+        }
+
+        // Can't query by index and by non-label sysprop at the same time
+<span class="nc" id="L373">        List&lt;Condition&gt; conds = query.syspropConditions();</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">        if (conds.size() &gt; 1 ||</span>
+<span class="nc bnc" id="L375" title="All 4 branches missed.">            (conds.size() == 1 &amp;&amp; !query.containsCondition(HugeKeys.LABEL))) {</span>
+<span class="nc" id="L376">            throw new HugeException(&quot;Can't do index query with %s and %s&quot;,</span>
+<span class="nc" id="L377">                                    conds, query.userpropConditions());</span>
+        }
+
+        // Query by index
+<span class="nc" id="L381">        query.optimized(OptimizedType.INDEX);</span>
+<span class="nc bnc" id="L382" title="All 4 branches missed.">        if (query.allSysprop() &amp;&amp; conds.size() == 1 &amp;&amp;</span>
+<span class="nc bnc" id="L383" title="All 2 branches missed.">            query.containsCondition(HugeKeys.LABEL)) {</span>
+            // Query only by label
+<span class="nc" id="L385">            return this.queryByLabel(query);</span>
+        } else {
+            // Query by userprops (or userprops + label)
+<span class="nc" id="L388">            return this.queryByUserprop(query);</span>
+        }
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    private IdHolderList queryByLabel(ConditionQuery query) {
+<span class="nc" id="L394">        HugeType queryType = query.resultType();</span>
+<span class="nc" id="L395">        IndexLabel il = IndexLabel.label(queryType);</span>
+<span class="nc" id="L396">        validateIndexLabel(il);</span>
+<span class="nc" id="L397">        Id label = query.condition(HugeKeys.LABEL);</span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">        assert label != null;</span>
+
+        HugeType indexType;
+        SchemaLabel schemaLabel;
+<span class="nc bnc" id="L402" title="All 2 branches missed.">        if (queryType.isVertex()) {</span>
+<span class="nc" id="L403">            indexType = HugeType.VERTEX_LABEL_INDEX;</span>
+<span class="nc" id="L404">            schemaLabel = this.graph().vertexLabel(label);</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">        } else if (queryType.isEdge()) {</span>
+<span class="nc" id="L406">            indexType = HugeType.EDGE_LABEL_INDEX;</span>
+<span class="nc" id="L407">            schemaLabel = this.graph().edgeLabel(label);</span>
+        } else {
+<span class="nc" id="L409">            throw new HugeException(&quot;Can't query %s by label&quot;, queryType);</span>
+        }
+
+<span class="nc bnc" id="L412" title="All 2 branches missed.">        if (!this.store().features().supportsQueryByLabel() &amp;&amp;</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">            !schemaLabel.enableLabelIndex()) {</span>
+<span class="nc" id="L414">            throw new NoIndexException(&quot;Don't accept query by label '%s', &quot; +</span>
+                                       &quot;label index is disabled&quot;, schemaLabel);
+        }
+
+<span class="nc" id="L418">        ConditionQuery indexQuery = new ConditionQuery(indexType, query);</span>
+<span class="nc" id="L419">        indexQuery.eq(HugeKeys.INDEX_LABEL_ID, il.id());</span>
+<span class="nc" id="L420">        indexQuery.eq(HugeKeys.FIELD_VALUES, label);</span>
+
+        /*
+         * We can avoid redundant element ids if set limit, but if there are
+         * label index overridden by other vertices with different label,
+         * query with limit like g.V().hasLabel('xx').limit(10) may lose some
+         * results, so can't set limit here. But in this case, the following
+         * query results may be still different:
+         *   g.V().hasLabel('xx').count()  // label index count
+         *   g.V().hasLabel('xx').limit(-1).count()  // actual vertices count
+         * It’s a similar situation for the offset, like:
+         *   g.V().hasLabel('xx').range(26, 27)
+         *   g.V().hasLabel('xx').range(27, 28)
+         * we just reset limit here, but don't reset offset due to performance
+         * optimization with index+offset query, see Query.skipOffsetIfNeeded().
+         * NOTE: if set offset the backend itself will skip the offset
+         */
+<span class="nc" id="L437">        indexQuery.copyBasic(query);</span>
+<span class="nc" id="L438">        indexQuery.limit(Query.NO_LIMIT);</span>
+
+<span class="nc" id="L440">        IdHolder idHolder = this.doIndexQuery(il, indexQuery);</span>
+
+<span class="nc" id="L442">        IdHolderList holders = new IdHolderList(query.paging());</span>
+<span class="nc" id="L443">        holders.add(idHolder);</span>
+<span class="nc" id="L444">        return holders;</span>
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    private IdHolderList queryByUserprop(ConditionQuery query) {
+        // Get user applied label or collect all qualified labels with
+        // related index labels
+<span class="nc bnc" id="L451" title="All 2 branches missed.">        if (!this.graph().readMode().showOlap()) {</span>
+<span class="nc bnc" id="L452" title="All 2 branches missed.">            for (Id pkId : query.userpropKeys()) {</span>
+<span class="nc" id="L453">                PropertyKey propertyKey = this.graph().propertyKey(pkId);</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">                if (propertyKey.olap()) {</span>
+<span class="nc" id="L455">                    throw new NotAllowException(</span>
+                              &quot;Not allowed to query by olap property key '%s'&quot; +
+                              &quot; when graph-read-mode is '%s'&quot;,
+<span class="nc" id="L458">                              propertyKey, this.graph().readMode());</span>
+                }
+<span class="nc" id="L460">            }</span>
+        }
+<span class="nc" id="L462">        Set&lt;MatchedIndex&gt; indexes = this.collectMatchedIndexes(query);</span>
+<span class="nc bnc" id="L463" title="All 2 branches missed.">        if (indexes.isEmpty()) {</span>
+<span class="nc" id="L464">            Id label = query.condition(HugeKeys.LABEL);</span>
+<span class="nc" id="L465">            throw noIndexException(this.graph(), query, label);</span>
+        }
+
+        // Value type of Condition not matched
+<span class="nc" id="L469">        boolean paging = query.paging();</span>
+<span class="nc bnc" id="L470" title="All 2 branches missed.">        if (!validQueryConditionValues(this.graph(), query)) {</span>
+<span class="nc" id="L471">            return IdHolderList.empty(paging);</span>
+        }
+
+        // Do index query
+<span class="nc" id="L475">        IdHolderList holders = new IdHolderList(paging);</span>
+<span class="nc bnc" id="L476" title="All 2 branches missed.">        for (MatchedIndex index : indexes) {</span>
+<span class="nc bnc" id="L477" title="All 2 branches missed.">            for (IndexLabel il : index.indexLabels()) {</span>
+<span class="nc" id="L478">                validateIndexLabel(il);</span>
+<span class="nc" id="L479">            }</span>
+<span class="nc bnc" id="L480" title="All 4 branches missed.">            if (paging &amp;&amp; index.indexLabels().size() &gt; 1) {</span>
+<span class="nc" id="L481">                throw new NotSupportException(&quot;joint index query in paging&quot;);</span>
+            }
+
+<span class="nc bnc" id="L484" title="All 2 branches missed.">            if (index.containsSearchIndex()) {</span>
+                // Do search-index query
+<span class="nc" id="L486">                holders.addAll(this.doSearchIndex(query, index));</span>
+            } else {
+                // Do secondary-index, range-index or shard-index query
+<span class="nc" id="L489">                IndexQueries queries = index.constructIndexQueries(query);</span>
+<span class="nc bnc" id="L490" title="All 4 branches missed.">                assert !paging || queries.size() &lt;= 1;</span>
+<span class="nc" id="L491">                IdHolder holder = this.doSingleOrJointIndex(queries);</span>
+<span class="nc" id="L492">                holders.add(holder);</span>
+            }
+
+            /*
+             * NOTE: need to skip the offset if offset &gt; 0, but can't handle
+             * it here because the query may a sub-query after flatten,
+             * so the offset will be handle in QueryList.IndexQuery
+             *
+             * TODO: finish early here if records exceeds required limit with
+             *       FixedIdHolder.
+             */
+<span class="nc" id="L503">        }</span>
+<span class="nc" id="L504">        return holders;</span>
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    private IdHolderList doSearchIndex(ConditionQuery query,
+                                       MatchedIndex index) {
+<span class="nc" id="L510">        query = this.constructSearchQuery(query, index);</span>
+        // Sorted by matched count
+<span class="nc" id="L512">        IdHolderList holders = new SortByCountIdHolderList(query.paging());</span>
+<span class="nc" id="L513">        List&lt;ConditionQuery&gt; flatten = ConditionQueryFlatten.flatten(query);</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">        for (ConditionQuery q : flatten) {</span>
+<span class="nc bnc" id="L515" title="All 4 branches missed.">            if (!q.noLimit() &amp;&amp; flatten.size() &gt; 1) {</span>
+                // Increase limit for union operation
+<span class="nc" id="L517">                increaseLimit(q);</span>
+            }
+<span class="nc" id="L519">            IndexQueries queries = index.constructIndexQueries(q);</span>
+<span class="nc bnc" id="L520" title="All 4 branches missed.">            assert !query.paging() || queries.size() &lt;= 1;</span>
+<span class="nc" id="L521">            IdHolder holder = this.doSingleOrJointIndex(queries);</span>
+            // NOTE: ids will be merged into one IdHolder if not in paging
+<span class="nc" id="L523">            holders.add(holder);</span>
+<span class="nc" id="L524">        }</span>
+<span class="nc" id="L525">        return holders;</span>
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    private IdHolder doSingleOrJointIndex(IndexQueries queries) {
+<span class="nc bnc" id="L530" title="All 2 branches missed.">        if (queries.size() == 1) {</span>
+<span class="nc" id="L531">            return this.doSingleOrCompositeIndex(queries);</span>
+        } else {
+<span class="nc" id="L533">            return this.doJointIndex(queries);</span>
+        }
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    private IdHolder doSingleOrCompositeIndex(IndexQueries queries) {
+<span class="nc bnc" id="L539" title="All 2 branches missed.">        assert queries.size() == 1;</span>
+<span class="nc" id="L540">        Map.Entry&lt;IndexLabel, ConditionQuery&gt; entry = queries.one();</span>
+<span class="nc" id="L541">        IndexLabel indexLabel = entry.getKey();</span>
+<span class="nc" id="L542">        ConditionQuery query = entry.getValue();</span>
+<span class="nc" id="L543">        return this.doIndexQuery(indexLabel, query);</span>
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    private IdHolder doJointIndex(IndexQueries queries) {
+<span class="nc bnc" id="L548" title="All 2 branches missed.">        if (queries.oomRisk()) {</span>
+<span class="nc" id="L549">            LOG.warn(&quot;There is OOM risk if the joint operation is based on a &quot; +</span>
+                     &quot;large amount of data, please use single index + filter &quot; +
+<span class="nc" id="L551">                     &quot;instead of joint index: {}&quot;, queries.rootQuery());</span>
+        }
+        // All queries are joined with AND
+<span class="nc" id="L554">        Set&lt;Id&gt; intersectIds = null;</span>
+<span class="nc" id="L555">        boolean filtering = false;</span>
+<span class="nc" id="L556">        IdHolder resultHolder = null;</span>
+<span class="nc bnc" id="L557" title="All 2 branches missed.">        for (Map.Entry&lt;IndexLabel, ConditionQuery&gt; e : queries.entrySet()) {</span>
+<span class="nc" id="L558">            IndexLabel indexLabel = e.getKey();</span>
+<span class="nc" id="L559">            ConditionQuery query = e.getValue();</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">            assert !query.paging();</span>
+<span class="nc bnc" id="L561" title="All 4 branches missed.">            if (!query.noLimit() &amp;&amp; queries.size() &gt; 1) {</span>
+                // Unset limit for intersection operation
+<span class="nc" id="L563">                query.limit(Query.NO_LIMIT);</span>
+            }
+            /*
+             * Try to query by joint indexes:
+             * 1 If there is any index exceeded the threshold, transform into
+             *   partial index query, then filter after back-table.
+             * 1.1 Return the holder of the first index that not exceeded the
+             *     threshold if there exists one index, this holder will be used
+             *     as the only query condition.
+             * 1.2 Return the holder of the first index if all indexes exceeded
+             *     the threshold.
+             * 2 Else intersect holders for all indexes, and return intersection
+             *   ids of all indexes.
+             */
+<span class="nc" id="L577">            IdHolder holder = this.doIndexQuery(indexLabel, query);</span>
+<span class="nc bnc" id="L578" title="All 2 branches missed.">            if (resultHolder == null) {</span>
+<span class="nc" id="L579">                resultHolder = holder;</span>
+<span class="nc" id="L580">                this.storeSelectedIndexField(indexLabel, query);</span>
+            }
+<span class="nc bnc" id="L582" title="All 2 branches missed.">            assert this.indexIntersectThresh &gt; 0; // default value is 1000</span>
+<span class="nc" id="L583">            Set&lt;Id&gt; ids = ((BatchIdHolder) holder).peekNext(</span>
+<span class="nc" id="L584">                          this.indexIntersectThresh).ids();</span>
+<span class="nc bnc" id="L585" title="All 2 branches missed.">            if (ids.size() &gt;= this.indexIntersectThresh) {</span>
+                // Transform into filtering
+<span class="nc" id="L587">                filtering = true;</span>
+<span class="nc" id="L588">                query.optimized(OptimizedType.INDEX_FILTER);</span>
+<span class="nc bnc" id="L589" title="All 2 branches missed.">            } else if (filtering) {</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">                assert ids.size() &lt; this.indexIntersectThresh;</span>
+<span class="nc" id="L591">                resultHolder = holder;</span>
+<span class="nc" id="L592">                this.storeSelectedIndexField(indexLabel, query);</span>
+<span class="nc" id="L593">                break;</span>
+            } else {
+<span class="nc bnc" id="L595" title="All 2 branches missed.">                if (intersectIds == null) {</span>
+<span class="nc" id="L596">                    intersectIds = ids;</span>
+                } else {
+<span class="nc" id="L598">                    CollectionUtil.intersectWithModify(intersectIds, ids);</span>
+                }
+<span class="nc bnc" id="L600" title="All 2 branches missed.">                if (intersectIds.isEmpty()) {</span>
+<span class="nc" id="L601">                    break;</span>
+                }
+            }
+<span class="nc" id="L604">        }</span>
+
+<span class="nc bnc" id="L606" title="All 2 branches missed.">        if (filtering) {</span>
+<span class="nc" id="L607">            return resultHolder;</span>
+        } else {
+<span class="nc bnc" id="L609" title="All 2 branches missed.">            assert intersectIds != null;</span>
+<span class="nc" id="L610">            return new FixedIdHolder(queries.asJointQuery(), intersectIds);</span>
+        }
+    }
+
+    private void storeSelectedIndexField(IndexLabel indexLabel,
+                                         ConditionQuery query) {
+        // Only store range index field
+<span class="nc bnc" id="L617" title="All 2 branches missed.">        if (!indexLabel.indexType().isRange()) {</span>
+<span class="nc" id="L618">            return;</span>
+        }
+
+<span class="nc" id="L621">        ConditionQuery originConditionQuery =</span>
+<span class="nc" id="L622">                       query.originConditionQuery();</span>
+<span class="nc bnc" id="L623" title="All 2 branches missed.">        if (originConditionQuery != null) {</span>
+<span class="nc" id="L624">            originConditionQuery.selectedIndexField(indexLabel.indexField());</span>
+        }
+<span class="nc" id="L626">    }</span>
+
+    @Watched(prefix = &quot;index&quot;)
+    private IdHolder doIndexQuery(IndexLabel indexLabel, ConditionQuery query) {
+<span class="nc bnc" id="L630" title="All 2 branches missed.">        if (!query.paging()) {</span>
+<span class="nc" id="L631">            return this.doIndexQueryBatch(indexLabel, query);</span>
+        } else {
+<span class="nc" id="L633">            return new PagingIdHolder(query, q -&gt; {</span>
+<span class="nc" id="L634">                return this.doIndexQueryOnce(indexLabel, q);</span>
+            });
+        }
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    private IdHolder doIndexQueryBatch(IndexLabel indexLabel,
+                                       ConditionQuery query) {
+<span class="nc" id="L642">        Iterator&lt;BackendEntry&gt; entries = super.query(query).iterator();</span>
+<span class="nc" id="L643">        return new BatchIdHolder(query, entries, batch -&gt; {</span>
+<span class="nc" id="L644">            LockUtil.Locks locks = new LockUtil.Locks(this.graphName());</span>
+            try {
+                // Catch lock every batch
+<span class="nc" id="L647">                locks.lockReads(LockUtil.INDEX_LABEL_DELETE, indexLabel.id());</span>
+<span class="nc" id="L648">                locks.lockReads(LockUtil.INDEX_LABEL_REBUILD, indexLabel.id());</span>
+<span class="nc bnc" id="L649" title="All 2 branches missed.">                if (!indexLabel.system()) {</span>
+                    /*
+                     * Check exist because it may be deleted after some batches
+                     * throw exception if the index label not exists
+                     * NOTE: graph() will return null with system index label
+                     */
+<span class="nc" id="L655">                    graph().indexLabel(indexLabel.id());</span>
+                }
+
+                // Iterate one batch, and keep iterator position
+<span class="nc" id="L659">                Set&lt;Id&gt; ids = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L660" title="All 4 branches missed.">                while ((batch == Query.NO_LIMIT || ids.size() &lt; batch) &amp;&amp;</span>
+<span class="nc bnc" id="L661" title="All 2 branches missed.">                       entries.hasNext()) {</span>
+<span class="nc" id="L662">                    HugeIndex index = this.serializer.readIndex(graph(), query,</span>
+<span class="nc" id="L663">                                                                entries.next());</span>
+<span class="nc" id="L664">                    this.removeExpiredIndexIfNeeded(index, query.showExpired());</span>
+<span class="nc" id="L665">                    ids.addAll(index.elementIds());</span>
+<span class="nc" id="L666">                    Query.checkForceCapacity(ids.size());</span>
+<span class="nc" id="L667">                    this.recordIndexValue(query, index);</span>
+<span class="nc" id="L668">                }</span>
+<span class="nc" id="L669">                return ids;</span>
+            } finally {
+<span class="nc" id="L671">                locks.unlock();</span>
+            }
+        });
+    }
+
+    private void recordIndexValue(ConditionQuery query, HugeIndex index) {
+<span class="nc bnc" id="L677" title="All 2 branches missed.">        if (!shouldRecordIndexValue(query, index)) {</span>
+<span class="nc" id="L678">            return;</span>
+        }
+
+<span class="nc" id="L681">        ConditionQuery originQuery = query.originConditionQuery();</span>
+<span class="nc" id="L682">        Id fieldId = index.indexLabel().indexField();</span>
+<span class="nc bnc" id="L683" title="All 2 branches missed.">        for (Id id : index.elementIds()) {</span>
+<span class="nc" id="L684">            Object value = index.indexLabel().validValue(index.fieldValues());</span>
+<span class="nc" id="L685">            originQuery.recordIndexValue(fieldId, id, value);</span>
+<span class="nc" id="L686">        }</span>
+<span class="nc" id="L687">    }</span>
+
+    @Watched(prefix = &quot;index&quot;)
+    private PageIds doIndexQueryOnce(IndexLabel indexLabel,
+                                     ConditionQuery query) {
+        // Query all or one page
+<span class="nc" id="L693">        Iterator&lt;BackendEntry&gt; entries = null;</span>
+<span class="nc" id="L694">        LockUtil.Locks locks = new LockUtil.Locks(this.graphName());</span>
+        try {
+<span class="nc" id="L696">            locks.lockReads(LockUtil.INDEX_LABEL_DELETE, indexLabel.id());</span>
+<span class="nc" id="L697">            locks.lockReads(LockUtil.INDEX_LABEL_REBUILD, indexLabel.id());</span>
+
+<span class="nc" id="L699">            Set&lt;Id&gt; ids = InsertionOrderUtil.newSet();</span>
+<span class="nc" id="L700">            entries = super.query(query).iterator();</span>
+<span class="nc bnc" id="L701" title="All 2 branches missed.">            while (entries.hasNext()) {</span>
+<span class="nc" id="L702">                HugeIndex index = this.serializer.readIndex(graph(), query,</span>
+<span class="nc" id="L703">                                                            entries.next());</span>
+<span class="nc" id="L704">                this.removeExpiredIndexIfNeeded(index, query.showExpired());</span>
+<span class="nc" id="L705">                ids.addAll(index.elementIds());</span>
+<span class="nc bnc" id="L706" title="All 2 branches missed.">                if (query.reachLimit(ids.size())) {</span>
+<span class="nc" id="L707">                    break;</span>
+                }
+<span class="nc" id="L709">                Query.checkForceCapacity(ids.size());</span>
+<span class="nc" id="L710">                this.recordIndexValue(query, index);</span>
+<span class="nc" id="L711">            }</span>
+            // If there is no data, the entries is not a Metadatable object
+<span class="nc bnc" id="L713" title="All 2 branches missed.">            if (ids.isEmpty()) {</span>
+<span class="nc" id="L714">                return PageIds.EMPTY;</span>
+            }
+            // NOTE: Memory backend's iterator is not Metadatable
+<span class="nc bnc" id="L717" title="All 2 branches missed.">            if (!query.paging()) {</span>
+<span class="nc" id="L718">                return new PageIds(ids, PageState.EMPTY);</span>
+            }
+<span class="nc" id="L720">            E.checkState(entries instanceof Metadatable,</span>
+                         &quot;The entries must be Metadatable when query &quot; +
+                         &quot;in paging, but got '%s'&quot;,
+<span class="nc" id="L723">                         entries.getClass().getName());</span>
+<span class="nc" id="L724">            return new PageIds(ids, PageInfo.pageState(entries));</span>
+        } finally {
+<span class="nc" id="L726">            locks.unlock();</span>
+<span class="nc" id="L727">            CloseableIterator.closeIterator(entries);</span>
+        }
+    }
+
+    @Watched(prefix = &quot;index&quot;)
+    private Set&lt;MatchedIndex&gt; collectMatchedIndexes(ConditionQuery query) {
+<span class="nc" id="L733">        SchemaTransaction schema = this.params().schemaTransaction();</span>
+<span class="nc" id="L734">        Id label = query.condition(HugeKeys.LABEL);</span>
+
+        List&lt;? extends SchemaLabel&gt; schemaLabels;
+<span class="nc bnc" id="L737" title="All 2 branches missed.">        if (label != null) {</span>
+            // Query has LABEL condition
+            SchemaLabel schemaLabel;
+<span class="nc bnc" id="L740" title="All 2 branches missed.">            if (query.resultType().isVertex()) {</span>
+<span class="nc" id="L741">                schemaLabel = schema.getVertexLabel(label);</span>
+<span class="nc bnc" id="L742" title="All 2 branches missed.">            } else if (query.resultType().isEdge()) {</span>
+<span class="nc" id="L743">                schemaLabel = schema.getEdgeLabel(label);</span>
+            } else {
+<span class="nc" id="L745">                throw new AssertionError(String.format(</span>
+                          &quot;Unsupported index query type: %s&quot;,
+<span class="nc" id="L747">                          query.resultType()));</span>
+            }
+<span class="nc" id="L749">            schemaLabels = ImmutableList.of(schemaLabel);</span>
+<span class="nc" id="L750">        } else {</span>
+            // Query doesn't have LABEL condition
+<span class="nc bnc" id="L752" title="All 2 branches missed.">            if (query.resultType().isVertex()) {</span>
+<span class="nc" id="L753">                schemaLabels = schema.getVertexLabels();</span>
+<span class="nc bnc" id="L754" title="All 2 branches missed.">            } else if (query.resultType().isEdge()) {</span>
+<span class="nc" id="L755">                schemaLabels = schema.getEdgeLabels();</span>
+            } else {
+<span class="nc" id="L757">                throw new AssertionError(String.format(</span>
+                          &quot;Unsupported index query type: %s&quot;,
+<span class="nc" id="L759">                          query.resultType()));</span>
+            }
+        }
+
+        // Collect MatchedIndex for each SchemaLabel
+<span class="nc" id="L764">        Set&lt;MatchedIndex&gt; matchedIndexes = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L765" title="All 2 branches missed.">        for (SchemaLabel schemaLabel : schemaLabels) {</span>
+<span class="nc" id="L766">            MatchedIndex index = this.collectMatchedIndex(schemaLabel, query);</span>
+<span class="nc bnc" id="L767" title="All 2 branches missed.">            if (index != null) {</span>
+<span class="nc" id="L768">                matchedIndexes.add(index);</span>
+            }
+<span class="nc" id="L770">        }</span>
+<span class="nc" id="L771">        return matchedIndexes;</span>
+    }
+
+    /**
+     * Collect matched IndexLabel(s) in a SchemaLabel for a query
+     * @param schemaLabel find indexLabels of this schemaLabel
+     * @param query conditions container
+     * @return MatchedLabel object contains schemaLabel and matched indexLabels
+     */
+    @Watched(prefix = &quot;index&quot;)
+    private MatchedIndex collectMatchedIndex(SchemaLabel schemaLabel,
+                                             ConditionQuery query) {
+<span class="nc" id="L783">        SchemaTransaction schema = this.params().schemaTransaction();</span>
+<span class="nc" id="L784">        Set&lt;IndexLabel&gt; ils = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L785" title="All 2 branches missed.">        for (Id il : schemaLabel.indexLabels()) {</span>
+<span class="nc" id="L786">            IndexLabel indexLabel = schema.getIndexLabel(il);</span>
+            /*
+             * Method schema#getIndexLabel may return null here
+             * because the indexLabel is being created at this time
+             * and has not been saved to the backend storage
+             */
+<span class="nc bnc" id="L792" title="All 4 branches missed.">            if (indexLabel == null || indexLabel.indexType().isUnique()) {</span>
+<span class="nc" id="L793">                continue;</span>
+            }
+<span class="nc" id="L795">            ils.add(indexLabel);</span>
+<span class="nc" id="L796">        }</span>
+<span class="nc bnc" id="L797" title="All 2 branches missed.">        if (this.graph().readMode().showOlap()) {</span>
+<span class="nc bnc" id="L798" title="All 2 branches missed.">            for (IndexLabel il : schema.getIndexLabels()) {</span>
+<span class="nc bnc" id="L799" title="All 2 branches missed.">                if (il.olap()) {</span>
+<span class="nc" id="L800">                    ils.add(il);</span>
+                }
+<span class="nc" id="L802">            }</span>
+        }
+<span class="nc bnc" id="L804" title="All 2 branches missed.">        if (ils.isEmpty()) {</span>
+<span class="nc" id="L805">            return null;</span>
+        }
+        // Try to match single or composite index
+<span class="nc" id="L808">        Set&lt;IndexLabel&gt; matchedILs = matchSingleOrCompositeIndex(query, ils);</span>
+<span class="nc bnc" id="L809" title="All 2 branches missed.">        if (matchedILs.isEmpty()) {</span>
+            // Try to match joint indexes
+<span class="nc" id="L811">            matchedILs = matchJointIndexes(query, ils);</span>
+        }
+
+<span class="nc bnc" id="L814" title="All 2 branches missed.">        if (!matchedILs.isEmpty()) {</span>
+<span class="nc" id="L815">            return new MatchedIndex(schemaLabel, matchedILs);</span>
+        }
+<span class="nc" id="L817">        return null;</span>
+    }
+
+    private ConditionQuery constructSearchQuery(ConditionQuery query, MatchedIndex index) {
+<span class="nc" id="L821">        ConditionQuery newQuery = query;</span>
+<span class="nc" id="L822">        Set&lt;Id&gt; indexFields = new HashSet&lt;&gt;();</span>
+        // Convert has(key, text) to has(key, textContainsAny(word1, word2))
+<span class="nc bnc" id="L824" title="All 2 branches missed.">        for (IndexLabel il : index.indexLabels()) {</span>
+<span class="nc bnc" id="L825" title="All 2 branches missed.">            if (il.indexType() != IndexType.SEARCH) {</span>
+<span class="nc" id="L826">                continue;</span>
+            }
+<span class="nc" id="L828">            Id indexField = il.indexField();</span>
+<span class="nc" id="L829">            String fieldValue = (String) newQuery.userpropValue(indexField);</span>
+<span class="nc" id="L830">            Set&lt;String&gt; words = this.segmentWords(fieldValue);</span>
+<span class="nc" id="L831">            indexFields.add(indexField);</span>
+
+<span class="nc" id="L833">            newQuery = newQuery.copy();</span>
+<span class="nc" id="L834">            newQuery.unsetCondition(indexField);</span>
+<span class="nc" id="L835">            newQuery.query(Condition.textContainsAny(indexField, words));</span>
+<span class="nc" id="L836">        }</span>
+
+        // Register results filter to compare property value and search text
+<span class="nc" id="L839">        newQuery.registerResultsFilter(element -&gt; {</span>
+<span class="nc bnc" id="L840" title="All 2 branches missed.">            assert element != null;</span>
+<span class="nc bnc" id="L841" title="All 2 branches missed.">            for (Condition cond : query.conditions()) {</span>
+<span class="nc bnc" id="L842" title="All 2 branches missed.">                Object key = cond.isRelation() ?</span>
+<span class="nc" id="L843">                             ((Relation) cond).key() : null;</span>
+<span class="nc bnc" id="L844" title="All 4 branches missed.">                if (key instanceof Id &amp;&amp; indexFields.contains(key)) {</span>
+                    // This is an index field of search index
+<span class="nc" id="L846">                    Id field = (Id) key;</span>
+<span class="nc" id="L847">                    HugeProperty&lt;?&gt; property = element.getProperty(field);</span>
+<span class="nc" id="L848">                    String propValue = propertyValueToString(property.value());</span>
+<span class="nc" id="L849">                    String fieldValue = (String) query.userpropValue(field);</span>
+<span class="nc bnc" id="L850" title="All 2 branches missed.">                    if (this.matchSearchIndexWords(propValue, fieldValue)) {</span>
+<span class="nc" id="L851">                        continue;</span>
+                    }
+<span class="nc" id="L853">                    return false;</span>
+                }
+<span class="nc bnc" id="L855" title="All 2 branches missed.">                if (!cond.test(element)) {</span>
+<span class="nc" id="L856">                    return false;</span>
+                }
+<span class="nc" id="L858">            }</span>
+<span class="nc" id="L859">            return true;</span>
+        });
+
+<span class="nc" id="L862">        return newQuery;</span>
+    }
+
+    private boolean matchSearchIndexWords(String propValue, String fieldValue) {
+<span class="nc" id="L866">        Set&lt;String&gt; propValues = this.segmentWords(propValue);</span>
+<span class="nc" id="L867">        Set&lt;String&gt; words = this.segmentWords(fieldValue);</span>
+<span class="nc" id="L868">        return CollectionUtil.hasIntersection(propValues, words);</span>
+    }
+
+    private Set&lt;String&gt; segmentWords(String text) {
+        /*
+         Support 3 kinds of query:
+         - Text.contains(&quot;(word)&quot;): query by user-specified word;
+         - Text.contains(&quot;(word1|word2|word3)&quot;): query by user-specified words;
+         - Text.contains(&quot;words&quot;): query by words splitted from analyzer;
+         Note: all kinds support words exact match
+         */
+<span class="nc bnc" id="L879" title="All 4 branches missed.">        if (text.startsWith(START_SYMBOL) &amp;&amp; text.endsWith(END_SYMBOL)) {</span>
+<span class="nc" id="L880">            String subText = text.substring(1, text.length() - 1);</span>
+<span class="nc bnc" id="L881" title="All 2 branches missed.">            if (subText.contains(WORD_DELIMITER)) {</span>
+<span class="nc" id="L882">                String[] texts = StringUtils.split(subText, WORD_DELIMITER);</span>
+<span class="nc" id="L883">                return ImmutableSet.copyOf(texts);</span>
+            } else {
+<span class="nc" id="L885">                return ImmutableSet.of(subText);</span>
+            }
+        }
+<span class="nc" id="L888">        Set&lt;String&gt; segments = this.textAnalyzer.segment(text);</span>
+
+        /*
+         * Add original text to segments at the insertion stage,
+         * in order to can match fully words at the query stage.
+         */
+<span class="nc" id="L894">        segments.add(text);</span>
+
+        // Ignore unicode \u0000 to \u0003
+<span class="nc" id="L897">        segments.removeAll(ConditionQuery.IGNORE_SYM_SET);</span>
+<span class="nc" id="L898">        return segments;</span>
+    }
+
+    private boolean needIndexForLabel() {
+<span class="nc bnc" id="L902" title="All 2 branches missed.">        return !this.store().features().supportsQueryByLabel();</span>
+    }
+
+    private void removeExpiredIndexIfNeeded(HugeIndex index,
+                                            boolean showExpired) {
+<span class="nc bnc" id="L907" title="All 4 branches missed.">        if (this.store().features().supportsTtl() || showExpired) {</span>
+<span class="nc" id="L908">            return;</span>
+        }
+<span class="nc bnc" id="L910" title="All 2 branches missed.">        for (IdWithExpiredTime id : index.expiredElementIds()) {</span>
+<span class="nc" id="L911">            HugeIndex removeIndex = index.clone();</span>
+<span class="nc" id="L912">            removeIndex.resetElementIds();</span>
+<span class="nc" id="L913">            removeIndex.elementIds(id.id(), id.expiredTime());</span>
+<span class="nc" id="L914">            DeleteExpiredJob.asyncDeleteExpiredObject(this.graph(),</span>
+                                                      removeIndex);
+<span class="nc" id="L916">        }</span>
+<span class="nc" id="L917">    }</span>
+
+    private static Set&lt;IndexLabel&gt; matchSingleOrCompositeIndex(
+                                   ConditionQuery query,
+                                   Set&lt;IndexLabel&gt; indexLabels) {
+<span class="nc bnc" id="L922" title="All 2 branches missed.">        if (query.hasNeqCondition()) {</span>
+<span class="nc" id="L923">            return ImmutableSet.of();</span>
+        }
+<span class="nc" id="L925">        boolean requireRange = query.hasRangeCondition();</span>
+<span class="nc" id="L926">        boolean requireSearch = query.hasSearchCondition();</span>
+<span class="nc" id="L927">        Set&lt;Id&gt; queryPropKeys = query.userpropKeys();</span>
+<span class="nc bnc" id="L928" title="All 2 branches missed.">        for (IndexLabel indexLabel : indexLabels) {</span>
+<span class="nc" id="L929">            List&lt;Id&gt; indexFields = indexLabel.indexFields();</span>
+            // Try to match fields
+<span class="nc bnc" id="L931" title="All 2 branches missed.">            if (!matchIndexFields(queryPropKeys, indexFields)) {</span>
+<span class="nc" id="L932">                continue;</span>
+            }
+            /*
+             * Matched all fields, try to match index type.
+             * For range-index or search-index there must be only one condition.
+             * The following terms are legal:
+             *   1.hasSearchCondition and IndexType.SEARCH
+             *   2.hasRangeCondition and IndexType.RANGE
+             *   3.not hasRangeCondition but has range-index equal-condition
+             *   4.secondary (composite) index
+             */
+<span class="nc" id="L943">            IndexType indexType = indexLabel.indexType();</span>
+<span class="nc bnc" id="L944" title="All 6 branches missed.">            if ((requireSearch &amp;&amp; !indexType.isSearch()) ||</span>
+<span class="nc bnc" id="L945" title="All 2 branches missed.">                (!requireSearch &amp;&amp; indexType.isSearch())) {</span>
+<span class="nc" id="L946">                continue;</span>
+            }
+<span class="nc bnc" id="L948" title="All 4 branches missed.">            if (requireRange &amp;&amp; !indexType.isNumeric()) {</span>
+<span class="nc" id="L949">                continue;</span>
+            }
+<span class="nc" id="L951">            return ImmutableSet.of(indexLabel);</span>
+        }
+<span class="nc" id="L953">        return ImmutableSet.of();</span>
+    }
+
+    /**
+     * Collect index label(s) whose prefix index fields are contained in
+     * property-keys in query
+     */
+    private static Set&lt;IndexLabel&gt; matchJointIndexes(
+                                   ConditionQuery query,
+                                   Set&lt;IndexLabel&gt; indexLabels) {
+<span class="nc bnc" id="L963" title="All 2 branches missed.">        if (query.hasNeqCondition()) {</span>
+<span class="nc" id="L964">            return ImmutableSet.of();</span>
+        }
+<span class="nc" id="L966">        Set&lt;Id&gt; queryPropKeys = query.userpropKeys();</span>
+<span class="nc bnc" id="L967" title="All 2 branches missed.">        assert !queryPropKeys.isEmpty();</span>
+<span class="nc" id="L968">        Set&lt;IndexLabel&gt; allILs = InsertionOrderUtil.newSet(indexLabels);</span>
+
+        // Handle range/search index first
+<span class="nc" id="L971">        Set&lt;IndexLabel&gt; matchedIndexLabels = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L972" title="All 4 branches missed.">        if (query.hasRangeCondition() || query.hasSearchCondition()) {</span>
+<span class="nc" id="L973">            matchedIndexLabels = matchRangeOrSearchIndexLabels(query, allILs);</span>
+<span class="nc bnc" id="L974" title="All 2 branches missed.">            if (matchedIndexLabels.isEmpty()) {</span>
+<span class="nc" id="L975">                return ImmutableSet.of();</span>
+            }
+<span class="nc" id="L977">            allILs.removeAll(matchedIndexLabels);</span>
+
+            // Remove matched queryPropKeys
+<span class="nc bnc" id="L980" title="All 2 branches missed.">            for (IndexLabel il : matchedIndexLabels) {</span>
+                // Only one field each range/search index-label
+<span class="nc" id="L982">                queryPropKeys.remove(il.indexField());</span>
+<span class="nc" id="L983">            }</span>
+            // Return if all fields are matched
+<span class="nc bnc" id="L985" title="All 2 branches missed.">            if (queryPropKeys.isEmpty()) {</span>
+<span class="nc" id="L986">                return matchedIndexLabels;</span>
+            }
+        }
+
+        // Handle secondary indexes
+<span class="nc" id="L991">        Set&lt;Id&gt; indexFields = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L992" title="All 2 branches missed.">        for (IndexLabel indexLabel : allILs) {</span>
+            // Range index equal-condition and secondary index can joint
+<span class="nc bnc" id="L994" title="All 2 branches missed.">            if (indexLabel.indexType().isSearch()) {</span>
+                // Search index must be handled at the previous step
+<span class="nc" id="L996">                continue;</span>
+            }
+
+<span class="nc" id="L999">            List&lt;Id&gt; fields = indexLabel.indexFields();</span>
+            // Collect all fields prefix
+<span class="nc bnc" id="L1001" title="All 2 branches missed.">            for (Id field : fields) {</span>
+<span class="nc bnc" id="L1002" title="All 2 branches missed.">                if (!queryPropKeys.contains(field)) {</span>
+<span class="nc" id="L1003">                    break;</span>
+                }
+<span class="nc" id="L1005">                matchedIndexLabels.add(indexLabel);</span>
+<span class="nc" id="L1006">                indexFields.add(field);</span>
+<span class="nc" id="L1007">            }</span>
+<span class="nc" id="L1008">        }</span>
+        // Must match all fields
+<span class="nc bnc" id="L1010" title="All 2 branches missed.">        if (indexFields.equals(queryPropKeys)) {</span>
+<span class="nc" id="L1011">            return matchedIndexLabels;</span>
+        } else {
+<span class="nc" id="L1013">            return ImmutableSet.of();</span>
+        }
+    }
+
+    private static Set&lt;IndexLabel&gt; matchRangeOrSearchIndexLabels(
+                                   ConditionQuery query,
+                                   Set&lt;IndexLabel&gt; indexLabels) {
+<span class="nc" id="L1020">        Set&lt;IndexLabel&gt; matchedIndexLabels = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L1021" title="All 2 branches missed.">        for (Relation relation : query.userpropRelations()) {</span>
+<span class="nc bnc" id="L1022" title="All 2 branches missed.">            if (!relation.relation().isRangeType() &amp;&amp;</span>
+<span class="nc bnc" id="L1023" title="All 2 branches missed.">                !relation.relation().isSearchType()) {</span>
+<span class="nc" id="L1024">                continue;</span>
+            }
+<span class="nc" id="L1026">            Id key = (Id) relation.key();</span>
+<span class="nc" id="L1027">            boolean matched = false;</span>
+<span class="nc bnc" id="L1028" title="All 2 branches missed.">            for (IndexLabel indexLabel : indexLabels) {</span>
+<span class="nc bnc" id="L1029" title="All 2 branches missed.">                if (indexLabel.indexType().isRange() ||</span>
+<span class="nc bnc" id="L1030" title="All 2 branches missed.">                    indexLabel.indexType().isSearch()) {</span>
+<span class="nc bnc" id="L1031" title="All 2 branches missed.">                    if (indexLabel.indexField().equals(key)) {</span>
+<span class="nc" id="L1032">                        matched = true;</span>
+<span class="nc" id="L1033">                        matchedIndexLabels.add(indexLabel);</span>
+<span class="nc" id="L1034">                        break;</span>
+                    }
+                }
+<span class="nc" id="L1037">            }</span>
+<span class="nc bnc" id="L1038" title="All 2 branches missed.">            if (!matched) {</span>
+<span class="nc" id="L1039">                return ImmutableSet.of();</span>
+            }
+<span class="nc" id="L1041">        }</span>
+<span class="nc" id="L1042">        return matchedIndexLabels;</span>
+    }
+
+    private static IndexQueries buildJointIndexesQueries(ConditionQuery query,
+                                                         MatchedIndex index) {
+<span class="nc" id="L1047">        IndexQueries queries = IndexQueries.of(query);</span>
+<span class="nc" id="L1048">        List&lt;IndexLabel&gt; allILs = new ArrayList&lt;&gt;(index.indexLabels());</span>
+
+        // Handle range/search indexes
+<span class="nc bnc" id="L1051" title="All 4 branches missed.">        if (query.hasRangeCondition() || query.hasSearchCondition()) {</span>
+<span class="nc" id="L1052">            Set&lt;IndexLabel&gt; matchedILs =</span>
+<span class="nc" id="L1053">                    matchRangeOrSearchIndexLabels(query, index.indexLabels());</span>
+<span class="nc bnc" id="L1054" title="All 2 branches missed.">            assert !matchedILs.isEmpty();</span>
+<span class="nc" id="L1055">            allILs.removeAll(matchedILs);</span>
+
+<span class="nc" id="L1057">            Set&lt;Id&gt; queryPropKeys = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L1058" title="All 2 branches missed.">            for (IndexLabel il : matchedILs) {</span>
+                // Only one field each range/search index-label
+<span class="nc" id="L1060">                queryPropKeys.add(il.indexField());</span>
+<span class="nc" id="L1061">            }</span>
+
+            // Construct queries by matched index-labels
+<span class="nc" id="L1064">            queries.putAll(constructQueries(query, matchedILs, queryPropKeys));</span>
+
+            // Remove matched queryPropKeys
+<span class="nc" id="L1067">            query = query.copy();</span>
+<span class="nc bnc" id="L1068" title="All 2 branches missed.">            for (Id field : queryPropKeys) {</span>
+<span class="nc" id="L1069">                query.unsetCondition(field);</span>
+<span class="nc" id="L1070">            }</span>
+            // Return if matched indexes satisfies query-conditions already
+<span class="nc bnc" id="L1072" title="All 2 branches missed.">            if (query.userpropKeys().isEmpty()) {</span>
+<span class="nc" id="L1073">                return queries;</span>
+            }
+        }
+
+        // Handle secondary joint indexes
+<span class="nc" id="L1078">        final ConditionQuery finalQuery = query;</span>
+<span class="nc bnc" id="L1079" title="All 2 branches missed.">        for (int i = 1, size = allILs.size(); i &lt;= size; i++) {</span>
+<span class="nc" id="L1080">            boolean found = cmn(allILs, size, i, 0, null, r -&gt; {</span>
+                // All n indexLabels are selected, test current combination
+<span class="nc" id="L1082">                IndexQueries qs = constructJointSecondaryQueries(finalQuery, r);</span>
+<span class="nc bnc" id="L1083" title="All 2 branches missed.">                if (qs.isEmpty()) {</span>
+<span class="nc" id="L1084">                    return false;</span>
+                }
+<span class="nc" id="L1086">                queries.putAll(qs);</span>
+<span class="nc" id="L1087">                return true;</span>
+            });
+
+<span class="nc bnc" id="L1090" title="All 2 branches missed.">            if (found) {</span>
+<span class="nc" id="L1091">                return queries;</span>
+            }
+        }
+<span class="nc" id="L1094">        return IndexQueries.EMPTY;</span>
+    }
+
+    /**
+     * Traverse C(m, n) combinations of a list to find first matched
+     * result combination and call back with the result.
+     * TODO: move this method to common module.
+     * @param all list to contain all items for combination
+     * @param m m of C(m, n)
+     * @param n n of C(m, n)
+     * @param current current position in list
+     * @param result list to contains selected items
+     * @return true if matched items combination else false
+     */
+    private static &lt;T&gt; boolean cmn(List&lt;T&gt; all, int m, int n,
+                                   int current, List&lt;T&gt; result,
+                                   Function&lt;List&lt;T&gt;, Boolean&gt; callback) {
+<span class="nc bnc" id="L1111" title="All 2 branches missed.">        assert m &lt;= all.size();</span>
+<span class="nc bnc" id="L1112" title="All 2 branches missed.">        assert n &lt;= m;</span>
+<span class="nc bnc" id="L1113" title="All 2 branches missed.">        assert current &lt;= all.size();</span>
+<span class="nc bnc" id="L1114" title="All 2 branches missed.">        if (result == null) {</span>
+<span class="nc" id="L1115">            result = new ArrayList&lt;&gt;(n);</span>
+        }
+
+<span class="nc" id="L1118">        int index = result.size();</span>
+<span class="nc bnc" id="L1119" title="All 2 branches missed.">        if (m == n) {</span>
+<span class="nc" id="L1120">            result.addAll(all.subList(current, all.size()));</span>
+<span class="nc" id="L1121">            n = 0;</span>
+        }
+<span class="nc bnc" id="L1123" title="All 2 branches missed.">        if (n == 0) {</span>
+            // All n items are selected
+<span class="nc" id="L1125">            Boolean apply = callback.apply(result);</span>
+<span class="nc bnc" id="L1126" title="All 2 branches missed.">            while (index &lt; result.size()) {</span>
+<span class="nc" id="L1127">                result.remove(index);</span>
+            }
+<span class="nc" id="L1129">            return apply;</span>
+        }
+<span class="nc bnc" id="L1131" title="All 2 branches missed.">        if (current &gt;= all.size()) {</span>
+            // Reach the end of items
+<span class="nc" id="L1133">            return false;</span>
+        }
+
+        // Select current item, continue to select C(m-1, n-1)
+<span class="nc" id="L1137">        result.add(all.get(current));</span>
+<span class="nc bnc" id="L1138" title="All 2 branches missed.">        if (cmn(all, m - 1, n - 1, ++current, result, callback)) {</span>
+<span class="nc" id="L1139">            return true;</span>
+        }
+        // Not select current item, continue to select C(m-1, n)
+<span class="nc" id="L1142">        result.remove(index);</span>
+<span class="nc bnc" id="L1143" title="All 2 branches missed.">        if (cmn(all, m - 1, n, current, result, callback)) {</span>
+<span class="nc" id="L1144">            return true;</span>
+        }
+<span class="nc" id="L1146">        return false;</span>
+    }
+
+    private static boolean shouldRecordIndexValue(ConditionQuery query,
+                                                  HugeIndex index) {
+        // Currently, only range index has problems
+<span class="nc bnc" id="L1152" title="All 2 branches missed.">        return query.originQuery() instanceof ConditionQuery &amp;&amp;</span>
+<span class="nc bnc" id="L1153" title="All 2 branches missed.">               index.indexLabel().indexType().isRange();</span>
+    }
+
+    private static IndexQueries constructJointSecondaryQueries(
+                                ConditionQuery query,
+                                List&lt;IndexLabel&gt; ils) {
+<span class="nc" id="L1159">        Set&lt;IndexLabel&gt; indexLabels = InsertionOrderUtil.newSet();</span>
+<span class="nc" id="L1160">        indexLabels.addAll(ils);</span>
+<span class="nc" id="L1161">        indexLabels = matchJointIndexes(query, indexLabels);</span>
+<span class="nc bnc" id="L1162" title="All 2 branches missed.">        if (indexLabels.isEmpty()) {</span>
+<span class="nc" id="L1163">            return IndexQueries.EMPTY;</span>
+        }
+
+<span class="nc" id="L1166">        return constructQueries(query, indexLabels, query.userpropKeys());</span>
+    }
+
+    private static IndexQueries constructQueries(ConditionQuery query,
+                                                 Set&lt;IndexLabel&gt; ils,
+                                                 Set&lt;Id&gt; propKeys) {
+<span class="nc" id="L1172">        IndexQueries queries = IndexQueries.of(query);</span>
+
+<span class="nc bnc" id="L1174" title="All 2 branches missed.">        for (IndexLabel il : ils) {</span>
+<span class="nc" id="L1175">            List&lt;Id&gt; fields = il.indexFields();</span>
+<span class="nc" id="L1176">            ConditionQuery newQuery = query.copy();</span>
+<span class="nc" id="L1177">            newQuery.resetUserpropConditions();</span>
+<span class="nc bnc" id="L1178" title="All 2 branches missed.">            for (Id field : fields) {</span>
+<span class="nc bnc" id="L1179" title="All 2 branches missed.">                if (!propKeys.contains(field)) {</span>
+<span class="nc" id="L1180">                    break;</span>
+                }
+<span class="nc bnc" id="L1182" title="All 2 branches missed.">                for (Condition c : query.userpropConditions(field)) {</span>
+<span class="nc" id="L1183">                    newQuery.query(c);</span>
+<span class="nc" id="L1184">                }</span>
+<span class="nc" id="L1185">            }</span>
+<span class="nc" id="L1186">            ConditionQuery q = constructQuery(newQuery, il);</span>
+<span class="nc bnc" id="L1187" title="All 2 branches missed.">            assert q != null;</span>
+<span class="nc" id="L1188">            queries.put(il, q);</span>
+<span class="nc" id="L1189">        }</span>
+<span class="nc" id="L1190">        return queries;</span>
+    }
+
+    private static ConditionQuery constructQuery(ConditionQuery query,
+                                                 IndexLabel indexLabel) {
+<span class="nc" id="L1195">        IndexType indexType = indexLabel.indexType();</span>
+<span class="nc" id="L1196">        boolean requireRange = query.hasRangeCondition();</span>
+<span class="nc" id="L1197">        boolean supportRange = indexType.isNumeric();</span>
+<span class="nc bnc" id="L1198" title="All 4 branches missed.">        if (requireRange &amp;&amp; !supportRange) {</span>
+<span class="nc" id="L1199">            LOG.debug(&quot;There is range query condition in '{}', &quot; +</span>
+                      &quot;but the index label '{}' is unable to match&quot;,
+<span class="nc" id="L1201">                      query, indexLabel.name());</span>
+<span class="nc" id="L1202">            return null;</span>
+        }
+
+<span class="nc" id="L1205">        Set&lt;Id&gt; queryKeys = query.userpropKeys();</span>
+<span class="nc" id="L1206">        List&lt;Id&gt; indexFields = indexLabel.indexFields();</span>
+<span class="nc bnc" id="L1207" title="All 2 branches missed.">        if (!matchIndexFields(queryKeys, indexFields)) {</span>
+<span class="nc" id="L1208">            return null;</span>
+        }
+<span class="nc" id="L1210">        LOG.debug(&quot;Matched index fields: {} of index '{}'&quot;,</span>
+                  indexFields, indexLabel);
+
+        ConditionQuery indexQuery;
+
+<span class="nc bnc" id="L1215" title="All 5 branches missed.">        switch (indexType) {</span>
+            case SEARCH:
+<span class="nc bnc" id="L1217" title="All 2 branches missed.">                E.checkState(indexFields.size() == 1,</span>
+                             &quot;Invalid index fields size for %s: %s&quot;,
+                             indexType, indexFields);
+<span class="nc" id="L1220">                Object fieldValue = query.userpropValue(indexFields.get(0));</span>
+<span class="nc bnc" id="L1221" title="All 2 branches missed.">                assert fieldValue instanceof String;</span>
+                // Will escape special char inside concatValues()
+<span class="nc" id="L1223">                fieldValue = ConditionQuery.concatValues(fieldValue);</span>
+
+<span class="nc" id="L1225">                indexQuery = new ConditionQuery(indexType.type(), query);</span>
+<span class="nc" id="L1226">                indexQuery.eq(HugeKeys.INDEX_LABEL_ID, indexLabel.id());</span>
+<span class="nc" id="L1227">                indexQuery.eq(HugeKeys.FIELD_VALUES, fieldValue);</span>
+<span class="nc" id="L1228">                break;</span>
+            case SECONDARY:
+<span class="nc" id="L1230">                List&lt;Id&gt; joinedKeys = indexFields.subList(0, queryKeys.size());</span>
+                // Will escape special char inside userpropValuesString()
+<span class="nc" id="L1232">                String joinedValues = query.userpropValuesString(joinedKeys);</span>
+
+<span class="nc" id="L1234">                indexQuery = new ConditionQuery(indexType.type(), query);</span>
+<span class="nc" id="L1235">                indexQuery.eq(HugeKeys.INDEX_LABEL_ID, indexLabel.id());</span>
+<span class="nc" id="L1236">                indexQuery.eq(HugeKeys.FIELD_VALUES, joinedValues);</span>
+<span class="nc" id="L1237">                break;</span>
+            case RANGE_INT:
+            case RANGE_FLOAT:
+            case RANGE_LONG:
+            case RANGE_DOUBLE:
+<span class="nc bnc" id="L1242" title="All 2 branches missed.">                if (query.userpropConditions().size() &gt; 2) {</span>
+<span class="nc" id="L1243">                    throw new HugeException(</span>
+                              &quot;Range query has two conditions at most, &quot; +
+<span class="nc" id="L1245">                              &quot;but got: %s&quot;, query.userpropConditions());</span>
+                }
+                // Replace the query key with PROPERTY_VALUES, set number value
+<span class="nc" id="L1248">                indexQuery = new ConditionQuery(indexType.type(), query);</span>
+<span class="nc" id="L1249">                indexQuery.eq(HugeKeys.INDEX_LABEL_ID, indexLabel.id());</span>
+<span class="nc bnc" id="L1250" title="All 2 branches missed.">                for (Condition condition : query.userpropConditions()) {</span>
+<span class="nc bnc" id="L1251" title="All 2 branches missed.">                    assert condition instanceof Relation;</span>
+<span class="nc" id="L1252">                    Relation r = (Relation) condition;</span>
+<span class="nc" id="L1253">                    Number value = NumericUtil.convertToNumber(r.value());</span>
+<span class="nc" id="L1254">                    Relation sys = new Condition.SyspropRelation(</span>
+                                                 HugeKeys.FIELD_VALUES,
+<span class="nc" id="L1256">                                                 r.relation(), value);</span>
+<span class="nc" id="L1257">                    condition = condition.replace(r, sys);</span>
+<span class="nc" id="L1258">                    indexQuery.query(condition);</span>
+<span class="nc" id="L1259">                }</span>
+<span class="nc" id="L1260">                break;</span>
+            case SHARD:
+<span class="nc" id="L1262">                HugeType type = indexLabel.indexType().type();</span>
+<span class="nc" id="L1263">                indexQuery = new ConditionQuery(type, query);</span>
+<span class="nc" id="L1264">                indexQuery.eq(HugeKeys.INDEX_LABEL_ID, indexLabel.id());</span>
+<span class="nc" id="L1265">                List&lt;Condition&gt; conditions = constructShardConditions(</span>
+<span class="nc" id="L1266">                                             query, indexLabel.indexFields(),</span>
+                                             HugeKeys.FIELD_VALUES);
+<span class="nc" id="L1268">                indexQuery.query(conditions);</span>
+<span class="nc" id="L1269">                break;</span>
+            default:
+<span class="nc" id="L1271">                throw new AssertionError(String.format(</span>
+                          &quot;Unknown index type '%s'&quot;, indexType));
+        }
+
+        /*
+         * Set limit for single index or composite index, also for joint index,
+         * to avoid redundant element ids and out of capacity.
+         * NOTE: not set offset because this query might be a sub-query,
+         * see queryByUserprop()
+         */
+<span class="nc" id="L1281">        indexQuery.page(query.page());</span>
+<span class="nc" id="L1282">        indexQuery.limit(query.total());</span>
+<span class="nc" id="L1283">        indexQuery.capacity(query.capacity());</span>
+<span class="nc" id="L1284">        indexQuery.olap(indexLabel.olap());</span>
+
+<span class="nc" id="L1286">        return indexQuery;</span>
+    }
+
+    protected static List&lt;Condition&gt; constructShardConditions(
+                                     ConditionQuery query,
+                                     List&lt;Id&gt; fields,
+                                     HugeKeys key) {
+<span class="nc" id="L1293">        List&lt;Condition&gt; conditions = new ArrayList&lt;&gt;(2);</span>
+<span class="nc" id="L1294">        boolean hasRange = false;</span>
+<span class="nc" id="L1295">        int processedCondCount = 0;</span>
+<span class="nc" id="L1296">        List&lt;Object&gt; prefixes = new ArrayList&lt;&gt;();</span>
+
+<span class="nc bnc" id="L1298" title="All 2 branches missed.">        for (Id field : fields) {</span>
+<span class="nc" id="L1299">            List&lt;Condition&gt; fieldConds = query.userpropConditions(field);</span>
+<span class="nc" id="L1300">            processedCondCount += fieldConds.size();</span>
+<span class="nc bnc" id="L1301" title="All 2 branches missed.">            if (fieldConds.isEmpty()) {</span>
+<span class="nc" id="L1302">                break;</span>
+            }
+
+<span class="nc" id="L1305">            RangeConditions range = new RangeConditions(fieldConds);</span>
+<span class="nc bnc" id="L1306" title="All 2 branches missed.">            if (!range.hasRange()) {</span>
+<span class="nc bnc" id="L1307" title="All 2 branches missed.">                E.checkArgument(range.keyEq() != null,</span>
+                                &quot;Invalid query: %s&quot;, query);
+<span class="nc" id="L1309">                prefixes.add(range.keyEq());</span>
+<span class="nc" id="L1310">                continue;</span>
+            }
+
+<span class="nc bnc" id="L1313" title="All 2 branches missed.">            if (range.keyMin() != null) {</span>
+<span class="nc bnc" id="L1314" title="All 2 branches missed.">                RelationType type = range.keyMinEq() ?</span>
+<span class="nc" id="L1315">                                    RelationType.GTE : RelationType.GT;</span>
+<span class="nc" id="L1316">                conditions.add(shardFieldValuesCondition(key, prefixes,</span>
+<span class="nc" id="L1317">                                                         range.keyMin(),</span>
+                                                         type));
+<span class="nc" id="L1319">            } else {</span>
+<span class="nc bnc" id="L1320" title="All 2 branches missed.">                assert range.keyMax() != null;</span>
+<span class="nc" id="L1321">                Object num = range.keyMax();</span>
+<span class="nc bnc" id="L1322" title="All 2 branches missed.">                num = NumericUtil.minValueOf(NumericUtil.isNumber(num) ?</span>
+<span class="nc" id="L1323">                                             num.getClass() : Long.class);</span>
+<span class="nc" id="L1324">                conditions.add(shardFieldValuesCondition(key, prefixes, num,</span>
+                                                         RelationType.GTE));
+            }
+
+<span class="nc bnc" id="L1328" title="All 2 branches missed.">            if (range.keyMax() != null) {</span>
+<span class="nc bnc" id="L1329" title="All 2 branches missed.">                RelationType type = range.keyMaxEq() ?</span>
+<span class="nc" id="L1330">                                    RelationType.LTE : RelationType.LT;</span>
+<span class="nc" id="L1331">                conditions.add(shardFieldValuesCondition(key, prefixes,</span>
+<span class="nc" id="L1332">                                                         range.keyMax(), type));</span>
+<span class="nc" id="L1333">            } else {</span>
+<span class="nc" id="L1334">                Object num = range.keyMin();</span>
+<span class="nc bnc" id="L1335" title="All 2 branches missed.">                num = NumericUtil.maxValueOf(NumericUtil.isNumber(num) ?</span>
+<span class="nc" id="L1336">                                             num.getClass() : Long.class);</span>
+<span class="nc" id="L1337">                conditions.add(shardFieldValuesCondition(key, prefixes, num,</span>
+                                                         RelationType.LTE));
+            }
+<span class="nc" id="L1340">            hasRange = true;</span>
+<span class="nc" id="L1341">            break;</span>
+        }
+
+        /*
+         * Can't have conditions after range condition for shard index,
+         * but SORT_KEYS can have redundant conditions because upper
+         * layer can do filter.
+         */
+<span class="nc bnc" id="L1349" title="All 2 branches missed.">        if (key == HugeKeys.FIELD_VALUES &amp;&amp;</span>
+<span class="nc bnc" id="L1350" title="All 2 branches missed.">            processedCondCount &lt; query.userpropKeys().size()) {</span>
+<span class="nc" id="L1351">            throw new HugeException(&quot;Invalid shard index query: %s&quot;, query);</span>
+        }
+        // 1. First range condition processed, finish shard query conditions
+<span class="nc bnc" id="L1354" title="All 2 branches missed.">        if (hasRange) {</span>
+<span class="nc" id="L1355">            return conditions;</span>
+        }
+        // 2. Shard query without range
+        String joinedValues;
+        // 2.1 All fields have equal-conditions
+<span class="nc bnc" id="L1360" title="All 2 branches missed.">        if (prefixes.size() == fields.size()) {</span>
+            // Prefix numeric values should be converted to sortable string
+<span class="nc" id="L1362">            joinedValues = ConditionQuery.concatValues(prefixes);</span>
+<span class="nc" id="L1363">            conditions.add(Condition.eq(key, joinedValues));</span>
+<span class="nc" id="L1364">            return conditions;</span>
+        }
+        // 2.2 Prefix fields have equal-conditions
+        /*
+         * Append EMPTY to 'values' to ensure FIELD_VALUES suffix
+         * with IdGenerator.NAME_SPLITOR
+         */
+<span class="nc" id="L1371">        prefixes.add(ConditionQuery.INDEX_VALUE_EMPTY);</span>
+<span class="nc" id="L1372">        joinedValues = ConditionQuery.concatValues(prefixes);</span>
+<span class="nc" id="L1373">        Condition min = Condition.gte(key, joinedValues);</span>
+<span class="nc" id="L1374">        conditions.add(min);</span>
+
+        // Increase 1 on prefix to get the next prefix
+<span class="nc" id="L1377">        Condition max = Condition.lt(key, increaseString(joinedValues));</span>
+<span class="nc" id="L1378">        conditions.add(max);</span>
+<span class="nc" id="L1379">        return conditions;</span>
+    }
+
+    private static Relation shardFieldValuesCondition(HugeKeys key,
+                                                                List&lt;Object&gt; prefixes,
+                                                                Object number,
+                                                                RelationType type) {
+<span class="nc" id="L1386">        List&lt;Object&gt; values = new ArrayList&lt;&gt;(prefixes);</span>
+<span class="nc" id="L1387">        String num = LongEncoding.encodeNumber(number);</span>
+<span class="nc bnc" id="L1388" title="All 2 branches missed.">        if (type == RelationType.LTE) {</span>
+<span class="nc" id="L1389">            type = RelationType.LT;</span>
+<span class="nc" id="L1390">            num = increaseString(num);</span>
+<span class="nc bnc" id="L1391" title="All 2 branches missed.">        } else if (type == RelationType.GT) {</span>
+<span class="nc" id="L1392">            type = RelationType.GTE;</span>
+<span class="nc" id="L1393">            num = increaseString(num);</span>
+        }
+<span class="nc" id="L1395">        values.add(num);</span>
+        // Will escape special char inside concatValues()
+<span class="nc" id="L1397">        String value = ConditionQuery.concatValues(values);</span>
+<span class="nc" id="L1398">        return new Condition.SyspropRelation(key, type, value);</span>
+    }
+
+    private static String increaseString(String value) {
+<span class="nc" id="L1402">        int length = value.length();</span>
+<span class="nc" id="L1403">        CharBuffer cbuf = CharBuffer.wrap(value.toCharArray());</span>
+<span class="nc" id="L1404">        int lastIndex = length - 1;</span>
+<span class="nc" id="L1405">        char last = cbuf.charAt(lastIndex);</span>
+<span class="nc bnc" id="L1406" title="All 4 branches missed.">        E.checkArgument(last == '!' || LongEncoding.validB64Char(last),</span>
+                        &quot;Illegal ending char '\\u%s' for String Index&quot;,
+<span class="nc" id="L1408">                        (int) last);</span>
+<span class="nc" id="L1409">        cbuf.put(lastIndex, (char) (last + 1));</span>
+<span class="nc" id="L1410">        return cbuf.toString();</span>
+    }
+
+    private static boolean matchIndexFields(Set&lt;Id&gt; queryKeys,
+                                            List&lt;Id&gt; indexFields) {
+<span class="nc bnc" id="L1415" title="All 2 branches missed.">        if (queryKeys.size() &gt; indexFields.size()) {</span>
+<span class="nc" id="L1416">            return false;</span>
+        }
+
+        // Is queryKeys the prefix of indexFields?
+<span class="nc" id="L1420">        List&lt;Id&gt; subFields = indexFields.subList(0, queryKeys.size());</span>
+<span class="nc" id="L1421">        return subFields.containsAll(queryKeys);</span>
+    }
+
+    private static boolean validQueryConditionValues(HugeGraph graph,
+                                                     ConditionQuery query) {
+<span class="nc" id="L1426">        Set&lt;Id&gt; keys = query.userpropKeys();</span>
+<span class="nc bnc" id="L1427" title="All 2 branches missed.">        for (Id key : keys) {</span>
+<span class="nc" id="L1428">            PropertyKey pk = graph.propertyKey(key);</span>
+<span class="nc" id="L1429">            Set&lt;Object&gt; values = query.userpropValues(key);</span>
+<span class="nc bnc" id="L1430" title="All 2 branches missed.">            E.checkState(!values.isEmpty(),</span>
+                         &quot;Expect user property values for key '%s', &quot; +
+                         &quot;but got none&quot;, pk);
+<span class="nc" id="L1433">            boolean hasContains = query.containsContainsCondition(key);</span>
+<span class="nc bnc" id="L1434" title="All 2 branches missed.">            if (pk.cardinality().multiple()) {</span>
+                // If contains collection index, relation should be contains
+<span class="nc" id="L1436">                E.checkState(hasContains,</span>
+                             &quot;The relation of property '%s' must be &quot; +
+                             &quot;CONTAINS or TEXT_CONTAINS, but got %s&quot;,
+<span class="nc" id="L1439">                             pk.name(), query.relation(key).relation());</span>
+            }
+
+<span class="nc bnc" id="L1442" title="All 2 branches missed.">            for (Object value : values) {</span>
+<span class="nc bnc" id="L1443" title="All 2 branches missed.">                if (hasContains) {</span>
+<span class="nc" id="L1444">                    value = toCollectionIfNeeded(pk, value);</span>
+                }
+
+<span class="nc bnc" id="L1447" title="All 2 branches missed.">                if (!pk.checkValueType(value)) {</span>
+<span class="nc" id="L1448">                    return false;</span>
+                }
+<span class="nc" id="L1450">            }</span>
+<span class="nc" id="L1451">        }</span>
+<span class="nc" id="L1452">        return true;</span>
+    }
+
+    private static Object toCollectionIfNeeded(PropertyKey pk, Object value) {
+<span class="nc bnc" id="L1456" title="All 3 branches missed.">        switch (pk.cardinality()) {</span>
+            case SET:
+<span class="nc bnc" id="L1458" title="All 2 branches missed.">                if (!(value instanceof Set)) {</span>
+<span class="nc" id="L1459">                    value = CollectionUtil.toSet(value);</span>
+                }
+                break;
+            case LIST:
+<span class="nc bnc" id="L1463" title="All 2 branches missed.">                if (!(value instanceof List)) {</span>
+<span class="nc" id="L1464">                    value = CollectionUtil.toList(value);</span>
+                }
+                break;
+            default:
+                break;
+        }
+<span class="nc" id="L1470">        return value;</span>
+    }
+
+    private static boolean isCollectionIndex(List&lt;Object&gt; propValues) {
+<span class="nc bnc" id="L1474" title="All 2 branches missed.">        return propValues.size() == 1 &amp;&amp;</span>
+<span class="nc bnc" id="L1475" title="All 2 branches missed.">               propValues.get(0) instanceof Collection;</span>
+    }
+
+    private static String propertyValueToString(Object value) {
+        /*
+         * Join collection items with white space if the value is Collection,
+         * or else keep the origin value.
+         */
+<span class="nc bnc" id="L1483" title="All 2 branches missed.">        return value instanceof Collection ?</span>
+<span class="nc" id="L1484">               StringUtils.join(((Iterable&lt;?&gt;) value), &quot; &quot;) : value.toString();</span>
+    }
+
+    private static NoIndexException noIndexException(HugeGraph graph,
+                                                     ConditionQuery query,
+                                                     Id label) {
+<span class="nc bnc" id="L1490" title="All 2 branches missed.">        String name = label == null ? &quot;any label&quot; : String.format(&quot;label '%s'&quot;,</span>
+<span class="nc bnc" id="L1491" title="All 2 branches missed.">                      query.resultType().isVertex() ?</span>
+<span class="nc" id="L1492">                      graph.vertexLabel(label).name() :</span>
+<span class="nc" id="L1493">                      graph.edgeLabel(label).name());</span>
+<span class="nc" id="L1494">        List&lt;String&gt; mismatched = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L1495" title="All 2 branches missed.">        if (query.hasSecondaryCondition()) {</span>
+<span class="nc" id="L1496">            mismatched.add(&quot;secondary&quot;);</span>
+        }
+<span class="nc bnc" id="L1498" title="All 2 branches missed.">        if (query.hasRangeCondition()) {</span>
+<span class="nc" id="L1499">            mismatched.add(&quot;range&quot;);</span>
+        }
+<span class="nc bnc" id="L1501" title="All 2 branches missed.">        if (query.hasSearchCondition()) {</span>
+<span class="nc" id="L1502">            mismatched.add(&quot;search&quot;);</span>
+        }
+<span class="nc bnc" id="L1504" title="All 2 branches missed.">        if (query.hasNeqCondition()) {</span>
+<span class="nc" id="L1505">            mismatched.add(&quot;not-equal&quot;);</span>
+        }
+<span class="nc bnc" id="L1507" title="All 2 branches missed.">        if (mismatched.isEmpty()) {</span>
+<span class="nc" id="L1508">            mismatched.add(query.relations().toString());</span>
+        }
+<span class="nc" id="L1510">        return new NoIndexException(&quot;Don't accept query based on properties &quot; +</span>
+                                    &quot;%s that are not indexed in %s, &quot; +
+                                    &quot;may not match %s condition&quot;,
+<span class="nc" id="L1513">                                    graph.mapPkId2Name(query.userpropKeys()),</span>
+<span class="nc" id="L1514">                                    name, String.join(&quot;/&quot;, mismatched));</span>
+    }
+
+    private static void validateIndexLabel(IndexLabel indexLabel) {
+<span class="nc" id="L1518">        E.checkArgument(indexLabel.status().ok(),</span>
+                        &quot;Can't query by label index '%s' due to &quot; +
+                        &quot;it's in status %s(CREATED expected)&quot;,
+<span class="nc" id="L1521">                        indexLabel, indexLabel.status());</span>
+<span class="nc" id="L1522">    }</span>
+
+    private static boolean hasNullableProp(HugeElement element, Id key) {
+<span class="nc" id="L1525">        return element.schemaLabel().nullableKeys().contains(key);</span>
+    }
+
+    private static Set&lt;IndexLabel&gt; relatedIndexLabels(HugeElement element) {
+<span class="nc" id="L1529">        Set&lt;IndexLabel&gt; indexLabels = InsertionOrderUtil.newSet();</span>
+<span class="nc" id="L1530">        Set&lt;Id&gt; indexLabelIds = element.schemaLabel().indexLabels();</span>
+
+<span class="nc bnc" id="L1532" title="All 2 branches missed.">        for (Id id : indexLabelIds) {</span>
+<span class="nc" id="L1533">            IndexLabel indexLabel = element.graph().indexLabel(id);</span>
+<span class="nc" id="L1534">            indexLabels.add(indexLabel);</span>
+<span class="nc" id="L1535">        }</span>
+<span class="nc" id="L1536">        return indexLabels;</span>
+    }
+
+    private static void increaseLimit(Query query) {
+<span class="nc bnc" id="L1540" title="All 2 branches missed.">        assert !query.noLimit();</span>
+        /*
+         * NOTE: in order to retain enough records after the intersection.
+         * The parameters don't make much sense and need to be improved
+         */
+<span class="nc bnc" id="L1545" title="All 2 branches missed.">        if (!query.paging()) {</span>
+<span class="nc" id="L1546">            long limit = Math.min(query.limit() * 10L + 8L,</span>
+                                  Query.DEFAULT_CAPACITY);
+<span class="nc" id="L1548">            query.limit(limit);</span>
+        }
+<span class="nc" id="L1550">    }</span>
+
+    protected void removeIndex(IndexLabel indexLabel) {
+<span class="nc" id="L1553">        HugeIndex index = new HugeIndex(this.graph(), indexLabel);</span>
+<span class="nc" id="L1554">        this.doRemove(this.serializer.writeIndex(index));</span>
+<span class="nc" id="L1555">    }</span>
+
+<span class="nc" id="L1557">    private static class MatchedIndex {</span>
+
+        private SchemaLabel schemaLabel;
+        private Set&lt;IndexLabel&gt; indexLabels;
+
+        public MatchedIndex(SchemaLabel schemaLabel,
+<span class="nc" id="L1563">                            Set&lt;IndexLabel&gt; indexLabels) {</span>
+<span class="nc" id="L1564">            this.schemaLabel = schemaLabel;</span>
+<span class="nc" id="L1565">            this.indexLabels = indexLabels;</span>
+<span class="nc" id="L1566">        }</span>
+
+        @SuppressWarnings(&quot;unused&quot;)
+        public SchemaLabel schemaLabel() {
+<span class="nc" id="L1570">            return this.schemaLabel;</span>
+        }
+
+        public Set&lt;IndexLabel&gt; indexLabels() {
+<span class="nc" id="L1574">            return Collections.unmodifiableSet(this.indexLabels);</span>
+        }
+
+        public IndexQueries constructIndexQueries(ConditionQuery query) {
+            // Condition query =&gt; Index Queries
+<span class="nc bnc" id="L1579" title="All 2 branches missed.">            if (this.indexLabels().size() == 1) {</span>
+                /*
+                 * Query by single index or composite index
+                 */
+<span class="nc" id="L1583">                IndexLabel il = this.indexLabels().iterator().next();</span>
+<span class="nc" id="L1584">                ConditionQuery indexQuery = constructQuery(query, il);</span>
+<span class="nc bnc" id="L1585" title="All 2 branches missed.">                assert indexQuery != null;</span>
+<span class="nc" id="L1586">                return IndexQueries.of(il, indexQuery);</span>
+            } else {
+                /*
+                 * Query by joint indexes
+                 */
+<span class="nc" id="L1591">                IndexQueries queries = buildJointIndexesQueries(query, this);</span>
+<span class="nc bnc" id="L1592" title="All 2 branches missed.">                assert !queries.isEmpty();</span>
+<span class="nc" id="L1593">                return queries;</span>
+            }
+        }
+
+        public boolean containsSearchIndex() {
+<span class="nc bnc" id="L1598" title="All 2 branches missed.">            for (IndexLabel il : this.indexLabels) {</span>
+<span class="nc bnc" id="L1599" title="All 2 branches missed.">                if (il.indexType().isSearch()) {</span>
+<span class="nc" id="L1600">                    return true;</span>
+                }
+<span class="nc" id="L1602">            }</span>
+<span class="nc" id="L1603">            return false;</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L1608">            return this.indexLabels.hashCode();</span>
+        }
+
+        @Override
+        public boolean equals(Object other) {
+<span class="nc bnc" id="L1613" title="All 2 branches missed.">            if (!(other instanceof MatchedIndex)) {</span>
+<span class="nc" id="L1614">                return false;</span>
+            }
+<span class="nc" id="L1616">            Set&lt;IndexLabel&gt; indexLabels = ((MatchedIndex) other).indexLabels;</span>
+<span class="nc" id="L1617">            return Objects.equals(this.indexLabels, indexLabels);</span>
+        }
+    }
+
+    private static class IndexQueries
+                   extends HashMap&lt;IndexLabel, ConditionQuery&gt; {
+
+        private static final long serialVersionUID = 1400326138090922676L;
+<span class="nc" id="L1625">        private static final IndexQueries EMPTY = new IndexQueries(null);</span>
+
+        private final ConditionQuery parentQuery;
+
+<span class="nc" id="L1629">        public IndexQueries(ConditionQuery parentQuery) {</span>
+<span class="nc" id="L1630">            this.parentQuery = parentQuery;</span>
+<span class="nc" id="L1631">        }</span>
+
+        public static IndexQueries of(IndexLabel il, ConditionQuery query) {
+<span class="nc" id="L1634">            IndexQueries indexQueries = new IndexQueries(query);</span>
+<span class="nc" id="L1635">            indexQueries.put(il, query);</span>
+<span class="nc" id="L1636">            return indexQueries;</span>
+        }
+
+        public static IndexQueries of(ConditionQuery parentQuery) {
+<span class="nc" id="L1640">            IndexQueries indexQueries = new IndexQueries(parentQuery);</span>
+<span class="nc" id="L1641">            return indexQueries;</span>
+        }
+
+        public boolean oomRisk() {
+<span class="nc bnc" id="L1645" title="All 2 branches missed.">            for (Query subQuery : this.values()) {</span>
+<span class="nc bnc" id="L1646" title="All 4 branches missed.">                if (subQuery.bigCapacity() &amp;&amp; subQuery.aggregate() != null) {</span>
+<span class="nc" id="L1647">                    return true;</span>
+                }
+<span class="nc" id="L1649">            }</span>
+<span class="nc" id="L1650">            return false;</span>
+        }
+
+        public Map.Entry&lt;IndexLabel, ConditionQuery&gt; one() {
+<span class="nc bnc" id="L1654" title="All 2 branches missed.">            E.checkState(this.size() == 1,</span>
+                         &quot;Please ensure index queries only contains one entry&quot;);
+<span class="nc" id="L1656">            return this.entrySet().iterator().next();</span>
+        }
+
+        public Query rootQuery() {
+<span class="nc bnc" id="L1660" title="All 2 branches missed.">            if (this.size() &gt; 0) {</span>
+<span class="nc" id="L1661">                return this.values().iterator().next().rootOriginQuery();</span>
+            }
+<span class="nc" id="L1663">            return null;</span>
+        }
+
+        public Query asJointQuery() {
+            @SuppressWarnings({ &quot;unchecked&quot;, &quot;rawtypes&quot; })
+<span class="nc" id="L1668">            Collection&lt;Query&gt; queries = (Collection) this.values();</span>
+<span class="nc" id="L1669">            return new JointQuery(this.rootQuery().resultType(),</span>
+                                  this.parentQuery, queries);
+        }
+
+        private static class JointQuery extends Query {
+
+            private final Collection&lt;Query&gt; queries;
+            private final ConditionQuery parentQuery;
+
+            public JointQuery(HugeType type, ConditionQuery parentQuery,
+                              Collection&lt;Query&gt; queries) {
+<span class="nc" id="L1680">                super(type, parent(queries));</span>
+<span class="nc" id="L1681">                this.parentQuery = parentQuery;</span>
+<span class="nc" id="L1682">                this.queries = queries;</span>
+<span class="nc" id="L1683">            }</span>
+
+            @Override
+            public Query originQuery() {
+<span class="nc" id="L1687">                return this.parentQuery;</span>
+            }
+
+            @SuppressWarnings(&quot;unused&quot;)
+            public Query originJointQuery() {
+<span class="nc" id="L1692">                List&lt;Query&gt; origins = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L1693" title="All 2 branches missed.">                for (Query q : this.queries) {</span>
+<span class="nc" id="L1694">                    origins.add(q.originQuery());</span>
+<span class="nc" id="L1695">                }</span>
+<span class="nc" id="L1696">                return new JointQuery(this.resultType(),</span>
+                                      this.parentQuery, origins);
+            }
+
+            @Override
+            public String toString() {
+<span class="nc" id="L1702">                return String.format(&quot;JointQuery %s&quot;, this.queries);</span>
+            }
+
+            private static Query parent(Collection&lt;Query&gt; queries) {
+<span class="nc bnc" id="L1706" title="All 2 branches missed.">                if (queries.size() &gt; 0) {</span>
+                    // Chose the first one as origin query (any one is OK)
+<span class="nc" id="L1708">                    return queries.iterator().next();</span>
+                }
+<span class="nc" id="L1710">                return null;</span>
+            }
+        }
+    }
+
+<span class="nc" id="L1715">    public static class RemoveLeftIndexJob extends EphemeralJob&lt;Long&gt;</span>
+                                           implements EphemeralJobQueue.Reduce&lt;Long&gt; {
+
+        private static final String REMOVE_LEFT_INDEX = &quot;remove_left_index&quot;;
+
+        private final ConditionQuery query;
+        private final HugeElement element;
+        private GraphIndexTransaction tx;
+        private Set&lt;ConditionQuery.LeftIndex&gt; leftIndexes;
+
+<span class="nc" id="L1725">        private RemoveLeftIndexJob(ConditionQuery query, HugeElement element) {</span>
+<span class="nc" id="L1726">            E.checkArgumentNotNull(query, &quot;query&quot;);</span>
+<span class="nc" id="L1727">            E.checkArgumentNotNull(element, &quot;element&quot;);</span>
+<span class="nc" id="L1728">            this.query = query;</span>
+<span class="nc" id="L1729">            this.element = element;</span>
+<span class="nc" id="L1730">            this.tx = null;</span>
+<span class="nc" id="L1731">            this.leftIndexes = query.getLeftIndexOfElement(element.id());</span>
+<span class="nc" id="L1732">        }</span>
+
+        @Override
+        public String type() {
+<span class="nc" id="L1736">            return REMOVE_LEFT_INDEX;</span>
+        }
+
+        @Override
+        public Long execute() {
+<span class="nc bnc" id="L1741" title="All 2 branches missed.">            this.tx = this.element.schemaLabel().system() ?</span>
+<span class="nc" id="L1742">                      this.params().systemTransaction().indexTransaction() :</span>
+<span class="nc" id="L1743">                      this.params().graphTransaction().indexTransaction();</span>
+<span class="nc" id="L1744">            return this.removeIndexLeft(this.query, this.element);</span>
+        }
+
+        protected long removeIndexLeft(ConditionQuery query,
+                                       HugeElement element) {
+<span class="nc bnc" id="L1749" title="All 2 branches missed.">            if (element.type() != HugeType.VERTEX &amp;&amp;</span>
+<span class="nc bnc" id="L1750" title="All 2 branches missed.">                element.type() != HugeType.EDGE_OUT &amp;&amp;</span>
+<span class="nc bnc" id="L1751" title="All 2 branches missed.">                element.type() != HugeType.EDGE_IN) {</span>
+<span class="nc" id="L1752">                throw new HugeException(&quot;Only accept element of type VERTEX &quot; +</span>
+                                        &quot;and EDGE to remove left index, &quot; +
+<span class="nc" id="L1754">                                        &quot;but got: '%s'&quot;, element.type());</span>
+            }
+
+            // Check label is matched
+<span class="nc" id="L1758">            Id label = query.condition(HugeKeys.LABEL);</span>
+            // NOTE: original condition query may not have label condition,
+            // which means possibly label == null.
+<span class="nc bnc" id="L1761" title="All 4 branches missed.">            if (label != null &amp;&amp; !element.schemaLabel().id().equals(label)) {</span>
+<span class="nc bnc" id="L1762" title="All 2 branches missed.">                String labelName = element.type().isVertex() ?</span>
+<span class="nc" id="L1763">                                   this.graph().vertexLabel(label).name() :</span>
+<span class="nc" id="L1764">                                   this.graph().edgeLabel(label).name();</span>
+<span class="nc" id="L1765">                E.checkState(false,</span>
+                             &quot;Found element %s with unexpected label '%s', &quot; +
+                             &quot;expected label '%s', query: %s&quot;,
+<span class="nc" id="L1768">                             element, element.label(), labelName, query);</span>
+            }
+
+<span class="nc" id="L1771">            long rCount = 0;</span>
+<span class="nc" id="L1772">            long sCount = 0;</span>
+<span class="nc bnc" id="L1773" title="All 2 branches missed.">            for (ConditionQuery cq: ConditionQueryFlatten.flatten(query)) {</span>
+                // Process range index
+<span class="nc" id="L1775">                rCount += this.processRangeIndexLeft(cq, element);</span>
+                // Process secondary index or search index
+<span class="nc" id="L1777">                sCount += this.processSecondaryOrSearchIndexLeft(cq, element);</span>
+<span class="nc" id="L1778">            }</span>
+<span class="nc" id="L1779">            return rCount + sCount;</span>
+        }
+
+        private long processRangeIndexLeft(ConditionQuery query,
+                                           HugeElement element) {
+<span class="nc" id="L1784">            long count = 0;</span>
+<span class="nc bnc" id="L1785" title="All 2 branches missed.">            if (this.leftIndexes == null) {</span>
+<span class="nc" id="L1786">                return count;</span>
+            }
+
+<span class="nc bnc" id="L1789" title="All 2 branches missed.">            for (ConditionQuery.LeftIndex leftIndex : this.leftIndexes) {</span>
+<span class="nc" id="L1790">                Set&lt;Object&gt; indexValues = leftIndex.indexFieldValues();</span>
+<span class="nc" id="L1791">                IndexLabel indexLabel = this.findMatchedIndexLabel(query,</span>
+                                                                   leftIndex);
+<span class="nc bnc" id="L1793" title="All 2 branches missed.">                assert indexLabel != null;</span>
+
+<span class="nc" id="L1795">                AbstractSerializer serializer = this.tx.serializer;</span>
+<span class="nc bnc" id="L1796" title="All 2 branches missed.">                for (Object value : indexValues) {</span>
+<span class="nc" id="L1797">                    HugeIndex index = new HugeIndex(this.graph(), indexLabel);</span>
+<span class="nc" id="L1798">                    index.elementIds(element.id());</span>
+<span class="nc" id="L1799">                    index.fieldValues(value);</span>
+<span class="nc" id="L1800">                    this.tx.doEliminate(serializer.writeIndex(index));</span>
+<span class="nc" id="L1801">                    count++;</span>
+<span class="nc" id="L1802">                }</span>
+<span class="nc" id="L1803">            }</span>
+            // Remove LeftIndex after constructing remove job
+<span class="nc" id="L1805">            this.query.removeElementLeftIndex(element.id());</span>
+<span class="nc" id="L1806">            return count;</span>
+        }
+
+        private IndexLabel findMatchedIndexLabel(ConditionQuery query,
+                                                 ConditionQuery.LeftIndex
+                                                 leftIndex) {
+<span class="nc" id="L1812">            Set&lt;MatchedIndex&gt; matchedIndexes = this.tx.collectMatchedIndexes(query);</span>
+<span class="nc bnc" id="L1813" title="All 2 branches missed.">            for (MatchedIndex index : matchedIndexes) {</span>
+<span class="nc bnc" id="L1814" title="All 2 branches missed.">                for (IndexLabel label : index.indexLabels()) {</span>
+<span class="nc bnc" id="L1815" title="All 2 branches missed.">                    if (label.indexField().equals(leftIndex.indexField())) {</span>
+<span class="nc" id="L1816">                        return label;</span>
+                    }
+<span class="nc" id="L1818">                }</span>
+<span class="nc" id="L1819">            }</span>
+<span class="nc" id="L1820">            return null;</span>
+        }
+
+        private long processSecondaryOrSearchIndexLeft(ConditionQuery query,
+                                                       HugeElement element) {
+<span class="nc" id="L1825">            Map&lt;PropertyKey, Object&gt; incorrectPKs = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L1826">            HugeElement deletion = this.constructErrorElem(query, element,</span>
+                                                           incorrectPKs);
+<span class="nc bnc" id="L1828" title="All 2 branches missed.">            if (deletion == null) {</span>
+<span class="nc" id="L1829">                return 0;</span>
+            }
+
+            // Delete unused index
+<span class="nc" id="L1833">            long count = 0;</span>
+            Set&lt;Id&gt; incorrectPkIds;
+<span class="nc bnc" id="L1835" title="All 2 branches missed.">            for (IndexLabel il : relatedIndexLabels(deletion)) {</span>
+<span class="nc" id="L1836">                incorrectPkIds = incorrectPKs.keySet().stream()</span>
+<span class="nc" id="L1837">                                             .map(PropertyKey::id)</span>
+<span class="nc" id="L1838">                                             .collect(Collectors.toSet());</span>
+<span class="nc" id="L1839">                Collection&lt;Id&gt; incorrectIndexFields = CollectionUtil.intersect(</span>
+<span class="nc" id="L1840">                                                      il.indexFields(),</span>
+                                                      incorrectPkIds);
+<span class="nc bnc" id="L1842" title="All 2 branches missed.">                if (incorrectIndexFields.isEmpty()) {</span>
+<span class="nc" id="L1843">                    continue;</span>
+                }
+                // Skip if search index is not wrong
+<span class="nc bnc" id="L1846" title="All 2 branches missed.">                if (il.indexType().isSearch()) {</span>
+<span class="nc" id="L1847">                    Id field = il.indexField();</span>
+<span class="nc" id="L1848">                    String cond = deletion.&lt;String&gt;getPropertyValue(field);</span>
+<span class="nc" id="L1849">                    String actual = element.&lt;String&gt;getPropertyValue(field);</span>
+<span class="nc bnc" id="L1850" title="All 2 branches missed.">                    if (this.tx.matchSearchIndexWords(actual, cond)) {</span>
+                        /*
+                         * If query by two search index, one is correct but
+                         * the other is wrong, we should not delete the correct
+                         */
+<span class="nc" id="L1855">                        continue;</span>
+                    }
+                }
+                // Delete index with error property
+<span class="nc" id="L1859">                this.tx.updateIndex(il.id(), deletion, true);</span>
+                // Rebuild index if delete correct index part
+<span class="nc bnc" id="L1861" title="All 2 branches missed.">                if (il.indexType().isSecondary()) {</span>
+                    /*
+                     * When it's a composite secondary index,
+                     * if the suffix property is wrong and the prefix property
+                     * is correct, the correct prefix part will be deleted,
+                     * so rebuild the index again with the correct property.
+                     */
+<span class="nc" id="L1868">                    this.tx.updateIndex(il.id(), element, false);</span>
+                }
+<span class="nc bnc" id="L1870" title="All 2 branches missed.">                if (this.deletedByError(element, incorrectIndexFields,</span>
+                                        incorrectPKs)) {
+<span class="nc" id="L1872">                    this.tx.updateIndex(il.id(), deletion, false);</span>
+                } else {
+<span class="nc" id="L1874">                    count++;</span>
+                }
+<span class="nc" id="L1876">            }</span>
+<span class="nc" id="L1877">            return count;</span>
+        }
+
+        private HugeElement constructErrorElem(
+                            ConditionQuery query, HugeElement element,
+                            Map&lt;PropertyKey, Object&gt; incorrectPKs) {
+<span class="nc" id="L1883">            HugeElement errorElem = element.copyAsFresh();</span>
+<span class="nc" id="L1884">            Set&lt;Id&gt; propKeys = query.userpropKeys();</span>
+<span class="nc bnc" id="L1885" title="All 2 branches missed.">            for (Id key : propKeys) {</span>
+<span class="nc" id="L1886">                Set&lt;Object&gt; conditionValues = query.userpropValues(key);</span>
+<span class="nc bnc" id="L1887" title="All 2 branches missed.">                E.checkState(!conditionValues.isEmpty(),</span>
+                             &quot;Expect user property values for key '%s', &quot; +
+                             &quot;but got none&quot;, key);
+<span class="nc bnc" id="L1890" title="All 2 branches missed.">                if (conditionValues.size() &gt; 1) {</span>
+                    // It's inside/between Query (processed in range index)
+<span class="nc" id="L1892">                    return null;</span>
+                }
+<span class="nc" id="L1894">                HugeProperty&lt;?&gt; prop = element.getProperty(key);</span>
+<span class="nc" id="L1895">                Object errorValue = conditionValues.iterator().next();</span>
+<span class="nc bnc" id="L1896" title="All 4 branches missed.">                if (prop == null || !Objects.equals(prop.value(), errorValue)) {</span>
+<span class="nc" id="L1897">                    PropertyKey pkey = this.graph().propertyKey(key);</span>
+<span class="nc" id="L1898">                    errorElem.addProperty(pkey, errorValue);</span>
+<span class="nc" id="L1899">                    incorrectPKs.put(pkey, errorValue);</span>
+                }
+<span class="nc" id="L1901">            }</span>
+<span class="nc" id="L1902">            return errorElem;</span>
+        }
+
+        @SuppressWarnings(&quot;unused&quot;)
+        private boolean deletedByError(ConditionQuery query,
+                                       HugeElement element) {
+<span class="nc" id="L1908">            HugeElement elem = this.newestElement(element);</span>
+<span class="nc bnc" id="L1909" title="All 2 branches missed.">            if (elem == null) {</span>
+<span class="nc" id="L1910">                return false;</span>
+            }
+<span class="nc" id="L1912">            return query.test(elem);</span>
+        }
+
+        private boolean deletedByError(HugeElement element,
+                                       Collection&lt;Id&gt; ilFields,
+                                       Map&lt;PropertyKey, Object&gt; incorrectPKs) {
+<span class="nc" id="L1918">            HugeElement elem = this.newestElement(element);</span>
+<span class="nc bnc" id="L1919" title="All 2 branches missed.">            if (elem == null) {</span>
+<span class="nc" id="L1920">                return false;</span>
+            }
+<span class="nc bnc" id="L1922" title="All 2 branches missed.">            for (Map.Entry&lt;PropertyKey, Object&gt; e : incorrectPKs.entrySet()) {</span>
+<span class="nc" id="L1923">                PropertyKey pk = e.getKey();</span>
+<span class="nc" id="L1924">                Object value = e.getValue();</span>
+<span class="nc bnc" id="L1925" title="All 2 branches missed.">                if (ilFields.contains(pk.id()) &amp;&amp;</span>
+<span class="nc bnc" id="L1926" title="All 2 branches missed.">                    value.equals(elem.getPropertyValue(pk.id()))) {</span>
+<span class="nc" id="L1927">                    return true;</span>
+                }
+<span class="nc" id="L1929">            }</span>
+<span class="nc" id="L1930">            return false;</span>
+        }
+
+        private HugeElement newestElement(HugeElement element) {
+<span class="nc" id="L1934">            boolean isVertex = element instanceof HugeVertex;</span>
+<span class="nc bnc" id="L1935" title="All 2 branches missed.">            if (isVertex) {</span>
+<span class="nc" id="L1936">                Iterator&lt;Vertex&gt; iter = this.graph().vertices(element.id());</span>
+<span class="nc" id="L1937">                return (HugeVertex) QueryResults.one(iter);</span>
+            } else {
+<span class="nc bnc" id="L1939" title="All 2 branches missed.">                assert element instanceof HugeEdge;</span>
+<span class="nc" id="L1940">                Iterator&lt;Edge&gt; iter = this.graph().edges(element.id());</span>
+<span class="nc" id="L1941">                return (HugeEdge) QueryResults.one(iter);</span>
+            }
+        }
+
+        @Override
+        public Long reduce(Long t1, Long t2) {
+<span class="nc bnc" id="L1947" title="All 2 branches missed.">            if (t1 == null) {</span>
+<span class="nc" id="L1948">                return t2;</span>
+            }
+
+<span class="nc bnc" id="L1951" title="All 2 branches missed.">            if (t2 == null) {</span>
+<span class="nc" id="L1952">                return t1;</span>
+            }
+
+<span class="nc" id="L1955">            return t1 + t2;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

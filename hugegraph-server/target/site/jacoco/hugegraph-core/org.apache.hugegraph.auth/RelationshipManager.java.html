@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RelationshipManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">RelationshipManager.java</span></div><h1>RelationshipManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Graph.Hidden;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.auth.SchemaDefine.Relationship;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.iterator.MapperIterator;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.util.E;
+import com.google.common.collect.ImmutableMap;
+
+<span class="nc" id="L50">public class RelationshipManager&lt;T extends Relationship&gt; {</span>
+
+    private final HugeGraphParams graph;
+    private final String label;
+    private final Function&lt;Edge, T&gt; deser;
+<span class="nc" id="L55">    private final ThreadLocal&lt;Boolean&gt; autoCommit = new ThreadLocal&lt;&gt;();</span>
+
+    private static final long NO_LIMIT = -1L;
+
+    public RelationshipManager(HugeGraphParams graph, String label,
+<span class="nc" id="L60">                               Function&lt;Edge, T&gt; deser) {</span>
+<span class="nc" id="L61">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+
+<span class="nc" id="L63">        this.graph = graph;</span>
+<span class="nc" id="L64">        this.label = label;</span>
+<span class="nc" id="L65">        this.deser = deser;</span>
+<span class="nc" id="L66">        this.autoCommit.set(true);</span>
+<span class="nc" id="L67">    }</span>
+
+    private GraphTransaction tx() {
+<span class="nc" id="L70">        return this.graph.systemTransaction();</span>
+    }
+
+    private HugeGraph graph() {
+<span class="nc" id="L74">        return this.graph.graph();</span>
+    }
+
+    private String unhideLabel() {
+<span class="nc" id="L78">        return Hidden.unHide(this.label);</span>
+    }
+
+    public Id add(T relationship) {
+<span class="nc" id="L82">        E.checkArgumentNotNull(relationship, &quot;Relationship can't be null&quot;);</span>
+<span class="nc" id="L83">        return this.save(relationship, false);</span>
+    }
+
+    public Id update(T relationship) {
+<span class="nc" id="L87">        E.checkArgumentNotNull(relationship, &quot;Relationship can't be null&quot;);</span>
+<span class="nc" id="L88">        relationship.onUpdate();</span>
+<span class="nc" id="L89">        return this.save(relationship, true);</span>
+    }
+
+    public T delete(Id id) {
+<span class="nc" id="L93">        T relationship = null;</span>
+<span class="nc" id="L94">        Iterator&lt;Edge&gt; edges = this.tx().queryEdges(id);</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        if (edges.hasNext()) {</span>
+<span class="nc" id="L96">            HugeEdge edge = (HugeEdge) edges.next();</span>
+<span class="nc" id="L97">            relationship = this.deser.apply(edge);</span>
+<span class="nc" id="L98">            this.tx().removeEdge(edge);</span>
+<span class="nc" id="L99">            this.commitOrRollback();</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            assert !edges.hasNext();</span>
+        }
+<span class="nc" id="L102">        return relationship;</span>
+    }
+
+    public T get(Id id) {
+<span class="nc" id="L106">        T relationship = null;</span>
+<span class="nc" id="L107">        Iterator&lt;Edge&gt; edges = this.tx().queryEdges(id);</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        if (edges.hasNext()) {</span>
+<span class="nc" id="L109">            relationship = this.deser.apply(edges.next());</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">            assert !edges.hasNext();</span>
+        }
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (relationship == null) {</span>
+<span class="nc" id="L113">            throw new NotFoundException(&quot;Can't find %s with id '%s'&quot;,</span>
+<span class="nc" id="L114">                                        this.unhideLabel(), id);</span>
+        }
+<span class="nc" id="L116">        return relationship;</span>
+    }
+
+    public boolean exists(Id id) {
+<span class="nc" id="L120">        Iterator&lt;Edge&gt; edges = this.tx().queryEdges(id);</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        if (edges.hasNext()) {</span>
+<span class="nc" id="L122">            Edge edge = edges.next();</span>
+<span class="nc" id="L123">            return this.label.equals(edge.label());</span>
+        }
+<span class="nc" id="L125">        return false;</span>
+    }
+
+    public List&lt;T&gt; list(List&lt;Id&gt; ids) {
+<span class="nc" id="L129">        return toList(this.queryById(ids));</span>
+    }
+
+    public List&lt;T&gt; list(long limit) {
+<span class="nc" id="L133">        Iterator&lt;Edge&gt; edges = this.queryRelationship(null, null, this.label,</span>
+<span class="nc" id="L134">                                                      ImmutableMap.of(), limit);</span>
+<span class="nc" id="L135">        return toList(edges);</span>
+    }
+
+    public List&lt;T&gt; list(Id source, Directions direction,
+                        String label, long limit) {
+<span class="nc" id="L140">        Iterator&lt;Edge&gt; edges = this.queryRelationship(source, direction, label,</span>
+<span class="nc" id="L141">                                                      ImmutableMap.of(), limit);</span>
+<span class="nc" id="L142">        return toList(edges);</span>
+    }
+
+    public List&lt;T&gt; list(Id source, Directions direction, String label,
+                        String key, Object value, long limit) {
+<span class="nc" id="L147">        Map&lt;String, Object&gt; conditions = ImmutableMap.of(key, value);</span>
+<span class="nc" id="L148">        Iterator&lt;Edge&gt; edges = this.queryRelationship(source, direction, label,</span>
+                                                      conditions, limit);
+<span class="nc" id="L150">        return toList(edges);</span>
+    }
+
+    protected List&lt;T&gt; toList(Iterator&lt;Edge&gt; edges) {
+<span class="nc" id="L154">        Iterator&lt;T&gt; iter = new MapperIterator&lt;&gt;(edges, this.deser);</span>
+        // Convert iterator to list to avoid across thread tx accessed
+<span class="nc" id="L156">        return (List&lt;T&gt;) QueryResults.toList(iter).list();</span>
+    }
+
+    private Iterator&lt;Edge&gt; queryById(List&lt;Id&gt; ids) {
+<span class="nc" id="L160">        Object[] idArray = ids.toArray(new Id[0]);</span>
+<span class="nc" id="L161">        return this.tx().queryEdges(idArray);</span>
+    }
+
+    private Iterator&lt;Edge&gt; queryRelationship(Id source,
+                                             Directions direction,
+                                             String label,
+                                             Map&lt;String, Object&gt; conditions,
+                                             long limit) {
+<span class="nc" id="L169">        ConditionQuery query = new ConditionQuery(HugeType.EDGE);</span>
+<span class="nc" id="L170">        EdgeLabel el = this.graph().edgeLabel(label);</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        if (direction == null) {</span>
+<span class="nc" id="L172">            direction = Directions.OUT;</span>
+        }
+<span class="nc bnc" id="L174" title="All 2 branches missed.">        if (source != null) {</span>
+<span class="nc" id="L175">            query.eq(HugeKeys.OWNER_VERTEX, source);</span>
+<span class="nc" id="L176">            query.eq(HugeKeys.DIRECTION, direction);</span>
+        }
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (label != null) {</span>
+<span class="nc" id="L179">            query.eq(HugeKeys.LABEL, el.id());</span>
+        }
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; entry : conditions.entrySet()) {</span>
+<span class="nc" id="L182">            PropertyKey pk = this.graph().propertyKey(entry.getKey());</span>
+<span class="nc" id="L183">            query.query(Condition.eq(pk.id(), entry.getValue()));</span>
+<span class="nc" id="L184">        }</span>
+<span class="nc" id="L185">        query.showHidden(true);</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (limit != NO_LIMIT) {</span>
+<span class="nc" id="L187">            query.limit(limit);</span>
+        }
+<span class="nc" id="L189">        Iterator&lt;Edge&gt; edges = this.tx().queryEdges(query);</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        if (limit == NO_LIMIT) {</span>
+<span class="nc" id="L191">            return edges;</span>
+        }
+<span class="nc" id="L193">        long[] size = new long[1];</span>
+<span class="nc" id="L194">        return new MapperIterator&lt;&gt;(edges, edge -&gt; {</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            if (++size[0] &gt; limit) {</span>
+<span class="nc" id="L196">                return null;</span>
+            }
+<span class="nc" id="L198">            return edge;</span>
+        });
+    }
+
+    private Id save(T relationship, boolean expectExists) {
+<span class="nc bnc" id="L203" title="All 2 branches missed.">        if (!this.graph().existsEdgeLabel(relationship.label())) {</span>
+<span class="nc" id="L204">            throw new HugeException(&quot;Schema is missing for %s '%s'&quot;,</span>
+<span class="nc" id="L205">                                    relationship.label(),</span>
+<span class="nc" id="L206">                                    relationship.source());</span>
+        }
+<span class="nc" id="L208">        HugeVertex source = this.newVertex(relationship.source(),</span>
+<span class="nc" id="L209">                                           relationship.sourceLabel());</span>
+<span class="nc" id="L210">        HugeVertex target = this.newVertex(relationship.target(),</span>
+<span class="nc" id="L211">                                           relationship.targetLabel());</span>
+<span class="nc" id="L212">        HugeEdge edge = source.constructEdge(relationship.label(), target,</span>
+<span class="nc" id="L213">                                             relationship.asArray());</span>
+<span class="nc bnc" id="L214" title="All 2 branches missed.">        E.checkArgument(this.exists(edge.id()) == expectExists,</span>
+                        &quot;Can't save %s '%s' that %s exists&quot;,
+<span class="nc" id="L216">                        this.unhideLabel(), edge.id(),</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">                        expectExists ? &quot;not&quot; : &quot;already&quot;);</span>
+
+<span class="nc" id="L219">        this.tx().addEdge(edge);</span>
+<span class="nc" id="L220">        this.commitOrRollback();</span>
+<span class="nc" id="L221">        return edge.id();</span>
+    }
+
+    private HugeVertex newVertex(Object id, String label) {
+<span class="nc" id="L225">        VertexLabel vl = this.graph().vertexLabel(label);</span>
+<span class="nc" id="L226">        Id idValue = HugeVertex.getIdValue(id);</span>
+<span class="nc" id="L227">        return HugeVertex.create(this.tx(), idValue, vl);</span>
+    }
+
+    private void commitOrRollback() {
+<span class="nc" id="L231">        Boolean autoCommit = this.autoCommit.get();</span>
+<span class="nc bnc" id="L232" title="All 4 branches missed.">        if (autoCommit != null &amp;&amp; !autoCommit) {</span>
+<span class="nc" id="L233">            return;</span>
+        }
+<span class="nc" id="L235">        this.tx().commitOrRollback();</span>
+<span class="nc" id="L236">    }</span>
+
+    public void autoCommit(boolean value) {
+<span class="nc" id="L239">        autoCommit.set(value);</span>
+<span class="nc" id="L240">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RoleElectionOptions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.masterelection</a> &gt; <span class="el_source">RoleElectionOptions.java</span></div><h1>RoleElectionOptions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.masterelection;
+
+import static org.apache.hugegraph.config.OptionChecker.disallowEmpty;
+import static org.apache.hugegraph.config.OptionChecker.rangeInt;
+
+import org.apache.hugegraph.config.ConfigOption;
+import org.apache.hugegraph.config.OptionHolder;
+
+public class RoleElectionOptions  extends OptionHolder {
+
+    private RoleElectionOptions() {
+        super();
+    }
+
+    private static volatile RoleElectionOptions instance;
+
+    public static synchronized RoleElectionOptions instance() {
+<span class="nc bnc" id="L35" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L36">            instance = new RoleElectionOptions();</span>
+            // Should initialize all static members first, then register.
+<span class="nc" id="L38">            instance.registerOptions();</span>
+        }
+<span class="nc" id="L40">        return instance;</span>
+    }
+
+<span class="nc" id="L43">    public static final ConfigOption&lt;Integer&gt; EXCEEDS_FAIL_COUNT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;server.role.fail_count&quot;,
+                    &quot;When the node failed count of update or query heartbeat &quot; +
+                    &quot;is reaches this threshold, the node will become abdication state to guard&quot; +
+                    &quot;safe property.&quot;,
+<span class="nc" id="L49">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L50">                    5</span>
+            );
+
+<span class="nc" id="L53">    public static final ConfigOption&lt;String&gt; NODE_EXTERNAL_URL =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;server.role.node_external_url&quot;,
+                    &quot;The url of external accessibility.&quot;,
+<span class="nc" id="L57">                    disallowEmpty(),</span>
+                    &quot;http://127.0.0.1:8080&quot;
+            );
+
+<span class="nc" id="L61">    public static final ConfigOption&lt;Integer&gt; RANDOM_TIMEOUT_MILLISECOND =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;server.role.random_timeout&quot;,
+                    &quot;The random timeout in ms that be used when candidate node request &quot; +
+                    &quot;to become master state to reduce competitive voting.&quot;,
+<span class="nc" id="L66">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L67">                    1000</span>
+            );
+
+<span class="nc" id="L70">    public static final ConfigOption&lt;Integer&gt; HEARTBEAT_INTERVAL_SECOND =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;server.role.heartbeat_interval&quot;,
+                    &quot;The role state machine heartbeat interval second time.&quot;,
+<span class="nc" id="L74">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L75">                    2</span>
+            );
+
+<span class="nc" id="L78">    public static final ConfigOption&lt;Integer&gt; MASTER_DEAD_TIMES =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;server.role.master_dead_times&quot;,
+                    &quot;When the worker node detects that the number of times &quot; +
+                    &quot;the master node fails to update heartbeat reaches this threshold, &quot; +
+                    &quot;the worker node will become to a candidate node.&quot;,
+<span class="nc" id="L84">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L85">                    10</span>
+            );
+
+<span class="nc" id="L88">    public static final ConfigOption&lt;Integer&gt; BASE_TIMEOUT_MILLISECOND =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;server.role.base_timeout&quot;,
+                    &quot;The role state machine candidate state base timeout time.&quot;,
+<span class="nc" id="L92">                    rangeInt(0, Integer.MAX_VALUE),</span>
+<span class="nc" id="L93">                    500</span>
+            );
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,381 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BackendTable.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">BackendTable.java</span></div><h1>BackendTable.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.List;
+
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.NumericUtil;
+import org.apache.hugegraph.util.StringEncoding;
+
+import com.google.common.collect.ImmutableList;
+
+<span class="nc" id="L39">public abstract class BackendTable&lt;Session extends BackendSession, Entry&gt; {</span>
+
+    private final String table;
+
+    private final MetaDispatcher&lt;Session&gt; dispatcher;
+
+<span class="nc" id="L45">    public BackendTable(String table) {</span>
+<span class="nc" id="L46">        this.table = table.toLowerCase();</span>
+<span class="nc" id="L47">        this.dispatcher = new MetaDispatcher&lt;&gt;();</span>
+
+<span class="nc" id="L49">        this.registerMetaHandlers();</span>
+<span class="nc" id="L50">    }</span>
+
+    public String table() {
+<span class="nc" id="L53">        return this.table;</span>
+    }
+
+    public MetaDispatcher&lt;Session&gt; metaDispatcher() {
+<span class="nc" id="L57">        return this.dispatcher;</span>
+    }
+
+    public void registerMetaHandler(String name, MetaHandler&lt;Session&gt; handler) {
+<span class="nc" id="L61">        this.dispatcher.registerMetaHandler(name, handler);</span>
+<span class="nc" id="L62">    }</span>
+
+    protected void registerMetaHandlers() {
+        // pass
+<span class="nc" id="L66">    }</span>
+
+    public void updateIfPresent(Session session, Entry entry) {
+        // TODO: use fine-grained row lock
+<span class="nc" id="L70">        synchronized (this.table) {</span>
+<span class="nc bnc" id="L71" title="All 4 branches missed.">            assert session == null || !session.hasChanges();</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            if (this.queryExist(session, entry)) {</span>
+<span class="nc" id="L73">                this.insert(session, entry);</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">                if (session != null) {</span>
+<span class="nc" id="L75">                    session.commit();</span>
+                }
+            }
+<span class="nc" id="L78">        }</span>
+<span class="nc" id="L79">    }</span>
+
+    public void updateIfAbsent(Session session, Entry entry) {
+        // TODO: use fine-grained row lock
+<span class="nc" id="L83">        synchronized (this.table) {</span>
+<span class="nc bnc" id="L84" title="All 4 branches missed.">            assert session == null || !session.hasChanges();</span>
+<span class="nc bnc" id="L85" title="All 2 branches missed.">            if (!this.queryExist(session, entry)) {</span>
+<span class="nc" id="L86">                this.insert(session, entry);</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">                if (session != null) {</span>
+<span class="nc" id="L88">                    session.commit();</span>
+                }
+            }
+<span class="nc" id="L91">        }</span>
+<span class="nc" id="L92">    }</span>
+
+    /**
+     * Mapping query-type to table-type
+     *
+     * @param query origin query
+     * @return corresponding table type
+     */
+    public static HugeType tableType(Query query) {
+<span class="nc" id="L101">        HugeType type = query.resultType();</span>
+
+        // Mapping EDGE to EDGE_OUT/EDGE_IN
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (type == HugeType.EDGE) {</span>
+            // We assume query OUT edges
+<span class="nc" id="L106">            type = HugeType.EDGE_OUT;</span>
+
+<span class="nc bnc" id="L108" title="All 2 branches missed.">            while (!(query instanceof ConditionQuery ||</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">                     query.originQuery() == null)) {</span>
+                /*
+                 * Some backends(like RocksDB) may trans ConditionQuery to
+                 * IdQuery or IdPrefixQuery, so we should get the origin query.
+                 */
+<span class="nc" id="L114">                query = query.originQuery();</span>
+            }
+
+<span class="nc bnc" id="L117" title="All 4 branches missed.">            if (query.conditionsSize() &gt; 0 &amp;&amp; query instanceof ConditionQuery) {</span>
+<span class="nc" id="L118">                ConditionQuery cq = (ConditionQuery) query;</span>
+                // Does query IN edges
+<span class="nc bnc" id="L120" title="All 2 branches missed.">                if (cq.condition(HugeKeys.DIRECTION) == Directions.IN) {</span>
+<span class="nc" id="L121">                    type = HugeType.EDGE_IN;</span>
+                }
+            }
+        }
+
+<span class="nc" id="L126">        return type;</span>
+    }
+
+    public static final String joinTableName(String prefix, String table) {
+<span class="nc" id="L130">        return prefix + &quot;_&quot; + table.toLowerCase();</span>
+    }
+
+    public abstract void init(Session session);
+
+    public abstract void clear(Session session);
+
+    public abstract Iterator&lt;BackendEntry&gt; query(Session session, Query query);
+
+    public abstract Number queryNumber(Session session, Query query);
+
+    public abstract boolean queryExist(Session session, Entry entry);
+
+    public abstract void insert(Session session, Entry entry);
+
+    public abstract void delete(Session session, Entry entry);
+
+    public abstract void append(Session session, Entry entry);
+
+    public abstract void eliminate(Session session, Entry entry);
+
+    /****************************** ShardSplitter ******************************/
+
+    public abstract static class ShardSplitter&lt;Session extends BackendSession&gt; {
+
+        // The min shard size should &gt;= 1M to prevent too many number of shards
+        protected static final int MIN_SHARD_SIZE = (int) Bytes.MB;
+
+        // We assume the size of each key-value is 100 bytes
+        protected static final int ESTIMATE_BYTES_PER_KV = 100;
+
+        public static final String START = &quot;&quot;;
+        public static final String END = &quot;&quot;;
+
+<span class="nc" id="L164">        private static final byte[] EMPTY = new byte[0];</span>
+<span class="nc" id="L165">        public static final byte[] START_BYTES = new byte[]{0x0};</span>
+<span class="nc" id="L166">        public static final byte[] END_BYTES = new byte[]{-1, -1, -1, -1,</span>
+                                                          -1, -1, -1, -1,
+                                                          -1, -1, -1, -1,
+                                                          -1, -1, -1, -1};
+
+        private final String table;
+
+<span class="nc" id="L173">        public ShardSplitter(String table) {</span>
+<span class="nc" id="L174">            this.table = table;</span>
+<span class="nc" id="L175">        }</span>
+
+        public String table() {
+<span class="nc" id="L178">            return this.table;</span>
+        }
+
+        public List&lt;Shard&gt; getSplits(Session session, long splitSize) {
+<span class="nc bnc" id="L182" title="All 2 branches missed.">            E.checkArgument(splitSize &gt;= MIN_SHARD_SIZE,</span>
+                            &quot;The split-size must be &gt;= %s bytes, but got %s&quot;,
+<span class="nc" id="L184">                            MIN_SHARD_SIZE, splitSize);</span>
+
+<span class="nc" id="L186">            long size = this.estimateDataSize(session);</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">            if (size &lt;= 0) {</span>
+<span class="nc" id="L188">                size = this.estimateNumKeys(session) * ESTIMATE_BYTES_PER_KV;</span>
+            }
+
+<span class="nc" id="L191">            double count = Math.ceil(size / (double) splitSize);</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">            if (count &lt;= 0) {</span>
+<span class="nc" id="L193">                count = 1;</span>
+            }
+<span class="nc" id="L195">            long maxKey = this.maxKey();</span>
+<span class="nc" id="L196">            Double each = maxKey / count;</span>
+
+<span class="nc" id="L198">            List&lt;Shard&gt; splits = new ArrayList&lt;&gt;((int) count);</span>
+<span class="nc" id="L199">            String last = START;</span>
+<span class="nc" id="L200">            long offset = 0L;</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">            while (offset &lt; maxKey) {</span>
+<span class="nc" id="L202">                offset += each.longValue();</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">                if (offset &gt; maxKey) {</span>
+<span class="nc" id="L204">                    splits.add(new Shard(last, END, 0L));</span>
+<span class="nc" id="L205">                    break;</span>
+                }
+<span class="nc" id="L207">                String current = this.position(offset);</span>
+<span class="nc" id="L208">                splits.add(new Shard(last, current, 0L));</span>
+<span class="nc" id="L209">                last = current;</span>
+<span class="nc" id="L210">            }</span>
+<span class="nc" id="L211">            return splits;</span>
+        }
+
+        public final String position(long position) {
+<span class="nc" id="L215">            return String.valueOf(position);</span>
+        }
+
+        public byte[] position(String position) {
+<span class="nc bnc" id="L219" title="All 2 branches missed.">            if (END.equals(position)) {</span>
+<span class="nc" id="L220">                return null;</span>
+            }
+<span class="nc" id="L222">            int value = Long.valueOf(position).intValue();</span>
+<span class="nc" id="L223">            return NumericUtil.intToBytes(value);</span>
+        }
+
+        protected long maxKey() {
+<span class="nc" id="L227">            return BytesBuffer.UINT32_MAX;</span>
+        }
+
+        protected abstract long estimateDataSize(Session session);
+
+        protected abstract long estimateNumKeys(Session session);
+
+<span class="nc" id="L234">        public static class Range {</span>
+
+            private final byte[] startKey;
+            private final byte[] endKey;
+
+<span class="nc" id="L239">            public Range(byte[] startKey, byte[] endKey) {</span>
+<span class="nc bnc" id="L240" title="All 2 branches missed.">                this.startKey = Arrays.equals(EMPTY, startKey) ? START_BYTES : startKey;</span>
+<span class="nc bnc" id="L241" title="All 2 branches missed.">                this.endKey = Arrays.equals(EMPTY, endKey) ? END_BYTES : endKey;</span>
+<span class="nc" id="L242">            }</span>
+
+            public List&lt;Shard&gt; splitEven(int count) {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">                if (count &lt;= 1) {</span>
+<span class="nc" id="L246">                    return ImmutableList.of(new Shard(startKey(this.startKey),</span>
+<span class="nc" id="L247">                                                      endKey(this.endKey), 0));</span>
+                }
+
+                byte[] start;
+                byte[] end;
+<span class="nc" id="L252">                boolean startChanged = false;</span>
+<span class="nc" id="L253">                boolean endChanged = false;</span>
+                int length;
+<span class="nc bnc" id="L255" title="All 2 branches missed.">                if (this.startKey.length &lt; this.endKey.length) {</span>
+<span class="nc" id="L256">                    length = this.endKey.length;</span>
+<span class="nc" id="L257">                    start = new byte[length];</span>
+<span class="nc" id="L258">                    System.arraycopy(this.startKey, 0, start, 0,</span>
+                                     this.startKey.length);
+<span class="nc" id="L260">                    end = this.endKey;</span>
+<span class="nc" id="L261">                    startChanged = true;</span>
+<span class="nc bnc" id="L262" title="All 2 branches missed.">                } else if (this.startKey.length &gt; this.endKey.length) {</span>
+<span class="nc" id="L263">                    length = this.startKey.length;</span>
+<span class="nc" id="L264">                    end = new byte[length];</span>
+<span class="nc" id="L265">                    System.arraycopy(this.endKey, 0, end, 0,</span>
+                                     this.endKey.length);
+<span class="nc" id="L267">                    start = this.startKey;</span>
+<span class="nc" id="L268">                    endChanged = true;</span>
+                } else {
+<span class="nc bnc" id="L270" title="All 2 branches missed.">                    assert this.startKey.length == this.endKey.length;</span>
+<span class="nc" id="L271">                    length = this.startKey.length;</span>
+<span class="nc" id="L272">                    start = this.startKey;</span>
+<span class="nc" id="L273">                    end = this.endKey;</span>
+                }
+
+<span class="nc bnc" id="L276" title="All 2 branches missed.">                assert count &gt; 1;</span>
+<span class="nc" id="L277">                byte[] each = align(new BigInteger(1, subtract(end, start))</span>
+<span class="nc" id="L278">                                        .divide(BigInteger.valueOf(count))</span>
+<span class="nc" id="L279">                                        .toByteArray(),</span>
+                                    length);
+<span class="nc" id="L281">                byte[] offset = start;</span>
+<span class="nc" id="L282">                byte[] last = offset;</span>
+<span class="nc" id="L283">                boolean finished = false;</span>
+<span class="nc" id="L284">                List&lt;Shard&gt; shards = new ArrayList&lt;&gt;(count);</span>
+<span class="nc bnc" id="L285" title="All 4 branches missed.">                while (Bytes.compare(offset, end) &lt; 0 &amp;&amp; !finished) {</span>
+<span class="nc" id="L286">                    offset = add(offset, each);</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">                    if (offset.length &gt; end.length ||</span>
+<span class="nc bnc" id="L288" title="All 2 branches missed.">                        Bytes.compare(offset, end) &gt; 0) {</span>
+<span class="nc" id="L289">                        offset = end;</span>
+                    }
+<span class="nc bnc" id="L291" title="All 2 branches missed.">                    if (startChanged) {</span>
+<span class="nc" id="L292">                        last = this.startKey;</span>
+<span class="nc" id="L293">                        startChanged = false;</span>
+                    }
+<span class="nc bnc" id="L295" title="All 4 branches missed.">                    if (endChanged &amp;&amp; Arrays.equals(offset, end)) {</span>
+<span class="nc" id="L296">                        offset = this.endKey;</span>
+<span class="nc" id="L297">                        finished = true;</span>
+                    }
+<span class="nc" id="L299">                    shards.add(new Shard(startKey(last), endKey(offset), 0));</span>
+<span class="nc" id="L300">                    last = offset;</span>
+                }
+<span class="nc" id="L302">                return shards;</span>
+            }
+
+            private static String startKey(byte[] start) {
+<span class="nc bnc" id="L306" title="All 2 branches missed.">                return Arrays.equals(start, START_BYTES) ?</span>
+<span class="nc" id="L307">                       START : StringEncoding.encodeBase64(start);</span>
+            }
+
+            private static String endKey(byte[] end) {
+<span class="nc bnc" id="L311" title="All 2 branches missed.">                return Arrays.equals(end, END_BYTES) ?</span>
+<span class="nc" id="L312">                       END : StringEncoding.encodeBase64(end);</span>
+            }
+
+            private static byte[] add(byte[] array1, byte[] array2) {
+<span class="nc bnc" id="L316" title="All 2 branches missed.">                E.checkArgument(array1.length == array2.length,</span>
+                                &quot;The length of array should be equal&quot;);
+<span class="nc" id="L318">                int length = array1.length;</span>
+<span class="nc" id="L319">                byte[] result = new byte[length];</span>
+<span class="nc" id="L320">                int carry = 0;</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">                for (int i = length - 1; i &gt;= 0; i--) {</span>
+<span class="nc" id="L322">                    int i1 = byte2int(array1[i]);</span>
+<span class="nc" id="L323">                    int i2 = byte2int(array2[i]);</span>
+<span class="nc" id="L324">                    int col = i1 + i2 + carry;</span>
+<span class="nc" id="L325">                    carry = (col &gt;&gt; 8);</span>
+<span class="nc" id="L326">                    result[i] = int2byte(col);</span>
+                }
+<span class="nc bnc" id="L328" title="All 2 branches missed.">                if (carry == 0) {</span>
+<span class="nc" id="L329">                    return result;</span>
+                }
+
+<span class="nc" id="L332">                byte[] target = new byte[length + 1];</span>
+<span class="nc" id="L333">                target[0] = 0x1;</span>
+<span class="nc" id="L334">                System.arraycopy(result, 0, target, 1, length);</span>
+<span class="nc" id="L335">                return target;</span>
+            }
+
+            private static byte[] subtract(byte[] array1, byte[] array2) {
+<span class="nc bnc" id="L339" title="All 2 branches missed.">                E.checkArgument(array1.length == array2.length,</span>
+                                &quot;The length of array should be equal&quot;);
+<span class="nc" id="L341">                int length = array1.length;</span>
+<span class="nc" id="L342">                byte[] result = new byte[length];</span>
+<span class="nc" id="L343">                int borrow = 0;</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">                for (int i = length - 1; 0 &lt;= i; i--) {</span>
+<span class="nc" id="L345">                    int i1 = byte2int(array1[i]);</span>
+<span class="nc" id="L346">                    int i2 = byte2int(array2[i]);</span>
+<span class="nc" id="L347">                    int col = i1 - i2 + borrow;</span>
+<span class="nc" id="L348">                    borrow = (col &gt;&gt; 8);</span>
+<span class="nc" id="L349">                    result[i] = int2byte(col);</span>
+                }
+<span class="nc bnc" id="L351" title="All 2 branches missed.">                E.checkArgument(borrow == 0, &quot;The array1 must &gt;= array2&quot;);</span>
+<span class="nc" id="L352">                return result;</span>
+            }
+
+            public static byte[] increase(byte[] array) {
+<span class="nc" id="L356">                int length = array.length;</span>
+<span class="nc" id="L357">                byte[] target = new byte[length + 1];</span>
+<span class="nc" id="L358">                System.arraycopy(array, 0, target, 0, length);</span>
+<span class="nc" id="L359">                return target;</span>
+            }
+
+            private static byte[] align(byte[] array, int length) {
+<span class="nc" id="L363">                int len = array.length;</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">                E.checkArgument(len &lt;= length,</span>
+<span class="nc" id="L365">                                &quot;The length of array '%s' exceed align length '%s'&quot;, len, length);</span>
+<span class="nc" id="L366">                byte[] target = new byte[length];</span>
+<span class="nc" id="L367">                System.arraycopy(array, 0, target, length - len, len);</span>
+<span class="nc" id="L368">                return target;</span>
+            }
+
+            private static int byte2int(byte b) {
+<span class="nc" id="L372">                return (b &amp; 0x000000ff);</span>
+            }
+
+            private static byte int2byte(int i) {
+<span class="nc" id="L376">                return (byte) (i &amp; 0x000000ff);</span>
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

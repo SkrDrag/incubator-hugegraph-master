@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BinaryEntryIterator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.serializer</a> &gt; <span class="el_source">BinaryEntryIterator.java</span></div><h1>BinaryEntryIterator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.serializer;
+
+import java.util.function.BiFunction;
+
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendIterator;
+import org.apache.hugegraph.backend.store.BackendEntryIterator;
+import org.apache.hugegraph.util.E;
+
+<span class="nc" id="L29">public class BinaryEntryIterator&lt;Elem&gt; extends BackendEntryIterator {</span>
+
+    protected final BackendIterator&lt;Elem&gt; results;
+    protected final BiFunction&lt;BackendEntry, Elem, BackendEntry&gt; merger;
+
+    protected BackendEntry next;
+
+    public BinaryEntryIterator(BackendIterator&lt;Elem&gt; results, Query query,
+                               BiFunction&lt;BackendEntry, Elem, BackendEntry&gt; m) {
+<span class="nc" id="L38">        super(query);</span>
+
+<span class="nc" id="L40">        E.checkNotNull(results, &quot;results&quot;);</span>
+<span class="nc" id="L41">        E.checkNotNull(m, &quot;merger&quot;);</span>
+
+<span class="nc" id="L43">        this.results = results;</span>
+<span class="nc" id="L44">        this.merger = m;</span>
+<span class="nc" id="L45">        this.next = null;</span>
+
+<span class="nc bnc" id="L47" title="All 2 branches missed.">        if (query.paging()) {</span>
+<span class="nc bnc" id="L48" title="All 2 branches missed.">            assert query.offset() == 0L;</span>
+<span class="nc bnc" id="L49" title="All 2 branches missed.">            assert PageState.fromString(query.page()).offset() == 0;</span>
+<span class="nc" id="L50">            this.skipPageOffset(query.page());</span>
+        } else {
+<span class="nc" id="L52">            this.skipOffset();</span>
+        }
+<span class="nc" id="L54">    }</span>
+
+    @Override
+    public void close() throws Exception {
+<span class="nc" id="L58">        this.results.close();</span>
+<span class="nc" id="L59">    }</span>
+
+    @Override
+    protected final boolean fetch() {
+<span class="nc bnc" id="L63" title="All 2 branches missed.">        assert this.current == null;</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">        if (this.next != null) {</span>
+<span class="nc" id="L65">            this.current = this.next;</span>
+<span class="nc" id="L66">            this.next = null;</span>
+        }
+
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        while (this.results.hasNext()) {</span>
+<span class="nc" id="L70">            Elem elem = this.results.next();</span>
+<span class="nc" id="L71">            BackendEntry merged = this.merger.apply(this.current, elem);</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            E.checkState(merged != null, &quot;Error when merging entry&quot;);</span>
+<span class="nc bnc" id="L73" title="All 2 branches missed.">            if (this.current == null) {</span>
+                // The first time to read
+<span class="nc" id="L75">                this.current = merged;</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">            } else if (merged == this.current) {</span>
+                // The next entry belongs to the current entry
+<span class="nc bnc" id="L78" title="All 2 branches missed.">                assert this.current != null;</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">                if (this.sizeOf(this.current) &gt;= INLINE_BATCH_SIZE) {</span>
+<span class="nc" id="L80">                    break;</span>
+                }
+            } else {
+                // New entry
+<span class="nc bnc" id="L84" title="All 2 branches missed.">                assert this.next == null;</span>
+<span class="nc" id="L85">                this.next = merged;</span>
+<span class="nc" id="L86">                break;</span>
+            }
+
+            // When limit exceed, stop fetching
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            if (this.reachLimit(this.fetched() - 1)) {</span>
+                // Need remove last one because fetched limit + 1 records
+<span class="nc" id="L92">                this.removeLastRecord();</span>
+<span class="nc" id="L93">                this.results.close();</span>
+<span class="nc" id="L94">                break;</span>
+            }
+<span class="nc" id="L96">        }</span>
+
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        return this.current != null;</span>
+    }
+
+    @Override
+    protected final long sizeOf(BackendEntry entry) {
+<span class="nc" id="L103">        return sizeOfEntry(entry);</span>
+    }
+
+    @Override
+    protected final long skip(BackendEntry entry, long skip) {
+<span class="nc" id="L108">        BinaryBackendEntry e = (BinaryBackendEntry) entry;</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        E.checkState(e.columnsSize() &gt; skip, &quot;Invalid entry to skip&quot;);</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        for (long i = 0; i &lt; skip; i++) {</span>
+<span class="nc" id="L111">            e.removeColumn(0);</span>
+        }
+<span class="nc" id="L113">        return e.columnsSize();</span>
+    }
+
+    @Override
+    protected PageState pageState() {
+<span class="nc" id="L118">        byte[] position = this.results.position();</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        if (position == null) {</span>
+<span class="nc" id="L120">            position = PageState.EMPTY_BYTES;</span>
+        }
+<span class="nc" id="L122">        return new PageState(position, 0, (int) this.count());</span>
+    }
+
+    private void removeLastRecord() {
+<span class="nc" id="L126">        int lastOne = this.current.columnsSize() - 1;</span>
+<span class="nc" id="L127">        ((BinaryBackendEntry) this.current).removeColumn(lastOne);</span>
+<span class="nc" id="L128">    }</span>
+
+    public static long sizeOfEntry(BackendEntry entry) {
+        /*
+         * 3 cases:
+         *  1) one vertex per entry
+         *  2) one edge per column (one entry &lt;==&gt; a vertex),
+         *  3) one element id per column (one entry &lt;==&gt; an index)
+         */
+<span class="nc bnc" id="L137" title="All 4 branches missed.">        if (entry.type().isEdge() || entry.type().isIndex()) {</span>
+<span class="nc" id="L138">            return entry.columnsSize();</span>
+        }
+<span class="nc" id="L140">        return 1L;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

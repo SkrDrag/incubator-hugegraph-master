@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractComputer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.computer</a> &gt; <span class="el_source">AbstractComputer.java</span></div><h1>AbstractComputer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.computer;
+
+import java.io.File;
+import java.io.InputStreamReader;
+import java.io.LineNumberReader;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.configuration2.HierarchicalConfiguration;
+import org.apache.commons.configuration2.YAMLConfiguration;
+import org.apache.commons.configuration2.io.FileHandler;
+import org.apache.commons.configuration2.tree.ImmutableNode;
+import org.apache.commons.configuration2.tree.NodeHandler;
+import org.apache.commons.configuration2.tree.NodeModel;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.job.ComputerJob;
+import org.apache.hugegraph.job.Job;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.ParameterUtil;
+import org.slf4j.Logger;
+
+<span class="nc" id="L45">public abstract class AbstractComputer implements Computer {</span>
+
+<span class="nc" id="L47">    private static final Logger LOG = Log.logger(AbstractComputer.class);</span>
+
+    private static final String HADOOP_HOME = &quot;HADOOP_HOME&quot;;
+    private static final String COMMON = &quot;common&quot;;
+    private static final String ENV = &quot;env&quot;;
+    private static final String COMPUTER_HOME = &quot;computer_home&quot;;
+    private static final String MINUS_C = &quot;-C&quot;;
+    private static final String EQUAL = &quot;=&quot;;
+    private static final String SPACE = &quot; &quot;;
+
+    // TODO: 2022/11/18 wait computer project adapt
+    private static final String MAIN_COMMAND =
+            &quot;%s/bin/hadoop jar hugegraph-computer.jar &quot; +
+            &quot;com.baidu.hugegraph.Computer &quot; +
+            &quot;-D libjars=./hugegraph-computer-core.jar&quot;;
+
+    public static final String MAX_STEPS = &quot;max_steps&quot;;
+    public static final int DEFAULT_MAX_STEPS = 5;
+    public static final String PRECISION = &quot;precision&quot;;
+    public static final double DEFAULT_PRECISION = 0.0001D;
+    public static final String TIMES = &quot;times&quot;;
+    public static final int DEFAULT_TIMES = 10;
+    public static final String DIRECTION = &quot;direction&quot;;
+    public static final String DEGREE = &quot;degree&quot;;
+    public static final long DEFAULT_DEGREE = 100L;
+
+    protected static final String CATEGORY_RANK = &quot;rank&quot;;
+    protected static final String CATEGORY_COMM = &quot;community&quot;;
+
+    private YAMLConfiguration config;
+<span class="nc" id="L77">    private Map&lt;String, Object&gt; commonConfig = new HashMap&lt;&gt;();</span>
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L81">        E.checkArgument(parameters.isEmpty(),</span>
+                        &quot;Unnecessary parameters: %s&quot;, parameters);
+<span class="nc" id="L83">    }</span>
+
+    @Override
+    public Object call(Job&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L87">        this.checkAndCollectParameters(parameters);</span>
+        // Read configuration
+        try {
+<span class="nc" id="L90">            this.initializeConfig((ComputerJob) job);</span>
+<span class="nc" id="L91">        } catch (Exception e) {</span>
+<span class="nc" id="L92">            throw new HugeException(</span>
+                      &quot;Failed to initialize computer config file&quot;, e);
+<span class="nc" id="L94">        }</span>
+
+        // Set current computer job's specified parameters
+<span class="nc" id="L97">        Map&lt;String, Object&gt; configs = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L98">        configs.putAll(this.commonConfig);</span>
+<span class="nc" id="L99">        configs.putAll(this.checkAndCollectParameters(parameters));</span>
+
+        // Construct shell command for computer job
+<span class="nc" id="L102">        String[] command = this.constructShellCommands(configs);</span>
+<span class="nc" id="L103">        LOG.info(&quot;Execute computer job: {}&quot;, String.join(SPACE, command));</span>
+
+        // Execute current computer
+        try {
+<span class="nc" id="L107">            ProcessBuilder builder = new ProcessBuilder(command);</span>
+<span class="nc" id="L108">            builder.redirectErrorStream(true);</span>
+<span class="nc" id="L109">            builder.directory(new File(executeDir()));</span>
+
+<span class="nc" id="L111">            Process process = builder.start();</span>
+
+<span class="nc" id="L113">            StringBuilder output = new StringBuilder();</span>
+<span class="nc" id="L114">            try (LineNumberReader reader = new LineNumberReader(</span>
+                                           new InputStreamReader(
+<span class="nc" id="L116">                                           process.getInputStream()))) {</span>
+                String line;
+<span class="nc bnc" id="L118" title="All 2 branches missed.">                while ((line = reader.readLine()) != null) {</span>
+<span class="nc" id="L119">                    output.append(line).append(&quot;\n&quot;);</span>
+                }
+            }
+
+<span class="nc" id="L123">            int exitCode = process.waitFor();</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            if (exitCode == 0) {</span>
+<span class="nc" id="L125">                return 0;</span>
+            }
+
+<span class="nc" id="L128">            throw new HugeException(&quot;The computer job exit with code %s: %s&quot;,</span>
+<span class="nc" id="L129">                                    exitCode, output);</span>
+<span class="nc" id="L130">        } catch (HugeException e) {</span>
+<span class="nc" id="L131">            throw e;</span>
+<span class="nc" id="L132">        } catch (Throwable e) {</span>
+<span class="nc" id="L133">            throw new HugeException(&quot;Failed to execute computer job&quot;, e);</span>
+        }
+    }
+
+    private String executeDir() {
+<span class="nc" id="L138">        Map&lt;String, Object&gt; envs = this.readEnvConfig();</span>
+<span class="nc" id="L139">        E.checkState(envs.containsKey(COMPUTER_HOME),</span>
+                     &quot;Expect '%s' in '%s' section&quot;, COMPUTER_HOME, ENV);
+<span class="nc" id="L141">        return (String) envs.get(COMPUTER_HOME);</span>
+    }
+
+    private void initializeConfig(ComputerJob job) throws Exception {
+        // Load computer config file
+<span class="nc" id="L146">        String configPath = job.computerConfigPath();</span>
+<span class="nc" id="L147">        E.checkArgument(configPath.endsWith(&quot;.yaml&quot;),</span>
+                        &quot;Expect a yaml config file.&quot;);
+
+<span class="nc" id="L150">        this.config = new YAMLConfiguration();</span>
+<span class="nc" id="L151">        FileHandler fileHandler = new FileHandler(this.config);</span>
+<span class="nc" id="L152">        fileHandler.load(configPath);</span>
+
+        // Read common and computer specified parameters
+<span class="nc" id="L155">        this.commonConfig = this.readCommonConfig();</span>
+<span class="nc" id="L156">    }</span>
+
+    private Map&lt;String, Object&gt; readCommonConfig() {
+<span class="nc" id="L159">        return this.readSubConfig(COMMON);</span>
+    }
+
+    private Map&lt;String, Object&gt; readEnvConfig() {
+<span class="nc" id="L163">        return this.readSubConfig(ENV);</span>
+    }
+
+    private Map&lt;String, Object&gt; readSubConfig(String sub) {
+<span class="nc" id="L167">        List&lt;HierarchicalConfiguration&lt;ImmutableNode&gt;&gt; nodes =</span>
+<span class="nc" id="L168">                                       this.config.childConfigurationsAt(sub);</span>
+
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        E.checkArgument(nodes.size() &gt;= 1,</span>
+                        &quot;'%s' must be contained in config '%s'&quot;, sub);
+
+<span class="nc" id="L173">        ImmutableNode root = null;</span>
+        NodeHandler&lt;ImmutableNode&gt; nodeHandler;
+<span class="nc" id="L175">        Map&lt;String, Object&gt; results = new HashMap&lt;&gt;(nodes.size());</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">        for (HierarchicalConfiguration&lt;ImmutableNode&gt; node : nodes) {</span>
+<span class="nc" id="L177">            NodeModel&lt;ImmutableNode&gt; nodeModel = node.getNodeModel();</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">            E.checkArgument(nodeModel != null &amp;&amp;</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">                           (nodeHandler = nodeModel.getNodeHandler()) != null &amp;&amp;</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">                           (root = nodeHandler.getRootNode()) != null,</span>
+                           &quot;Node '%s' must contain root&quot;, node);
+<span class="nc" id="L182">            results.put(root.getNodeName(), root.getValue());</span>
+<span class="nc" id="L183">        }</span>
+
+<span class="nc" id="L185">        return results;</span>
+    }
+
+    private String[] constructShellCommands(Map&lt;String, Object&gt; configs) {
+<span class="nc" id="L189">        String hadoopHome = System.getenv(HADOOP_HOME);</span>
+<span class="nc" id="L190">        String commandPrefix = String.format(MAIN_COMMAND, hadoopHome);</span>
+<span class="nc" id="L191">        List&lt;String&gt; command = new ArrayList&lt;&gt;(Arrays.asList(commandPrefix.split(SPACE)));</span>
+<span class="nc" id="L192">        command.add(this.name());</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; entry : configs.entrySet()) {</span>
+<span class="nc" id="L194">            command.add(MINUS_C);</span>
+<span class="nc" id="L195">            command.add(entry.getKey() + EQUAL + entry.getValue());</span>
+<span class="nc" id="L196">        }</span>
+<span class="nc" id="L197">        return command.toArray(new String[0]);</span>
+    }
+
+    protected abstract Map&lt;String, Object&gt; checkAndCollectParameters(
+                                           Map&lt;String, Object&gt; parameters);
+
+    protected static int maxSteps(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (!parameters.containsKey(MAX_STEPS)) {</span>
+<span class="nc" id="L205">            return DEFAULT_MAX_STEPS;</span>
+        }
+<span class="nc" id="L207">        int maxSteps = ParameterUtil.parameterInt(parameters, MAX_STEPS);</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        E.checkArgument(maxSteps &gt; 0,</span>
+                        &quot;The value of %s must be &gt; 0, but got %s&quot;,
+<span class="nc" id="L210">                        MAX_STEPS, maxSteps);</span>
+<span class="nc" id="L211">        return maxSteps;</span>
+    }
+
+    protected static double precision(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        if (!parameters.containsKey(PRECISION)) {</span>
+<span class="nc" id="L216">            return DEFAULT_PRECISION;</span>
+        }
+<span class="nc" id="L218">        double precision = ParameterUtil.parameterDouble(parameters, PRECISION);</span>
+<span class="nc bnc" id="L219" title="All 4 branches missed.">        E.checkArgument(precision &gt; 0.0D &amp;&amp; precision &lt; 1.0D,</span>
+                        &quot;The value of %s must be (0, 1), but got %s&quot;,
+<span class="nc" id="L221">                        PRECISION, precision);</span>
+<span class="nc" id="L222">        return precision;</span>
+    }
+
+    protected static int times(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L226" title="All 2 branches missed.">        if (!parameters.containsKey(TIMES)) {</span>
+<span class="nc" id="L227">            return DEFAULT_TIMES;</span>
+        }
+<span class="nc" id="L229">        int times = ParameterUtil.parameterInt(parameters, TIMES);</span>
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        E.checkArgument(times &gt; 0,</span>
+                        &quot;The value of %s must be &gt; 0, but got %s&quot;,
+<span class="nc" id="L232">                        TIMES, times);</span>
+<span class="nc" id="L233">        return times;</span>
+    }
+
+    protected static Directions direction(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        if (!parameters.containsKey(DIRECTION)) {</span>
+<span class="nc" id="L238">            return Directions.BOTH;</span>
+        }
+<span class="nc" id="L240">        Object direction = ParameterUtil.parameter(parameters, DIRECTION);</span>
+<span class="nc" id="L241">        return parseDirection(direction);</span>
+    }
+
+    protected static long degree(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (!parameters.containsKey(DEGREE)) {</span>
+<span class="nc" id="L246">            return DEFAULT_DEGREE;</span>
+        }
+<span class="nc" id="L248">        long degree = ParameterUtil.parameterLong(parameters, DEGREE);</span>
+<span class="nc" id="L249">        HugeTraverser.checkDegree(degree);</span>
+<span class="nc" id="L250">        return degree;</span>
+    }
+
+    protected static Directions parseDirection(Object direction) {
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        if (direction.equals(Directions.BOTH.toString())) {</span>
+<span class="nc" id="L255">            return Directions.BOTH;</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        } else if (direction.equals(Directions.OUT.toString())) {</span>
+<span class="nc" id="L257">            return Directions.OUT;</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        } else if (direction.equals(Directions.IN.toString())) {</span>
+<span class="nc" id="L259">            return Directions.IN;</span>
+        } else {
+<span class="nc" id="L261">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;The value of direction must be in [OUT, IN, BOTH], &quot; +
+                      &quot;but got '%s'&quot;, direction));
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

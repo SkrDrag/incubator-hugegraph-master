@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>JsonSerializer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.serializer</a> &gt; <span class="el_source">JsonSerializer.java</span></div><h1>JsonSerializer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.serializer;
+
+import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.auth.SchemaDefine.AuthElement;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.PageInfo;
+import org.apache.hugegraph.iterator.Metadatable;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.traversal.algorithm.CustomizedCrosspointsTraverser.CrosspointsPaths;
+import org.apache.hugegraph.traversal.algorithm.FusiformSimilarityTraverser.SimilarsMap;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.traversal.algorithm.SingleSourceShortestPathTraverser.NodeWithWeight;
+import org.apache.hugegraph.traversal.algorithm.SingleSourceShortestPathTraverser.WeightedPaths;
+import org.apache.hugegraph.traversal.optimize.TraversalUtil;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+
+public class JsonSerializer implements Serializer {
+
+    private static final int LBUF_SIZE = 1024;
+    private static final String MEASURE_KEY = &quot;measure&quot;;
+<span class="nc" id="L57">    private static final JsonSerializer INSTANCE = new JsonSerializer();</span>
+<span class="nc" id="L58">    private Map&lt;String, Object&gt; apiMeasure = null;</span>
+
+<span class="nc" id="L60">    private JsonSerializer() {</span>
+<span class="nc" id="L61">    }</span>
+
+<span class="nc" id="L63">    private JsonSerializer(Map&lt;String, Object&gt; apiMeasure) {</span>
+<span class="nc" id="L64">        this.apiMeasure = apiMeasure;</span>
+<span class="nc" id="L65">    }</span>
+
+    public static JsonSerializer instance() {
+<span class="nc" id="L68">        return INSTANCE;</span>
+    }
+
+    public static JsonSerializer instance(Map&lt;String, Object&gt; apiMeasure) {
+<span class="nc" id="L72">        return new JsonSerializer(apiMeasure);</span>
+    }
+
+    @Override
+    public String writeMap(Map&lt;?, ?&gt; map) {
+<span class="nc" id="L77">        ImmutableMap.Builder&lt;Object, Object&gt; builder = ImmutableMap.builder();</span>
+<span class="nc" id="L78">        builder.putAll(map);</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (this.apiMeasure != null) {</span>
+<span class="nc" id="L80">            builder.put(MEASURE_KEY, this.apiMeasure);</span>
+        }
+<span class="nc" id="L82">        return JsonUtil.toJson(builder.build());</span>
+    }
+
+    @Override
+    public String writeList(String label, Collection&lt;?&gt; list) {
+<span class="nc" id="L87">        try (ByteArrayOutputStream out = new ByteArrayOutputStream(LBUF_SIZE)) {</span>
+<span class="nc" id="L88">            out.write(String.format(&quot;{\&quot;%s\&quot;: &quot;, label).getBytes(API.CHARSET));</span>
+<span class="nc" id="L89">            out.write(JsonUtil.toJson(list).getBytes(API.CHARSET));</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            if (this.apiMeasure != null) {</span>
+<span class="nc" id="L91">                out.write(String.format(&quot;,\&quot;%s\&quot;: &quot;, MEASURE_KEY).getBytes(API.CHARSET));</span>
+<span class="nc" id="L92">                out.write(JsonUtil.toJson(this.apiMeasure).getBytes(API.CHARSET));</span>
+            }
+<span class="nc" id="L94">            out.write(&quot;}&quot;.getBytes(API.CHARSET));</span>
+<span class="nc" id="L95">            return out.toString(API.CHARSET);</span>
+<span class="nc" id="L96">        } catch (Exception e) {</span>
+<span class="nc" id="L97">            throw new HugeException(&quot;Failed to serialize %s&quot;, e, label);</span>
+        }
+    }
+
+    private String writeIterator(String label, Iterator&lt;?&gt; iter,
+                                 boolean paging) {
+        // Early throw if needed
+<span class="nc" id="L104">        iter.hasNext();</span>
+
+        // Serialize Iterator
+<span class="nc" id="L107">        try (ByteArrayOutputStream out = new ByteArrayOutputStream(LBUF_SIZE)) {</span>
+<span class="nc" id="L108">            out.write(&quot;{&quot;.getBytes(API.CHARSET));</span>
+
+<span class="nc" id="L110">            out.write(String.format(&quot;\&quot;%s\&quot;:[&quot;, label).getBytes(API.CHARSET));</span>
+
+            // Write data
+<span class="nc" id="L113">            boolean first = true;</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            while (iter.hasNext()) {</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">                if (!first) {</span>
+<span class="nc" id="L116">                    out.write(&quot;,&quot;.getBytes(API.CHARSET));</span>
+                } else {
+<span class="nc" id="L118">                    first = false;</span>
+                }
+<span class="nc" id="L120">                out.write(JsonUtil.toJson(iter.next()).getBytes(API.CHARSET));</span>
+            }
+<span class="nc" id="L122">            out.write(&quot;]&quot;.getBytes(API.CHARSET));</span>
+
+            // Write page
+<span class="nc bnc" id="L125" title="All 2 branches missed.">            if (paging) {</span>
+                String page;
+<span class="nc bnc" id="L127" title="All 2 branches missed.">                if (iter instanceof GraphTraversal&lt;?, ?&gt;) {</span>
+<span class="nc" id="L128">                    page = TraversalUtil.page((GraphTraversal&lt;?, ?&gt;) iter);</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">                } else if (iter instanceof Metadatable) {</span>
+<span class="nc" id="L130">                    page = PageInfo.pageInfo(iter);</span>
+                } else {
+<span class="nc" id="L132">                    throw new HugeException(&quot;Invalid paging iterator: %s&quot;,</span>
+<span class="nc" id="L133">                                            iter.getClass());</span>
+                }
+<span class="nc bnc" id="L135" title="All 2 branches missed.">                if (page != null) {</span>
+<span class="nc" id="L136">                    page = String.format(&quot;,\&quot;page\&quot;: \&quot;%s\&quot;&quot;, page);</span>
+                } else {
+<span class="nc" id="L138">                    page = &quot;,\&quot;page\&quot;: null&quot;;</span>
+                }
+<span class="nc" id="L140">                out.write(page.getBytes(API.CHARSET));</span>
+            }
+
+<span class="nc bnc" id="L143" title="All 2 branches missed.">            if (this.apiMeasure != null) {</span>
+<span class="nc" id="L144">                out.write(String.format(&quot;,\&quot;%s\&quot;:[&quot;, MEASURE_KEY).getBytes(API.CHARSET));</span>
+<span class="nc" id="L145">                out.write(JsonUtil.toJson(this.apiMeasure).getBytes(API.CHARSET));</span>
+            }
+
+<span class="nc" id="L148">            out.write(&quot;}&quot;.getBytes(API.CHARSET));</span>
+<span class="nc" id="L149">            return out.toString(API.CHARSET);</span>
+<span class="nc" id="L150">        } catch (HugeException e) {</span>
+<span class="nc" id="L151">            throw e;</span>
+<span class="nc" id="L152">        } catch (Exception e) {</span>
+<span class="nc" id="L153">            throw new HugeException(&quot;Failed to serialize %s&quot;, e, label);</span>
+        } finally {
+            try {
+<span class="nc" id="L156">                CloseableIterator.closeIterator(iter);</span>
+<span class="nc" id="L157">            } catch (Exception e) {</span>
+<span class="nc" id="L158">                throw new HugeException(&quot;Failed to close for %s&quot;, e, label);</span>
+<span class="nc" id="L159">            }</span>
+        }
+    }
+
+    @Override
+    public String writePropertyKey(PropertyKey propertyKey) {
+<span class="nc" id="L165">        return JsonUtil.toJson(propertyKey);</span>
+    }
+
+    @Override
+    public String writeTaskWithSchema(
+            SchemaElement.TaskWithSchema taskWithSchema) {
+<span class="nc" id="L171">        StringBuilder builder = new StringBuilder();</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        long id = taskWithSchema.task() == null ?</span>
+<span class="nc" id="L173">                  0L : taskWithSchema.task().asLong();</span>
+<span class="nc" id="L174">        SchemaElement schemaElement = taskWithSchema.schemaElement();</span>
+        String type;
+        String schema;
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        if (schemaElement instanceof PropertyKey) {</span>
+<span class="nc" id="L178">            type = &quot;property_key&quot;;</span>
+<span class="nc" id="L179">            schema = this.writePropertyKey((PropertyKey) schemaElement);</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        } else if (schemaElement instanceof IndexLabel) {</span>
+<span class="nc" id="L181">            type = &quot;index_label&quot;;</span>
+<span class="nc" id="L182">            schema = this.writeIndexlabel((IndexLabel) schemaElement);</span>
+        } else {
+<span class="nc" id="L184">            throw new HugeException(&quot;Invalid schema element '%s' in &quot; +</span>
+                                    &quot;TaskWithSchema, only support &quot; +
+                                    &quot;[PropertyKey, IndexLabel]&quot;, schemaElement);
+        }
+<span class="nc" id="L188">        builder.append(&quot;{\&quot;&quot;).append(type).append(&quot;\&quot;: &quot;)</span>
+<span class="nc" id="L189">               .append(schema).append(&quot;, \&quot;task_id\&quot;: &quot;)</span>
+<span class="nc" id="L190">               .append(id);</span>
+<span class="nc bnc" id="L191" title="All 2 branches missed.">        if (this.apiMeasure != null) {</span>
+<span class="nc" id="L192">            builder.append(String.format(&quot;,\&quot;%s\&quot;:[&quot;, MEASURE_KEY));</span>
+<span class="nc" id="L193">            builder.append(JsonUtil.toJson(this.apiMeasure));</span>
+        }
+<span class="nc" id="L195">        return builder.append(&quot;}&quot;).toString();</span>
+    }
+
+    @Override
+    public String writePropertyKeys(List&lt;PropertyKey&gt; propertyKeys) {
+<span class="nc" id="L200">        return writeList(&quot;propertykeys&quot;, propertyKeys);</span>
+    }
+
+    @Override
+    public String writeVertexLabel(VertexLabel vertexLabel) {
+<span class="nc" id="L205">        return JsonUtil.toJson(vertexLabel);</span>
+    }
+
+    @Override
+    public String writeVertexLabels(List&lt;VertexLabel&gt; vertexLabels) {
+<span class="nc" id="L210">        return writeList(&quot;vertexlabels&quot;, vertexLabels);</span>
+    }
+
+    @Override
+    public String writeEdgeLabel(EdgeLabel edgeLabel) {
+<span class="nc" id="L215">        return JsonUtil.toJson(edgeLabel);</span>
+    }
+
+    @Override
+    public String writeEdgeLabels(List&lt;EdgeLabel&gt; edgeLabels) {
+<span class="nc" id="L220">        return writeList(&quot;edgelabels&quot;, edgeLabels);</span>
+    }
+
+    @Override
+    public String writeIndexlabel(IndexLabel indexLabel) {
+<span class="nc" id="L225">        return JsonUtil.toJson(indexLabel);</span>
+    }
+
+    @Override
+    public String writeIndexlabels(List&lt;IndexLabel&gt; indexLabels) {
+<span class="nc" id="L230">        return writeList(&quot;indexlabels&quot;, indexLabels);</span>
+    }
+
+    @Override
+    public String writeVertex(Vertex vertex) {
+<span class="nc" id="L235">        return JsonUtil.toJson(vertex);</span>
+    }
+
+    @Override
+    public String writeVertices(Iterator&lt;Vertex&gt; vertices, boolean paging) {
+<span class="nc" id="L240">        return this.writeIterator(&quot;vertices&quot;, vertices, paging);</span>
+    }
+
+    @Override
+    public String writeEdge(Edge edge) {
+<span class="nc" id="L245">        return JsonUtil.toJson(edge);</span>
+    }
+
+    @Override
+    public String writeEdges(Iterator&lt;Edge&gt; edges, boolean paging) {
+<span class="nc" id="L250">        return this.writeIterator(&quot;edges&quot;, edges, paging);</span>
+    }
+
+    @Override
+    public String writeIds(List&lt;Id&gt; ids) {
+<span class="nc" id="L255">        return JsonUtil.toJson(ids);</span>
+    }
+
+    @Override
+    public String writeAuthElement(AuthElement elem) {
+<span class="nc" id="L260">        return this.writeMap(elem.asMap());</span>
+    }
+
+    @Override
+    public &lt;V extends AuthElement&gt; String writeAuthElements(String label,
+                                                            List&lt;V&gt; elems) {
+<span class="nc" id="L266">        List&lt;Object&gt; list = new ArrayList&lt;&gt;(elems.size());</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">        for (V elem : elems) {</span>
+<span class="nc" id="L268">            list.add(elem.asMap());</span>
+<span class="nc" id="L269">        }</span>
+<span class="nc" id="L270">        return this.writeList(label, list);</span>
+    }
+
+    @Override
+    public String writePaths(String name, Collection&lt;HugeTraverser.Path&gt; paths,
+                             boolean withCrossPoint, Iterator&lt;?&gt; vertices,
+                             Iterator&lt;?&gt; edges) {
+<span class="nc" id="L277">        List&lt;Map&lt;String, Object&gt;&gt; pathList = new ArrayList&lt;&gt;(paths.size());</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        for (HugeTraverser.Path path : paths) {</span>
+<span class="nc" id="L279">            pathList.add(path.toMap(withCrossPoint));</span>
+<span class="nc" id="L280">        }</span>
+
+<span class="nc" id="L282">        ImmutableMap.Builder&lt;Object, Object&gt; builder = ImmutableMap.builder();</span>
+<span class="nc" id="L283">        builder.put(name, pathList);</span>
+
+<span class="nc bnc" id="L285" title="All 2 branches missed.">        if (vertices != null) {</span>
+<span class="nc" id="L286">            builder.put(&quot;vertices&quot;, vertices);</span>
+        }
+
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        if (edges != null) {</span>
+<span class="nc" id="L290">            builder.put(&quot;edges&quot;, edges);</span>
+        }
+
+<span class="nc bnc" id="L293" title="All 2 branches missed.">        if (this.apiMeasure != null) {</span>
+<span class="nc" id="L294">            builder.put(MEASURE_KEY, this.apiMeasure);</span>
+        }
+
+<span class="nc" id="L297">        return JsonUtil.toJson(builder.build());</span>
+    }
+
+    @Override
+    public String writeCrosspoints(CrosspointsPaths paths,
+                                   Iterator&lt;?&gt; vertices,
+                                   Iterator&lt;?&gt; edges,
+                                   boolean withPath) {
+        List&lt;Map&lt;String, Object&gt;&gt; pathList;
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        if (withPath) {</span>
+<span class="nc" id="L307">            pathList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L308" title="All 2 branches missed.">            for (HugeTraverser.Path path : paths.paths()) {</span>
+<span class="nc" id="L309">                pathList.add(path.toMap(false));</span>
+<span class="nc" id="L310">            }</span>
+        } else {
+<span class="nc" id="L312">            pathList = ImmutableList.of();</span>
+        }
+<span class="nc" id="L314">        ImmutableMap.Builder&lt;Object, Object&gt; builder = ImmutableMap.builder()</span>
+<span class="nc" id="L315">                                                                   .put(&quot;crosspoints&quot;,</span>
+<span class="nc" id="L316">                                                                        paths.crosspoints())</span>
+<span class="nc" id="L317">                                                                   .put(&quot;paths&quot;, pathList)</span>
+<span class="nc" id="L318">                                                                   .put(&quot;vertices&quot;, vertices)</span>
+<span class="nc" id="L319">                                                                   .put(&quot;edges&quot;, edges);</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">        if (this.apiMeasure != null) {</span>
+<span class="nc" id="L321">            builder.put(MEASURE_KEY, this.apiMeasure);</span>
+        }
+<span class="nc" id="L323">        return JsonUtil.toJson(builder.build());</span>
+    }
+
+    @Override
+    public String writeSimilars(SimilarsMap similars,
+                                Iterator&lt;?&gt; vertices) {
+<span class="nc" id="L329">        ImmutableMap.Builder&lt;Object, Object&gt; builder = ImmutableMap.builder()</span>
+<span class="nc" id="L330">                                                                   .put(&quot;similars&quot;,</span>
+<span class="nc" id="L331">                                                                        similars.toMap())</span>
+<span class="nc" id="L332">                                                                   .put(&quot;vertices&quot;, vertices);</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">        if (this.apiMeasure != null) {</span>
+<span class="nc" id="L334">            builder.put(MEASURE_KEY, this.apiMeasure);</span>
+        }
+<span class="nc" id="L336">        return JsonUtil.toJson(builder.build());</span>
+    }
+
+    @Override
+    public String writeWeightedPath(NodeWithWeight path, Iterator&lt;?&gt; vertices,
+                                    Iterator&lt;?&gt; edges) {
+<span class="nc bnc" id="L342" title="All 2 branches missed.">        Map&lt;String, Object&gt; pathMap = path == null ?</span>
+<span class="nc" id="L343">                                      ImmutableMap.of() : path.toMap();</span>
+<span class="nc" id="L344">        ImmutableMap.Builder&lt;Object, Object&gt; builder = ImmutableMap.builder()</span>
+<span class="nc" id="L345">                                                                   .put(&quot;path&quot;, pathMap)</span>
+<span class="nc" id="L346">                                                                   .put(&quot;vertices&quot;, vertices)</span>
+<span class="nc" id="L347">                                                                   .put(&quot;edges&quot;, edges);</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">        if (this.apiMeasure != null) {</span>
+<span class="nc" id="L349">            builder.put(MEASURE_KEY, this.apiMeasure);</span>
+        }
+<span class="nc" id="L351">        return JsonUtil.toJson(builder.build());</span>
+    }
+
+    @Override
+    public String writeWeightedPaths(WeightedPaths paths, Iterator&lt;?&gt; vertices,
+                                     Iterator&lt;?&gt; edges) {
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        Map&lt;Id, Map&lt;String, Object&gt;&gt; pathMap = paths == null ?</span>
+<span class="nc" id="L358">                                               ImmutableMap.of() :</span>
+<span class="nc" id="L359">                                               paths.toMap();</span>
+<span class="nc" id="L360">        ImmutableMap.Builder&lt;Object, Object&gt; builder = ImmutableMap.builder()</span>
+<span class="nc" id="L361">                                                                   .put(&quot;paths&quot;, pathMap)</span>
+<span class="nc" id="L362">                                                                   .put(&quot;vertices&quot;, vertices)</span>
+<span class="nc" id="L363">                                                                   .put(&quot;edges&quot;, edges);</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">        if (this.apiMeasure != null) {</span>
+<span class="nc" id="L365">            builder.put(MEASURE_KEY, this.apiMeasure);</span>
+        }
+<span class="nc" id="L367">        return JsonUtil.toJson(builder.build());</span>
+    }
+
+    @Override
+    public String writeNodesWithPath(String name, List&lt;Id&gt; nodes, long size,
+                                     Collection&lt;HugeTraverser.Path&gt; paths,
+                                     Iterator&lt;?&gt; vertices, Iterator&lt;?&gt; edges) {
+<span class="nc" id="L374">        List&lt;Map&lt;String, Object&gt;&gt; pathList = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">        for (HugeTraverser.Path path : paths) {</span>
+<span class="nc" id="L376">            pathList.add(path.toMap(false));</span>
+<span class="nc" id="L377">        }</span>
+
+<span class="nc" id="L379">        ImmutableMap.Builder&lt;Object, Object&gt; builder = ImmutableMap.builder()</span>
+<span class="nc" id="L380">                                                                   .put(name, nodes)</span>
+<span class="nc" id="L381">                                                                   .put(&quot;size&quot;, size)</span>
+<span class="nc" id="L382">                                                                   .put(&quot;paths&quot;, pathList)</span>
+<span class="nc" id="L383">                                                                   .put(&quot;vertices&quot;, vertices)</span>
+<span class="nc" id="L384">                                                                   .put(&quot;edges&quot;, edges);</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">        if (this.apiMeasure != null) {</span>
+<span class="nc" id="L386">            builder.put(MEASURE_KEY, this.apiMeasure);</span>
+        }
+
+<span class="nc" id="L389">        return JsonUtil.toJson(builder.build());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

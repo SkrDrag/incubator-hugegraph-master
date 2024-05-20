@@ -1,0 +1,445 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IdGenerator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.id</a> &gt; <span class="el_source">IdGenerator.java</span></div><h1>IdGenerator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.id;
+
+import java.util.Objects;
+import java.util.UUID;
+
+import org.apache.hugegraph.backend.id.Id.IdType;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.LongEncoding;
+import org.apache.hugegraph.util.NumericUtil;
+import org.apache.hugegraph.util.StringEncoding;
+
+<span class="nc" id="L31">public abstract class IdGenerator {</span>
+
+<span class="nc" id="L33">    public static final Id ZERO = IdGenerator.of(0L);</span>
+
+    public abstract Id generate(HugeVertex vertex);
+
+    public static Id of(String id) {
+<span class="nc" id="L38">        return new StringId(id);</span>
+    }
+
+    public static Id of(UUID id) {
+<span class="nc" id="L42">        return new UuidId(id);</span>
+    }
+
+    public static Id of(String id, boolean uuid) {
+<span class="nc bnc" id="L46" title="All 2 branches missed.">        return uuid ? new UuidId(id) : new StringId(id);</span>
+    }
+
+    public static Id of(long id) {
+<span class="nc" id="L50">        return new LongId(id);</span>
+    }
+
+    public static Id of(Object id) {
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        if (id instanceof Id) {</span>
+<span class="nc" id="L55">            return (Id) id;</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        } else if (id instanceof String) {</span>
+<span class="nc" id="L57">            return of((String) id);</span>
+<span class="nc bnc" id="L58" title="All 2 branches missed.">        } else if (id instanceof Number) {</span>
+<span class="nc" id="L59">            return of(((Number) id).longValue());</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">        } else if (id instanceof UUID) {</span>
+<span class="nc" id="L61">            return of((UUID) id);</span>
+        }
+<span class="nc" id="L63">        return new ObjectId(id);</span>
+    }
+
+    public static Id of(byte[] bytes, IdType type) {
+<span class="nc bnc" id="L67" title="All 4 branches missed.">        switch (type) {</span>
+            case LONG:
+<span class="nc" id="L69">                return new LongId(bytes);</span>
+            case UUID:
+<span class="nc" id="L71">                return new UuidId(bytes);</span>
+            case STRING:
+<span class="nc" id="L73">                return new StringId(bytes);</span>
+            default:
+<span class="nc" id="L75">                throw new AssertionError(&quot;Invalid id type &quot; + type);</span>
+        }
+    }
+
+    public static Id ofStoredString(String id, IdType type) {
+<span class="nc bnc" id="L80" title="All 4 branches missed.">        switch (type) {</span>
+            case LONG:
+<span class="nc" id="L82">                return of(LongEncoding.decodeSignedB64(id));</span>
+            case UUID:
+<span class="nc" id="L84">                byte[] bytes = StringEncoding.decodeBase64(id);</span>
+<span class="nc" id="L85">                return of(bytes, IdType.UUID);</span>
+            case STRING:
+<span class="nc" id="L87">                return of(id);</span>
+            default:
+<span class="nc" id="L89">                throw new AssertionError(&quot;Invalid id type &quot; + type);</span>
+        }
+    }
+
+    public static String asStoredString(Id id) {
+<span class="nc bnc" id="L94" title="All 4 branches missed.">        switch (id.type()) {</span>
+            case LONG:
+<span class="nc" id="L96">                return LongEncoding.encodeSignedB64(id.asLong());</span>
+            case UUID:
+<span class="nc" id="L98">                return StringEncoding.encodeBase64(id.asBytes());</span>
+            case STRING:
+<span class="nc" id="L100">                return id.asString();</span>
+            default:
+<span class="nc" id="L102">                throw new AssertionError(&quot;Invalid id type &quot; + id.type());</span>
+        }
+    }
+
+    public static IdType idType(Id id) {
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (id instanceof LongId) {</span>
+<span class="nc" id="L108">            return IdType.LONG;</span>
+        }
+<span class="nc bnc" id="L110" title="All 2 branches missed.">        if (id instanceof UuidId) {</span>
+<span class="nc" id="L111">            return IdType.UUID;</span>
+        }
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        if (id instanceof StringId) {</span>
+<span class="nc" id="L114">            return IdType.STRING;</span>
+        }
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (id instanceof EdgeId) {</span>
+<span class="nc" id="L117">            return IdType.EDGE;</span>
+        }
+<span class="nc" id="L119">        return IdType.UNKNOWN;</span>
+    }
+
+    private static int compareType(Id id1, Id id2) {
+<span class="nc" id="L123">        return idType(id1).ordinal() - idType(id2).ordinal();</span>
+    }
+
+    /****************************** id defines ******************************/
+
+    public static final class StringId implements Id {
+
+        private final String id;
+
+<span class="nc" id="L132">        public StringId(String id) {</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">            E.checkArgument(!id.isEmpty(), &quot;The id can't be empty&quot;);</span>
+<span class="nc" id="L134">            this.id = id;</span>
+<span class="nc" id="L135">        }</span>
+
+<span class="nc" id="L137">        public StringId(byte[] bytes) {</span>
+<span class="nc" id="L138">            this.id = StringEncoding.decode(bytes);</span>
+<span class="nc" id="L139">        }</span>
+
+        @Override
+        public IdType type() {
+<span class="nc" id="L143">            return IdType.STRING;</span>
+        }
+
+        @Override
+        public Object asObject() {
+<span class="nc" id="L148">            return this.id;</span>
+        }
+
+        @Override
+        public String asString() {
+<span class="nc" id="L153">            return this.id;</span>
+        }
+
+        @Override
+        public long asLong() {
+<span class="nc" id="L158">            return Long.parseLong(this.id);</span>
+        }
+
+        @Override
+        public byte[] asBytes() {
+<span class="nc" id="L163">            return StringEncoding.encode(this.id);</span>
+        }
+
+        @Override
+        public int length() {
+<span class="nc" id="L168">            return this.id.length();</span>
+        }
+
+        @Override
+        public int compareTo(Id other) {
+<span class="nc" id="L173">            int cmp = compareType(this, other);</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">            if (cmp != 0) {</span>
+<span class="nc" id="L175">                return cmp;</span>
+            }
+<span class="nc" id="L177">            return this.id.compareTo(other.asString());</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L182">            return this.id.hashCode();</span>
+        }
+
+        @Override
+        public boolean equals(Object other) {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">            if (!(other instanceof StringId)) {</span>
+<span class="nc" id="L188">                return false;</span>
+            }
+<span class="nc" id="L190">            return this.id.equals(((StringId) other).id);</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L195">            return this.id;</span>
+        }
+    }
+
+    public static final class LongId extends Number implements Id {
+
+        private static final long serialVersionUID = -7732461469037400190L;
+
+        private final long id;
+
+<span class="nc" id="L205">        public LongId(long id) {</span>
+<span class="nc" id="L206">            this.id = id;</span>
+<span class="nc" id="L207">        }</span>
+
+<span class="nc" id="L209">        public LongId(byte[] bytes) {</span>
+<span class="nc" id="L210">            this.id = NumericUtil.bytesToLong(bytes);</span>
+<span class="nc" id="L211">        }</span>
+
+        @Override
+        public IdType type() {
+<span class="nc" id="L215">            return IdType.LONG;</span>
+        }
+
+        @Override
+        public Object asObject() {
+<span class="nc" id="L220">            return this.id;</span>
+        }
+
+        @Override
+        public String asString() {
+            // TODO: encode with base64
+<span class="nc" id="L226">            return Long.toString(this.id);</span>
+        }
+
+        @Override
+        public long asLong() {
+<span class="nc" id="L231">            return this.id;</span>
+        }
+
+        @Override
+        public byte[] asBytes() {
+<span class="nc" id="L236">            return NumericUtil.longToBytes(this.id);</span>
+        }
+
+        @Override
+        public int length() {
+<span class="nc" id="L241">            return Long.BYTES;</span>
+        }
+
+        @Override
+        public int compareTo(Id other) {
+<span class="nc" id="L246">            int cmp = compareType(this, other);</span>
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            if (cmp != 0) {</span>
+<span class="nc" id="L248">                return cmp;</span>
+            }
+<span class="nc" id="L250">            return Long.compare(this.id, other.asLong());</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L255">            return Long.hashCode(this.id);</span>
+        }
+
+        @Override
+        public boolean equals(Object other) {
+<span class="nc bnc" id="L260" title="All 2 branches missed.">            if (!(other instanceof Number)) {</span>
+<span class="nc" id="L261">                return false;</span>
+            }
+<span class="nc bnc" id="L263" title="All 2 branches missed.">            return this.id == ((Number) other).longValue();</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L268">            return String.valueOf(this.id);</span>
+        }
+
+        @Override
+        public int intValue() {
+<span class="nc" id="L273">            return (int) this.id;</span>
+        }
+
+        @Override
+        public long longValue() {
+<span class="nc" id="L278">            return this.id;</span>
+        }
+
+        @Override
+        public float floatValue() {
+<span class="nc" id="L283">            return this.id;</span>
+        }
+
+        @Override
+        public double doubleValue() {
+<span class="nc" id="L288">            return this.id;</span>
+        }
+    }
+
+    public static final class UuidId implements Id {
+
+        private final UUID uuid;
+
+        public UuidId(String string) {
+<span class="nc" id="L297">            this(StringEncoding.uuid(string));</span>
+<span class="nc" id="L298">        }</span>
+
+        public UuidId(byte[] bytes) {
+<span class="nc" id="L301">            this(fromBytes(bytes));</span>
+<span class="nc" id="L302">        }</span>
+
+<span class="nc" id="L304">        public UuidId(UUID uuid) {</span>
+<span class="nc bnc" id="L305" title="All 2 branches missed.">            E.checkArgument(uuid != null, &quot;The uuid can't be null&quot;);</span>
+<span class="nc" id="L306">            this.uuid = uuid;</span>
+<span class="nc" id="L307">        }</span>
+
+        @Override
+        public IdType type() {
+<span class="nc" id="L311">            return IdType.UUID;</span>
+        }
+
+        @Override
+        public Object asObject() {
+<span class="nc" id="L316">            return this.uuid;</span>
+        }
+
+        @Override
+        public String asString() {
+<span class="nc" id="L321">            return this.uuid.toString();</span>
+        }
+
+        @Override
+        public long asLong() {
+<span class="nc" id="L326">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public byte[] asBytes() {
+<span class="nc" id="L331">            BytesBuffer buffer = BytesBuffer.allocate(16);</span>
+<span class="nc" id="L332">            buffer.writeLong(this.uuid.getMostSignificantBits());</span>
+<span class="nc" id="L333">            buffer.writeLong(this.uuid.getLeastSignificantBits());</span>
+<span class="nc" id="L334">            return buffer.bytes();</span>
+        }
+
+        private static UUID fromBytes(byte[] bytes) {
+<span class="nc bnc" id="L338" title="All 2 branches missed.">            E.checkArgument(bytes != null, &quot;The UUID can't be null&quot;);</span>
+<span class="nc" id="L339">            BytesBuffer buffer = BytesBuffer.wrap(bytes);</span>
+<span class="nc" id="L340">            long high = buffer.readLong();</span>
+<span class="nc" id="L341">            long low = buffer.readLong();</span>
+<span class="nc" id="L342">            return new UUID(high, low);</span>
+        }
+
+        @Override
+        public int length() {
+<span class="nc" id="L347">            return UUID_LENGTH;</span>
+        }
+
+        @Override
+        public int compareTo(Id other) {
+<span class="nc" id="L352">            E.checkNotNull(other, &quot;compare id&quot;);</span>
+<span class="nc" id="L353">            int cmp = compareType(this, other);</span>
+<span class="nc bnc" id="L354" title="All 2 branches missed.">            if (cmp != 0) {</span>
+<span class="nc" id="L355">                return cmp;</span>
+            }
+<span class="nc" id="L357">            return this.uuid.compareTo(((UuidId) other).uuid);</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L362">            return this.uuid.hashCode();</span>
+        }
+
+        @Override
+        public boolean equals(Object other) {
+<span class="nc bnc" id="L367" title="All 2 branches missed.">            if (!(other instanceof UuidId)) {</span>
+<span class="nc" id="L368">                return false;</span>
+            }
+<span class="nc" id="L370">            return this.uuid.equals(((UuidId) other).uuid);</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L375">            return this.uuid.toString();</span>
+        }
+    }
+
+    /**
+     * This class is just used by backend store for wrapper object as Id
+     */
+    private static final class ObjectId implements Id {
+
+        private final Object object;
+
+<span class="nc" id="L386">        public ObjectId(Object object) {</span>
+<span class="nc" id="L387">            E.checkNotNull(object, &quot;object&quot;);</span>
+<span class="nc" id="L388">            this.object = object;</span>
+<span class="nc" id="L389">        }</span>
+
+        @Override
+        public IdType type() {
+<span class="nc" id="L393">            return IdType.UNKNOWN;</span>
+        }
+
+        @Override
+        public Object asObject() {
+<span class="nc" id="L398">            return this.object;</span>
+        }
+
+        @Override
+        public String asString() {
+<span class="nc" id="L403">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public long asLong() {
+<span class="nc" id="L408">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public byte[] asBytes() {
+<span class="nc" id="L413">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public int length() {
+<span class="nc" id="L418">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public int compareTo(Id o) {
+<span class="nc" id="L423">            throw new UnsupportedOperationException();</span>
+        }
+
+        @Override
+        public int hashCode() {
+<span class="nc" id="L428">            return this.object.hashCode();</span>
+        }
+
+        @Override
+        public boolean equals(Object other) {
+<span class="nc bnc" id="L433" title="All 2 branches missed.">            if (!(other instanceof ObjectId)) {</span>
+<span class="nc" id="L434">                return false;</span>
+            }
+<span class="nc" id="L436">            return Objects.equals(this.object, ((ObjectId) other).object);</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L441">            return this.object.toString();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,1033 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TraversalUtil.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.optimize</a> &gt; <span class="el_source">TraversalUtil.java</span></div><h1>TraversalUtil.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.optimize;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.BiPredicate;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.PageInfo;
+import org.apache.hugegraph.backend.page.PageState;
+import org.apache.hugegraph.backend.query.Aggregate;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.exception.NotSupportException;
+import org.apache.hugegraph.iterator.FilterIterator;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.DateUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.tinkerpop.gremlin.process.traversal.Compare;
+import org.apache.tinkerpop.gremlin.process.traversal.Contains;
+import org.apache.tinkerpop.gremlin.process.traversal.Order;
+import org.apache.tinkerpop.gremlin.process.traversal.P;
+import org.apache.tinkerpop.gremlin.process.traversal.Step;
+import org.apache.tinkerpop.gremlin.process.traversal.Traversal;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.step.HasContainerHolder;
+import org.apache.tinkerpop.gremlin.process.traversal.step.TraversalParent;
+import org.apache.tinkerpop.gremlin.process.traversal.step.filter.FilterStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.filter.HasStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.filter.RangeGlobalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.CountGlobalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.GraphStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.MaxGlobalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.MeanGlobalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.MinGlobalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.NoOpBarrierStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.OrderGlobalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.PropertiesStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.SumGlobalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.sideEffect.IdentityStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.util.ElementValueComparator;
+import org.apache.tinkerpop.gremlin.process.traversal.step.util.HasContainer;
+import org.apache.tinkerpop.gremlin.process.traversal.step.util.ReducingBarrierStep;
+import org.apache.tinkerpop.gremlin.process.traversal.util.AndP;
+import org.apache.tinkerpop.gremlin.process.traversal.util.ConnectiveP;
+import org.apache.tinkerpop.gremlin.process.traversal.util.OrP;
+import org.apache.tinkerpop.gremlin.process.traversal.util.TraversalHelper;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Element;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.Property;
+import org.apache.tinkerpop.gremlin.structure.PropertyType;
+import org.apache.tinkerpop.gremlin.structure.T;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.empty.EmptyGraph;
+
+import com.google.common.collect.ImmutableList;
+
+<span class="nc" id="L95">public final class TraversalUtil {</span>
+
+    public static final String P_CALL = &quot;P.&quot;;
+
+    public static HugeGraph getGraph(Step&lt;?, ?&gt; step) {
+<span class="nc" id="L100">        HugeGraph graph = tryGetGraph(step);</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (graph != null) {</span>
+<span class="nc" id="L102">            return graph;</span>
+        }
+<span class="nc" id="L104">        throw new IllegalArgumentException(&quot;There is no graph in step: &quot; + step);</span>
+    }
+
+    public static HugeGraph tryGetGraph(Step&lt;?, ?&gt; step) {
+        // TODO: remove these EmptyGraph judgments when upgrade tinkerpop (refer-tinkerpop#1699)
+<span class="nc" id="L109">        Optional&lt;Graph&gt; graph = step.getTraversal()</span>
+<span class="nc" id="L110">                                    .getGraph()</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">                                    .filter(g -&gt; !(g instanceof EmptyGraph));</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        if (!graph.isPresent()) {</span>
+<span class="nc" id="L113">            TraversalParent parent = step.getTraversal().getParent();</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            if (parent instanceof Traversal) {</span>
+                Optional&lt;Graph&gt; parentGraph;
+<span class="nc" id="L116">                parentGraph = ((Traversal&lt;?, ?&gt;) parent).asAdmin()</span>
+<span class="nc" id="L117">                                                        .getGraph()</span>
+<span class="nc bnc" id="L118" title="All 2 branches missed.">                                                        .filter(g -&gt; !(g instanceof EmptyGraph));</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">                if (parentGraph.isPresent()) {</span>
+<span class="nc" id="L120">                    step.getTraversal().setGraph(parentGraph.get());</span>
+<span class="nc" id="L121">                    return (HugeGraph) parentGraph.get();</span>
+                }
+            }
+
+<span class="nc" id="L125">            return null;</span>
+        }
+
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        assert graph.get() instanceof HugeGraph;</span>
+<span class="nc" id="L129">        return (HugeGraph) graph.get();</span>
+    }
+
+    public static void trySetGraph(Step&lt;?, ?&gt; step, HugeGraph graph) {
+<span class="nc bnc" id="L133" title="All 6 branches missed.">        if (graph == null || step == null || step.getTraversal() == null) {</span>
+<span class="nc" id="L134">            return;</span>
+        }
+
+        // TODO: remove these EmptyGraph judgments when upgrade tinkerpop (refer-tinkerpop#1699)
+<span class="nc" id="L138">        Optional&lt;Graph&gt; stepGraph = step.getTraversal()</span>
+<span class="nc" id="L139">                                        .getGraph()</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">                                        .filter(g -&gt; !(g instanceof EmptyGraph));</span>
+
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (step instanceof TraversalParent) {</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">            for (final Traversal.Admin&lt;?, ?&gt; local : ((TraversalParent) step).getLocalChildren()) {</span>
+<span class="nc bnc" id="L144" title="All 4 branches missed.">                if (local.getGraph().filter(g -&gt; !(g instanceof EmptyGraph)).isPresent()) {</span>
+<span class="nc" id="L145">                    continue;</span>
+                }
+<span class="nc" id="L147">                local.setGraph(graph);</span>
+<span class="nc" id="L148">            }</span>
+            for (final Traversal.Admin&lt;?, ?&gt; global :
+<span class="nc bnc" id="L150" title="All 2 branches missed.">                    ((TraversalParent) step).getGlobalChildren()) {</span>
+<span class="nc bnc" id="L151" title="All 4 branches missed.">                if (global.getGraph().filter(g -&gt; !(g instanceof EmptyGraph)).isPresent()) {</span>
+<span class="nc" id="L152">                    continue;</span>
+                }
+<span class="nc" id="L154">                global.setGraph(graph);</span>
+<span class="nc" id="L155">            }</span>
+        }
+
+<span class="nc bnc" id="L158" title="All 2 branches missed.">        if (stepGraph.isPresent()) {</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">            assert stepGraph.get() instanceof HugeGraph;</span>
+<span class="nc" id="L160">            return;</span>
+        }
+
+<span class="nc" id="L163">        step.getTraversal().setGraph(graph);</span>
+<span class="nc" id="L164">    }</span>
+
+    public static void extractHasContainer(HugeGraphStep&lt;?, ?&gt; newStep,
+                                           Traversal.Admin&lt;?, ?&gt; traversal) {
+<span class="nc" id="L168">        Step&lt;?, ?&gt; step = newStep;</span>
+        do {
+<span class="nc" id="L170">            step = step.getNextStep();</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">            if (step instanceof HasStep) {</span>
+<span class="nc" id="L172">                HasContainerHolder holder = (HasContainerHolder) step;</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">                for (HasContainer has : holder.getHasContainers()) {</span>
+<span class="nc bnc" id="L174" title="All 2 branches missed.">                    if (!GraphStep.processHasContainerIds(newStep, has)) {</span>
+<span class="nc" id="L175">                        newStep.addHasContainer(has);</span>
+                    }
+<span class="nc" id="L177">                }</span>
+<span class="nc" id="L178">                TraversalHelper.copyLabels(step, step.getPreviousStep(), false);</span>
+<span class="nc" id="L179">                traversal.removeStep(step);</span>
+            }
+<span class="nc bnc" id="L181" title="All 4 branches missed.">        } while (step instanceof HasStep || step instanceof NoOpBarrierStep);</span>
+<span class="nc" id="L182">    }</span>
+
+    public static void extractHasContainer(HugeVertexStep&lt;?&gt; newStep,
+                                           Traversal.Admin&lt;?, ?&gt; traversal) {
+<span class="nc" id="L186">        Step&lt;?, ?&gt; step = newStep;</span>
+        do {
+<span class="nc bnc" id="L188" title="All 2 branches missed.">            if (step instanceof HasStep) {</span>
+<span class="nc" id="L189">                HasContainerHolder holder = (HasContainerHolder) step;</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">                for (HasContainer has : holder.getHasContainers()) {</span>
+<span class="nc" id="L191">                    newStep.addHasContainer(has);</span>
+<span class="nc" id="L192">                }</span>
+<span class="nc" id="L193">                TraversalHelper.copyLabels(step, step.getPreviousStep(), false);</span>
+<span class="nc" id="L194">                traversal.removeStep(step);</span>
+            }
+<span class="nc" id="L196">            step = step.getNextStep();</span>
+<span class="nc bnc" id="L197" title="All 4 branches missed.">        } while (step instanceof HasStep || step instanceof NoOpBarrierStep);</span>
+<span class="nc" id="L198">    }</span>
+
+    public static void extractOrder(Step&lt;?, ?&gt; newStep,
+                                    Traversal.Admin&lt;?, ?&gt; traversal) {
+<span class="nc" id="L202">        Step&lt;?, ?&gt; step = newStep;</span>
+        do {
+<span class="nc" id="L204">            step = step.getNextStep();</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">            if (step instanceof OrderGlobalStep) {</span>
+<span class="nc" id="L206">                QueryHolder holder = (QueryHolder) newStep;</span>
+<span class="nc" id="L207">                OrderGlobalStep&lt;?, ?&gt; orderStep = (OrderGlobalStep&lt;?, ?&gt;) step;</span>
+<span class="nc" id="L208">                orderStep.getComparators().forEach(comp -&gt; {</span>
+<span class="nc" id="L209">                    ElementValueComparator&lt;?&gt; comparator =</span>
+<span class="nc" id="L210">                            (ElementValueComparator&lt;?&gt;) comp.getValue1();</span>
+<span class="nc" id="L211">                    holder.orderBy(comparator.getPropertyKey(),</span>
+<span class="nc" id="L212">                                   (Order) comparator.getValueComparator());</span>
+<span class="nc" id="L213">                });</span>
+<span class="nc" id="L214">                TraversalHelper.copyLabels(step, newStep, false);</span>
+<span class="nc" id="L215">                traversal.removeStep(step);</span>
+            }
+<span class="nc" id="L217">            step = step.getNextStep();</span>
+<span class="nc bnc" id="L218" title="All 4 branches missed.">        } while (step instanceof OrderGlobalStep ||</span>
+                 step instanceof IdentityStep);
+<span class="nc" id="L220">    }</span>
+
+    public static void extractRange(Step&lt;?, ?&gt; newStep,
+                                    Traversal.Admin&lt;?, ?&gt; traversal,
+                                    boolean extractOnlyLimit) {
+<span class="nc" id="L225">        QueryHolder holder = (QueryHolder) newStep;</span>
+<span class="nc" id="L226">        Step&lt;?, ?&gt; step = newStep;</span>
+        do {
+<span class="nc" id="L228">            step = step.getNextStep();</span>
+<span class="nc bnc" id="L229" title="All 2 branches missed.">            if (step instanceof RangeGlobalStep) {</span>
+                @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L231">                RangeGlobalStep&lt;Object&gt; range = (RangeGlobalStep&lt;Object&gt;) step;</span>
+                /*
+                 * NOTE: keep the step to limit results after query from DB
+                 * due to `limit`(in DB) may not be implemented accurately.
+                 * but the backend driver should ensure `offset` accurately.
+                 */
+                // TraversalHelper.copyLabels(step, newStep, false);
+                // traversal.removeStep(step);
+<span class="nc bnc" id="L239" title="All 2 branches missed.">                if (extractOnlyLimit) {</span>
+                    // May need to retain offset for multiple sub-queries
+<span class="nc" id="L241">                    holder.setRange(0, range.getHighRange());</span>
+                } else {
+<span class="nc" id="L243">                    long limit = holder.setRange(range.getLowRange(),</span>
+<span class="nc" id="L244">                                                 range.getHighRange());</span>
+<span class="nc" id="L245">                    RangeGlobalStep&lt;Object&gt; newRange = new RangeGlobalStep&lt;&gt;(</span>
+                                                       traversal, 0, limit);
+<span class="nc" id="L247">                    TraversalHelper.replaceStep(range, newRange, traversal);</span>
+                }
+            }
+<span class="nc bnc" id="L250" title="All 6 branches missed.">        } while (step instanceof RangeGlobalStep ||</span>
+                 step instanceof IdentityStep ||
+                 step instanceof NoOpBarrierStep);
+<span class="nc" id="L253">    }</span>
+
+    public static void extractCount(Step&lt;?, ?&gt; newStep,
+                                    Traversal.Admin&lt;?, ?&gt; traversal) {
+<span class="nc" id="L257">        Step&lt;?, ?&gt; step = newStep;</span>
+        do {
+<span class="nc" id="L259">            step = step.getNextStep();</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">            if (step instanceof CountGlobalStep) {</span>
+<span class="nc" id="L261">                QueryHolder holder = (QueryHolder) newStep;</span>
+<span class="nc" id="L262">                holder.setCount();</span>
+            }
+<span class="nc bnc" id="L264" title="All 8 branches missed.">        } while (step instanceof CountGlobalStep ||</span>
+                 step instanceof FilterStep ||
+                 step instanceof IdentityStep ||
+                 step instanceof NoOpBarrierStep);
+<span class="nc" id="L268">    }</span>
+
+    public static void extractAggregateFunc(Step&lt;?, ?&gt; newStep,
+                                            Traversal.Admin&lt;?, ?&gt; traversal) {
+<span class="nc" id="L272">        PropertiesStep&lt;?&gt; propertiesStep = null;</span>
+<span class="nc" id="L273">        Step&lt;?, ?&gt; step = newStep;</span>
+        do {
+<span class="nc" id="L275">            step = step.getNextStep();</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">            if (step instanceof PropertiesStep) {</span>
+<span class="nc" id="L277">                PropertiesStep&lt;?&gt; propStep = (PropertiesStep&lt;?&gt;) step;</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">                if (propStep.getReturnType() == PropertyType.VALUE &amp;&amp;</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                    propStep.getPropertyKeys().length == 1) {</span>
+<span class="nc" id="L280">                    propertiesStep = propStep;</span>
+                }
+<span class="nc bnc" id="L282" title="All 4 branches missed.">            } else if (propertiesStep != null &amp;&amp;</span>
+                       step instanceof ReducingBarrierStep) {
+                Aggregate.AggregateFunc aggregateFunc;
+<span class="nc bnc" id="L285" title="All 2 branches missed.">                if (step instanceof CountGlobalStep) {</span>
+<span class="nc" id="L286">                    aggregateFunc = Aggregate.AggregateFunc.COUNT;</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">                } else if (step instanceof MaxGlobalStep) {</span>
+<span class="nc" id="L288">                    aggregateFunc = Aggregate.AggregateFunc.MAX;</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">                } else if (step instanceof MinGlobalStep) {</span>
+<span class="nc" id="L290">                    aggregateFunc = Aggregate.AggregateFunc.MIN;</span>
+<span class="nc bnc" id="L291" title="All 2 branches missed.">                } else if (step instanceof MeanGlobalStep) {</span>
+<span class="nc" id="L292">                    aggregateFunc = Aggregate.AggregateFunc.AVG;</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">                } else if (step instanceof SumGlobalStep) {</span>
+<span class="nc" id="L294">                    aggregateFunc = Aggregate.AggregateFunc.SUM;</span>
+                } else {
+<span class="nc" id="L296">                    aggregateFunc = null;</span>
+                }
+
+<span class="nc bnc" id="L299" title="All 2 branches missed.">                if (aggregateFunc != null) {</span>
+<span class="nc" id="L300">                    QueryHolder holder = (QueryHolder) newStep;</span>
+<span class="nc" id="L301">                    holder.setAggregate(aggregateFunc,</span>
+<span class="nc" id="L302">                                        propertiesStep.getPropertyKeys()[0]);</span>
+<span class="nc" id="L303">                    traversal.removeStep(step);</span>
+<span class="nc" id="L304">                    traversal.removeStep(propertiesStep);</span>
+                }
+            }
+<span class="nc bnc" id="L307" title="All 8 branches missed.">        } while (step instanceof FilterStep ||</span>
+                 step instanceof PropertiesStep ||
+                 step instanceof IdentityStep ||
+                 step instanceof NoOpBarrierStep);
+<span class="nc" id="L311">    }</span>
+
+    public static ConditionQuery fillConditionQuery(
+                                 ConditionQuery query,
+                                 List&lt;HasContainer&gt; hasContainers,
+                                 HugeGraph graph) {
+<span class="nc" id="L317">        HugeType resultType = query.resultType();</span>
+
+<span class="nc bnc" id="L319" title="All 2 branches missed.">        for (HasContainer has : hasContainers) {</span>
+<span class="nc" id="L320">            Condition condition = convHas2Condition(has, resultType, graph);</span>
+<span class="nc" id="L321">            query.query(condition);</span>
+<span class="nc" id="L322">        }</span>
+<span class="nc" id="L323">        return query;</span>
+    }
+
+    public static void fillConditionQuery(ConditionQuery query,
+                                          Map&lt;Id, Object&gt; properties,
+                                          HugeGraph graph) {
+<span class="nc bnc" id="L329" title="All 2 branches missed.">        for (Map.Entry&lt;Id, Object&gt; entry : properties.entrySet()) {</span>
+<span class="nc" id="L330">            Id key = entry.getKey();</span>
+<span class="nc" id="L331">            Object value = entry.getValue();</span>
+<span class="nc" id="L332">            PropertyKey pk = graph.propertyKey(key);</span>
+<span class="nc bnc" id="L333" title="All 2 branches missed.">            if (value instanceof String &amp;&amp;</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">                ((String) value).startsWith(TraversalUtil.P_CALL)) {</span>
+<span class="nc" id="L335">                String predicate = (String) value;</span>
+<span class="nc" id="L336">                query.query(TraversalUtil.parsePredicate(pk, predicate));</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">            } else if (value instanceof Collection) {</span>
+<span class="nc" id="L338">                List&lt;Object&gt; validValues = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L339" title="All 2 branches missed.">                for (Object v : (Collection&lt;?&gt;) value) {</span>
+<span class="nc" id="L340">                    validValues.add(TraversalUtil.validPropertyValue(v, pk));</span>
+<span class="nc" id="L341">                }</span>
+<span class="nc" id="L342">                query.query(Condition.in(key, validValues));</span>
+<span class="nc" id="L343">            } else {</span>
+<span class="nc" id="L344">                Object validValue = TraversalUtil.validPropertyValue(value, pk);</span>
+<span class="nc" id="L345">                query.query(Condition.eq(key, validValue));</span>
+            }
+<span class="nc" id="L347">        }</span>
+<span class="nc" id="L348">    }</span>
+
+    public static Condition convHas2Condition(HasContainer has, HugeType type, HugeGraph graph) {
+<span class="nc" id="L351">        P&lt;?&gt; p = has.getPredicate();</span>
+<span class="nc bnc" id="L352" title="All 2 branches missed.">        E.checkArgument(p != null, &quot;The predicate of has(%s) is null&quot;, has);</span>
+<span class="nc" id="L353">        BiPredicate&lt;?, ?&gt; bp = p.getBiPredicate();</span>
+        Condition condition;
+<span class="nc bnc" id="L355" title="All 2 branches missed.">        if (keyForContainsKeyOrValue(has.getKey())) {</span>
+<span class="nc" id="L356">            condition = convContains2Relation(graph, has);</span>
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        } else if (bp instanceof Compare) {</span>
+<span class="nc" id="L358">            condition = convCompare2Relation(graph, type, has);</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">        } else if (bp instanceof Condition.RelationType) {</span>
+<span class="nc" id="L360">            condition = convRelationType2Relation(graph, type, has);</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">        } else if (bp instanceof Contains) {</span>
+<span class="nc" id="L362">            condition = convIn2Relation(graph, type, has);</span>
+<span class="nc bnc" id="L363" title="All 2 branches missed.">        } else if (p instanceof AndP) {</span>
+<span class="nc" id="L364">            condition = convAnd(graph, type, has);</span>
+<span class="nc bnc" id="L365" title="All 2 branches missed.">        } else if (p instanceof OrP) {</span>
+<span class="nc" id="L366">            condition = convOr(graph, type, has);</span>
+        } else {
+            // TODO: deal with other Predicate
+<span class="nc" id="L369">            throw newUnsupportedPredicate(p);</span>
+        }
+<span class="nc" id="L371">        return condition;</span>
+    }
+
+    public static Condition convAnd(HugeGraph graph,
+                                    HugeType type,
+                                    HasContainer has) {
+<span class="nc" id="L377">        P&lt;?&gt; p = has.getPredicate();</span>
+<span class="nc bnc" id="L378" title="All 2 branches missed.">        assert p instanceof AndP;</span>
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L380">        List&lt;P&lt;Object&gt;&gt; predicates = ((AndP&lt;Object&gt;) p).getPredicates();</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">        if (predicates.size() &lt; 2) {</span>
+<span class="nc" id="L382">            throw newUnsupportedPredicate(p);</span>
+        }
+
+<span class="nc" id="L385">        Condition cond = null;</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">        for (P&lt;Object&gt; predicate : predicates) {</span>
+<span class="nc" id="L387">            HasContainer newHas = new HasContainer(has.getKey(), predicate);</span>
+<span class="nc" id="L388">            Condition newCond = convHas2Condition(newHas, type, graph);</span>
+<span class="nc bnc" id="L389" title="All 2 branches missed.">            if (cond == null) {</span>
+<span class="nc" id="L390">                cond = newCond;</span>
+            } else {
+<span class="nc" id="L392">                cond = Condition.and(newCond, cond);</span>
+            }
+<span class="nc" id="L394">        }</span>
+<span class="nc" id="L395">        return cond;</span>
+    }
+
+    public static Condition convOr(HugeGraph graph,
+                                   HugeType type,
+                                   HasContainer has) {
+<span class="nc" id="L401">        P&lt;?&gt; p = has.getPredicate();</span>
+<span class="nc bnc" id="L402" title="All 2 branches missed.">        assert p instanceof OrP;</span>
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L404">        List&lt;P&lt;Object&gt;&gt; predicates = ((OrP&lt;Object&gt;) p).getPredicates();</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">        if (predicates.size() &lt; 2) {</span>
+<span class="nc" id="L406">            throw newUnsupportedPredicate(p);</span>
+        }
+
+<span class="nc" id="L409">        Condition cond = null;</span>
+<span class="nc bnc" id="L410" title="All 2 branches missed.">        for (P&lt;Object&gt; predicate : predicates) {</span>
+<span class="nc" id="L411">            HasContainer newHas = new HasContainer(has.getKey(), predicate);</span>
+<span class="nc" id="L412">            Condition newCond = convHas2Condition(newHas, type, graph);</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">            if (cond == null) {</span>
+<span class="nc" id="L414">                cond = newCond;</span>
+            } else {
+<span class="nc" id="L416">                cond = Condition.or(newCond, cond);</span>
+            }
+<span class="nc" id="L418">        }</span>
+<span class="nc" id="L419">        return cond;</span>
+    }
+
+    private static Condition.Relation convCompare2Relation(HugeGraph graph,
+                                                           HugeType type,
+                                                           HasContainer has) {
+<span class="nc bnc" id="L425" title="All 2 branches missed.">        assert type.isGraph();</span>
+<span class="nc" id="L426">        BiPredicate&lt;?, ?&gt; bp = has.getPredicate().getBiPredicate();</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">        assert bp instanceof Compare;</span>
+
+<span class="nc bnc" id="L429" title="All 2 branches missed.">        return isSysProp(has.getKey()) ?</span>
+<span class="nc" id="L430">               convCompare2SyspropRelation(graph, type, has) :</span>
+<span class="nc" id="L431">               convCompare2UserpropRelation(graph, type, has);</span>
+    }
+
+    private static Condition.Relation convCompare2SyspropRelation(HugeGraph graph,
+                                                                  HugeType type,
+                                                                  HasContainer has) {
+<span class="nc" id="L437">        BiPredicate&lt;?, ?&gt; bp = has.getPredicate().getBiPredicate();</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">        assert bp instanceof Compare;</span>
+
+<span class="nc" id="L440">        HugeKeys key = token2HugeKey(has.getKey());</span>
+<span class="nc" id="L441">        E.checkNotNull(key, &quot;token key&quot;);</span>
+<span class="nc" id="L442">        Object value = convSysValueIfNeeded(graph, type, key, has.getValue());</span>
+
+<span class="nc bnc" id="L444" title="All 7 branches missed.">        switch ((Compare) bp) {</span>
+            case eq:
+<span class="nc" id="L446">                return Condition.eq(key, value);</span>
+            case gt:
+<span class="nc" id="L448">                return Condition.gt(key, value);</span>
+            case gte:
+<span class="nc" id="L450">                return Condition.gte(key, value);</span>
+            case lt:
+<span class="nc" id="L452">                return Condition.lt(key, value);</span>
+            case lte:
+<span class="nc" id="L454">                return Condition.lte(key, value);</span>
+            case neq:
+<span class="nc" id="L456">                return Condition.neq(key, value);</span>
+            default:
+<span class="nc" id="L458">                throw newUnsupportedPredicate(has.getPredicate());</span>
+        }
+    }
+
+    private static Condition.Relation convCompare2UserpropRelation(HugeGraph graph,
+                                                                   HugeType type,
+                                                                   HasContainer has) {
+<span class="nc" id="L465">        BiPredicate&lt;?, ?&gt; bp = has.getPredicate().getBiPredicate();</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">        assert bp instanceof Compare;</span>
+
+<span class="nc" id="L468">        String key = has.getKey();</span>
+<span class="nc" id="L469">        PropertyKey pkey = graph.propertyKey(key);</span>
+<span class="nc" id="L470">        Id pkeyId = pkey.id();</span>
+<span class="nc" id="L471">        Object value = validPropertyValue(has.getValue(), pkey);</span>
+
+<span class="nc bnc" id="L473" title="All 7 branches missed.">        switch ((Compare) bp) {</span>
+            case eq:
+<span class="nc" id="L475">                return Condition.eq(pkeyId, value);</span>
+            case gt:
+<span class="nc" id="L477">                return Condition.gt(pkeyId, value);</span>
+            case gte:
+<span class="nc" id="L479">                return Condition.gte(pkeyId, value);</span>
+            case lt:
+<span class="nc" id="L481">                return Condition.lt(pkeyId, value);</span>
+            case lte:
+<span class="nc" id="L483">                return Condition.lte(pkeyId, value);</span>
+            case neq:
+<span class="nc" id="L485">                return Condition.neq(pkeyId, value);</span>
+            default:
+<span class="nc" id="L487">                throw newUnsupportedPredicate(has.getPredicate());</span>
+        }
+    }
+
+    private static Condition convRelationType2Relation(HugeGraph graph,
+                                                       HugeType type,
+                                                       HasContainer has) {
+<span class="nc bnc" id="L494" title="All 2 branches missed.">        assert type.isGraph();</span>
+<span class="nc" id="L495">        BiPredicate&lt;?, ?&gt; bp = has.getPredicate().getBiPredicate();</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">        assert bp instanceof Condition.RelationType;</span>
+
+<span class="nc" id="L498">        String key = has.getKey();</span>
+<span class="nc" id="L499">        PropertyKey pkey = graph.propertyKey(key);</span>
+<span class="nc" id="L500">        Id pkeyId = pkey.id();</span>
+<span class="nc" id="L501">        Object value = validPropertyValue(has.getValue(), pkey);</span>
+<span class="nc" id="L502">        return new Condition.UserpropRelation(pkeyId, (Condition.RelationType) bp, value);</span>
+    }
+
+    public static Condition convIn2Relation(HugeGraph graph,
+                                            HugeType type,
+                                            HasContainer has) {
+<span class="nc" id="L508">        BiPredicate&lt;?, ?&gt; bp = has.getPredicate().getBiPredicate();</span>
+<span class="nc bnc" id="L509" title="All 2 branches missed.">        assert bp instanceof Contains;</span>
+<span class="nc" id="L510">        Collection&lt;?&gt; values = (Collection&lt;?&gt;) has.getValue();</span>
+
+<span class="nc" id="L512">        String originKey = has.getKey();</span>
+<span class="nc bnc" id="L513" title="All 2 branches missed.">        if (values.size() &gt; 1) {</span>
+<span class="nc bnc" id="L514" title="All 2 branches missed.">            E.checkArgument(!originKey.equals(T.key.getAccessor()) &amp;&amp;</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">                            !originKey.equals(T.value.getAccessor()),</span>
+                            &quot;Not support hasKey() or hasValue() with &quot; +
+                            &quot;multiple values&quot;);
+        }
+
+<span class="nc" id="L520">        HugeKeys hugeKey = token2HugeKey(originKey);</span>
+        List&lt;?&gt; valueList;
+<span class="nc bnc" id="L522" title="All 2 branches missed.">        if (hugeKey != null) {</span>
+<span class="nc" id="L523">            valueList = convSysListValueIfNeeded(graph, type, hugeKey, values);</span>
+<span class="nc bnc" id="L524" title="All 3 branches missed.">            switch ((Contains) bp) {</span>
+                case within:
+<span class="nc" id="L526">                    return Condition.in(hugeKey, valueList);</span>
+                case without:
+<span class="nc" id="L528">                    return Condition.nin(hugeKey, valueList);</span>
+                default:
+<span class="nc" id="L530">                    throw newUnsupportedPredicate(has.getPredicate());</span>
+            }
+        } else {
+<span class="nc" id="L533">            valueList = new ArrayList&lt;&gt;(values);</span>
+<span class="nc" id="L534">            String key = has.getKey();</span>
+<span class="nc" id="L535">            PropertyKey pkey = graph.propertyKey(key);</span>
+
+<span class="nc bnc" id="L537" title="All 3 branches missed.">            switch ((Contains) bp) {</span>
+                case within:
+<span class="nc" id="L539">                    return Condition.in(pkey.id(), valueList);</span>
+                case without:
+<span class="nc" id="L541">                    return Condition.nin(pkey.id(), valueList);</span>
+                default:
+<span class="nc" id="L543">                    throw newUnsupportedPredicate(has.getPredicate());</span>
+            }
+        }
+    }
+
+    public static Condition convContains2Relation(HugeGraph graph,
+                                                  HasContainer has) {
+        // Convert contains-key or contains-value
+<span class="nc" id="L551">        BiPredicate&lt;?, ?&gt; bp = has.getPredicate().getBiPredicate();</span>
+<span class="nc bnc" id="L552" title="All 2 branches missed.">        E.checkArgument(bp == Compare.eq, &quot;CONTAINS query with relation &quot; +</span>
+                        &quot;'%s' is not supported&quot;, bp);
+
+<span class="nc" id="L555">        HugeKeys key = token2HugeKey(has.getKey());</span>
+<span class="nc" id="L556">        E.checkNotNull(key, &quot;token key&quot;);</span>
+<span class="nc" id="L557">        Object value = has.getValue();</span>
+
+<span class="nc bnc" id="L559" title="All 2 branches missed.">        if (keyForContainsKey(has.getKey())) {</span>
+<span class="nc bnc" id="L560" title="All 2 branches missed.">            if (value instanceof String) {</span>
+<span class="nc" id="L561">                value = graph.propertyKey((String) value).id();</span>
+            }
+<span class="nc" id="L563">            return Condition.containsKey(key, value);</span>
+        } else {
+<span class="nc bnc" id="L565" title="All 2 branches missed.">            assert keyForContainsValue(has.getKey());</span>
+<span class="nc" id="L566">            return Condition.containsValue(key, value);</span>
+        }
+    }
+
+    public static BackendException newUnsupportedPredicate(P&lt;?&gt; predicate) {
+<span class="nc" id="L571">        return new BackendException(&quot;Unsupported predicate: '%s'&quot;, predicate);</span>
+    }
+
+    public static HugeKeys string2HugeKey(String key) {
+<span class="nc" id="L575">        HugeKeys hugeKey = token2HugeKey(key);</span>
+<span class="nc bnc" id="L576" title="All 2 branches missed.">        return hugeKey != null ? hugeKey : HugeKeys.valueOf(key);</span>
+    }
+
+    public static HugeKeys token2HugeKey(String key) {
+<span class="nc bnc" id="L580" title="All 2 branches missed.">        if (key.equals(T.label.getAccessor())) {</span>
+<span class="nc" id="L581">            return HugeKeys.LABEL;</span>
+<span class="nc bnc" id="L582" title="All 2 branches missed.">        } else if (key.equals(T.id.getAccessor())) {</span>
+<span class="nc" id="L583">            return HugeKeys.ID;</span>
+<span class="nc bnc" id="L584" title="All 2 branches missed.">        } else if (keyForContainsKeyOrValue(key)) {</span>
+<span class="nc" id="L585">            return HugeKeys.PROPERTIES;</span>
+        }
+<span class="nc" id="L587">        return null;</span>
+    }
+
+    public static boolean keyForContainsKeyOrValue(String key) {
+<span class="nc bnc" id="L591" title="All 2 branches missed.">        return key.equals(T.key.getAccessor()) ||</span>
+<span class="nc bnc" id="L592" title="All 2 branches missed.">               key.equals(T.value.getAccessor());</span>
+    }
+
+    public static boolean keyForContainsKey(String key) {
+<span class="nc" id="L596">        return key.equals(T.key.getAccessor());</span>
+    }
+
+    public static boolean keyForContainsValue(String key) {
+<span class="nc" id="L600">        return key.equals(T.value.getAccessor());</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    public static &lt;V&gt; Iterator&lt;V&gt; filterResult(
+                                  List&lt;HasContainer&gt; hasContainers,
+                                  Iterator&lt;? extends Element&gt; iterator) {
+<span class="nc bnc" id="L607" title="All 2 branches missed.">        if (hasContainers.isEmpty()) {</span>
+<span class="nc" id="L608">            return (Iterator&lt;V&gt;) iterator;</span>
+        }
+<span class="nc" id="L610">        Iterator&lt;?&gt; result = new FilterIterator&lt;&gt;(iterator, elem -&gt; {</span>
+<span class="nc" id="L611">            return HasContainer.testAll(elem, hasContainers);</span>
+        });
+<span class="nc" id="L613">        return (Iterator&lt;V&gt;) result;</span>
+    }
+
+    public static Iterator&lt;Edge&gt; filterResult(Vertex vertex,
+                                              Directions dir,
+                                              Iterator&lt;Edge&gt; edges) {
+<span class="nc" id="L619">        return new FilterIterator&lt;&gt;(edges, edge -&gt; {</span>
+<span class="nc bnc" id="L620" title="All 6 branches missed.">            return dir == Directions.OUT &amp;&amp; vertex.equals(edge.outVertex()) ||</span>
+<span class="nc bnc" id="L621" title="All 2 branches missed.">                   dir == Directions.IN &amp;&amp; vertex.equals(edge.inVertex());</span>
+        });
+    }
+
+    public static void convAllHasSteps(Traversal.Admin&lt;?, ?&gt; traversal) {
+        // Extract all has steps in traversal
+        @SuppressWarnings(&quot;rawtypes&quot;)
+<span class="nc" id="L628">        List&lt;HasStep&gt; steps =</span>
+<span class="nc" id="L629">                      TraversalHelper.getStepsOfAssignableClassRecursively(</span>
+                      HasStep.class, traversal);
+
+<span class="nc bnc" id="L632" title="All 2 branches missed.">        if (steps.isEmpty()) {</span>
+<span class="nc" id="L633">            return;</span>
+        }
+
+        /*
+         * The graph in traversal may be null, for example:
+         *   `g.V().hasLabel('person').union(__.has('name', 'tom'))`
+         * Here `__.has()` will create a new traversal, but the graph is null
+         */
+<span class="nc bnc" id="L641" title="All 4 branches missed.">        if (!traversal.getGraph().filter(g -&gt; !(g instanceof EmptyGraph)).isPresent()) {</span>
+<span class="nc bnc" id="L642" title="All 4 branches missed.">            if (traversal.getParent() == null || !(traversal.getParent() instanceof Traversal)) {</span>
+<span class="nc" id="L643">                return;</span>
+            }
+
+<span class="nc" id="L646">            Optional&lt;Graph&gt; parentGraph = ((Traversal&lt;?, ?&gt;) traversal.getParent())</span>
+<span class="nc" id="L647">                                                                      .asAdmin()</span>
+<span class="nc" id="L648">                                                                      .getGraph();</span>
+<span class="nc bnc" id="L649" title="All 4 branches missed.">            if (parentGraph.filter(g -&gt; !(g instanceof EmptyGraph)).isPresent()) {</span>
+<span class="nc" id="L650">                traversal.setGraph(parentGraph.get());</span>
+            }
+        }
+
+<span class="nc" id="L654">        HugeGraph graph = (HugeGraph) traversal.getGraph().get();</span>
+<span class="nc bnc" id="L655" title="All 2 branches missed.">        for (HasStep&lt;?&gt; step : steps) {</span>
+<span class="nc" id="L656">            TraversalUtil.convHasStep(graph, step);</span>
+<span class="nc" id="L657">        }</span>
+<span class="nc" id="L658">    }</span>
+
+    public static void convHasStep(HugeGraph graph, HasStep&lt;?&gt; step) {
+<span class="nc" id="L661">        HasContainerHolder holder = step;</span>
+<span class="nc bnc" id="L662" title="All 2 branches missed.">        for (HasContainer has : holder.getHasContainers()) {</span>
+<span class="nc" id="L663">            convPredicateValue(graph, has);</span>
+<span class="nc" id="L664">        }</span>
+<span class="nc" id="L665">    }</span>
+
+    private static void convPredicateValue(HugeGraph graph,
+                                           HasContainer has) {
+        // No need to convert if key is sys-prop
+<span class="nc bnc" id="L670" title="All 2 branches missed.">        if (isSysProp(has.getKey())) {</span>
+<span class="nc" id="L671">            return;</span>
+        }
+<span class="nc" id="L673">        PropertyKey pkey = graph.propertyKey(has.getKey());</span>
+<span class="nc" id="L674">        updatePredicateValue(has.getPredicate(), pkey);</span>
+<span class="nc" id="L675">    }</span>
+
+    private static void updatePredicateValue(P&lt;?&gt; predicate, PropertyKey pkey) {
+<span class="nc" id="L678">        List&lt;P&lt;Object&gt;&gt; leafPredicates = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L679">        collectPredicates(leafPredicates, ImmutableList.of(predicate));</span>
+<span class="nc bnc" id="L680" title="All 2 branches missed.">        for (P&lt;Object&gt; pred : leafPredicates) {</span>
+<span class="nc" id="L681">            Object value = validPropertyValue(pred.getValue(), pkey);</span>
+<span class="nc" id="L682">            pred.setValue(value);</span>
+<span class="nc" id="L683">        }</span>
+<span class="nc" id="L684">    }</span>
+
+    private static boolean isSysProp(String key) {
+<span class="nc bnc" id="L687" title="All 2 branches missed.">        if (QueryHolder.SYSPROP_PAGE.equals(key)) {</span>
+<span class="nc" id="L688">            return true;</span>
+        }
+        // Return true if key is ~id, ~label, ~key and ~value
+<span class="nc bnc" id="L691" title="All 2 branches missed.">        return token2HugeKey(key) != null;</span>
+    }
+
+    @SuppressWarnings({&quot;unchecked&quot;, &quot;rawtypes&quot;})
+    private static void collectPredicates(List&lt;P&lt;Object&gt;&gt; results,
+                                          List&lt;P&lt;?&gt;&gt; predicates) {
+<span class="nc bnc" id="L697" title="All 2 branches missed.">        for (P&lt;?&gt; p : predicates) {</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">            if (p instanceof ConnectiveP) {</span>
+<span class="nc" id="L699">                collectPredicates(results, ((ConnectiveP) p).getPredicates());</span>
+            } else {
+<span class="nc" id="L701">                results.add((P&lt;Object&gt;) p);</span>
+            }
+<span class="nc" id="L703">        }</span>
+<span class="nc" id="L704">    }</span>
+
+    private static Object convSysValueIfNeeded(HugeGraph graph,
+                                               HugeType type,
+                                               HugeKeys key,
+                                               Object value) {
+<span class="nc bnc" id="L710" title="All 4 branches missed.">        if (key == HugeKeys.LABEL &amp;&amp; !(value instanceof Id)) {</span>
+<span class="nc" id="L711">            value = SchemaLabel.getLabelId(graph, type, value);</span>
+<span class="nc bnc" id="L712" title="All 4 branches missed.">        } else if (key == HugeKeys.ID &amp;&amp; !(value instanceof Id)) {</span>
+<span class="nc" id="L713">            value = HugeElement.getIdValue(type, value);</span>
+        }
+<span class="nc" id="L715">        return value;</span>
+    }
+
+    private static List&lt;?&gt; convSysListValueIfNeeded(HugeGraph graph,
+                                                    HugeType type,
+                                                    HugeKeys key,
+                                                    Collection&lt;?&gt; values) {
+<span class="nc" id="L722">        List&lt;Object&gt; newValues = new ArrayList&lt;&gt;(values.size());</span>
+<span class="nc bnc" id="L723" title="All 2 branches missed.">        for (Object value : values) {</span>
+<span class="nc" id="L724">            newValues.add(convSysValueIfNeeded(graph, type, key, value));</span>
+<span class="nc" id="L725">        }</span>
+<span class="nc" id="L726">        return newValues;</span>
+    }
+
+    public static Query.Order convOrder(Order order) {
+<span class="nc bnc" id="L730" title="All 2 branches missed.">        return order == Order.desc ? Query.Order.DESC : Query.Order.ASC;</span>
+    }
+
+    private static &lt;V&gt; V validPropertyValue(V value, PropertyKey pkey) {
+<span class="nc bnc" id="L734" title="All 4 branches missed.">        if (pkey.cardinality().single() &amp;&amp; value instanceof Collection &amp;&amp;</span>
+<span class="nc bnc" id="L735" title="All 2 branches missed.">            !pkey.dataType().isBlob()) {</span>
+            // Expect single but got collection, like P.within([])
+<span class="nc" id="L737">            Collection&lt;?&gt; collection = (Collection&lt;?&gt;) value;</span>
+<span class="nc" id="L738">            Collection&lt;Object&gt; validValues = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L739" title="All 2 branches missed.">            for (Object element : collection) {</span>
+<span class="nc" id="L740">                Object validValue = pkey.validValue(element);</span>
+<span class="nc bnc" id="L741" title="All 2 branches missed.">                if (validValue == null) {</span>
+<span class="nc" id="L742">                    validValues = null;</span>
+<span class="nc" id="L743">                    break;</span>
+                }
+<span class="nc" id="L745">                validValues.add(validValue);</span>
+<span class="nc" id="L746">            }</span>
+<span class="nc bnc" id="L747" title="All 2 branches missed.">            if (validValues == null) {</span>
+<span class="nc" id="L748">                List&lt;Class&lt;?&gt;&gt; classes = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L749" title="All 2 branches missed.">                for (Object v : (Collection&lt;?&gt;) value) {</span>
+<span class="nc bnc" id="L750" title="All 2 branches missed.">                    classes.add(v == null ? null : v.getClass());</span>
+<span class="nc" id="L751">                }</span>
+<span class="nc" id="L752">                E.checkArgument(false,</span>
+                                &quot;Invalid data type of query value in %s, &quot; +
+                                &quot;expect %s for '%s', actual got %s&quot;,
+<span class="nc" id="L755">                                value, pkey.dataType(), pkey.name(), classes);</span>
+            }
+
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L759">            V validValue = (V) validValues;</span>
+<span class="nc" id="L760">            return validValue;</span>
+        }
+
+        V validValue;
+<span class="nc bnc" id="L764" title="All 4 branches missed.">        if (pkey.cardinality().multiple() &amp;&amp; !(value instanceof Collection)) {</span>
+            // Expect non-single but got single, like P.contains(value)
+<span class="nc" id="L766">            List&lt;V&gt; values = CollectionUtil.toList(value);</span>
+<span class="nc" id="L767">            values = pkey.validValue(values);</span>
+<span class="nc bnc" id="L768" title="All 2 branches missed.">            validValue = values != null ? values.get(0) : null;</span>
+<span class="nc" id="L769">        } else {</span>
+<span class="nc" id="L770">            validValue = pkey.validValue(value);</span>
+        }
+
+<span class="nc bnc" id="L773" title="All 2 branches missed.">        if (validValue == null) {</span>
+<span class="nc" id="L774">            E.checkArgument(false,</span>
+                            &quot;Invalid data type of query value '%s', &quot; +
+                            &quot;expect %s for '%s', actual got %s&quot;,
+<span class="nc" id="L777">                            value, pkey.dataType(), pkey.name(),</span>
+<span class="nc bnc" id="L778" title="All 2 branches missed.">                            value == null ? null : value.getClass());</span>
+        }
+<span class="nc" id="L780">        return validValue;</span>
+    }
+
+    public static void retrieveSysprop(List&lt;HasContainer&gt; hasContainers,
+                                       Function&lt;HasContainer, Boolean&gt; func) {
+<span class="nc bnc" id="L785" title="All 2 branches missed.">        for (Iterator&lt;HasContainer&gt; iter = hasContainers.iterator(); iter.hasNext(); ) {</span>
+<span class="nc" id="L786">            HasContainer container = iter.next();</span>
+<span class="nc bnc" id="L787" title="All 4 branches missed.">            if (container.getKey().startsWith(&quot;~&quot;) &amp;&amp; func.apply(container)) {</span>
+<span class="nc" id="L788">                iter.remove();</span>
+            }
+<span class="nc" id="L790">        }</span>
+<span class="nc" id="L791">    }</span>
+
+    public static String page(GraphTraversal&lt;?, ?&gt; traversal) {
+<span class="nc" id="L794">        QueryHolder holder = firstPageStep(traversal);</span>
+<span class="nc bnc" id="L795" title="All 2 branches missed.">        E.checkState(holder != null,</span>
+<span class="nc" id="L796">                     &quot;Invalid paging traversal: %s&quot;, traversal.getClass());</span>
+<span class="nc" id="L797">        Object page = holder.metadata(PageInfo.PAGE);</span>
+<span class="nc bnc" id="L798" title="All 2 branches missed.">        if (page == null) {</span>
+<span class="nc" id="L799">            return null;</span>
+        }
+        /*
+         * Page is instance of PageInfo if traversal with condition like:
+         * g.V().has(&quot;x&quot;, 1).has(&quot;~page&quot;, &quot;&quot;).
+         * Page is instance of PageState if traversal without condition like:
+         * g.V().has(&quot;~page&quot;, &quot;&quot;)
+         */
+<span class="nc bnc" id="L807" title="All 4 branches missed.">        assert page instanceof PageInfo || page instanceof PageState;</span>
+<span class="nc" id="L808">        return page.toString();</span>
+    }
+
+    public static QueryHolder rootStep(GraphTraversal&lt;?, ?&gt; traversal) {
+<span class="nc bnc" id="L812" title="All 2 branches missed.">        for (final Step&lt;?, ?&gt; step : traversal.asAdmin().getSteps()) {</span>
+<span class="nc bnc" id="L813" title="All 2 branches missed.">            if (step instanceof QueryHolder) {</span>
+<span class="nc" id="L814">                return (QueryHolder) step;</span>
+            }
+<span class="nc" id="L816">        }</span>
+<span class="nc" id="L817">        return null;</span>
+    }
+
+    public static QueryHolder firstPageStep(GraphTraversal&lt;?, ?&gt; traversal) {
+<span class="nc bnc" id="L821" title="All 2 branches missed.">        for (final Step&lt;?, ?&gt; step : traversal.asAdmin().getSteps()) {</span>
+<span class="nc bnc" id="L822" title="All 2 branches missed.">            if (step instanceof QueryHolder &amp;&amp;</span>
+<span class="nc bnc" id="L823" title="All 2 branches missed.">                ((QueryHolder) step).queryInfo().paging()) {</span>
+<span class="nc" id="L824">                return (QueryHolder) step;</span>
+            }
+<span class="nc" id="L826">        }</span>
+<span class="nc" id="L827">        return null;</span>
+    }
+
+    public static boolean testProperty(Property&lt;?&gt; prop, Object expected) {
+<span class="nc" id="L831">        Object actual = prop.value();</span>
+        P&lt;Object&gt; predicate;
+<span class="nc bnc" id="L833" title="All 2 branches missed.">        if (expected instanceof String &amp;&amp;</span>
+<span class="nc bnc" id="L834" title="All 2 branches missed.">            ((String) expected).startsWith(TraversalUtil.P_CALL)) {</span>
+<span class="nc" id="L835">            predicate = TraversalUtil.parsePredicate(((String) expected));</span>
+        } else {
+<span class="nc" id="L837">            predicate = ConditionP.eq(expected);</span>
+        }
+<span class="nc" id="L839">        updatePredicateValue(predicate, ((HugeProperty&lt;?&gt;) prop).propertyKey());</span>
+<span class="nc" id="L840">        return predicate.test(actual);</span>
+    }
+
+    public static Map&lt;Id, Object&gt; transProperties(HugeGraph graph,
+                                                  Map&lt;String, Object&gt; props) {
+<span class="nc" id="L845">        Map&lt;Id, Object&gt; pks = new HashMap&lt;&gt;(props.size());</span>
+<span class="nc bnc" id="L846" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; e : props.entrySet()) {</span>
+<span class="nc" id="L847">            PropertyKey pk = graph.propertyKey(e.getKey());</span>
+<span class="nc" id="L848">            pks.put(pk.id(), e.getValue());</span>
+<span class="nc" id="L849">        }</span>
+<span class="nc" id="L850">        return pks;</span>
+    }
+
+    public static P&lt;Object&gt; parsePredicate(String predicate) {
+        /*
+         * Extract P from json string like {&quot;properties&quot;: {&quot;age&quot;: &quot;P.gt(18)&quot;}}
+         * the `predicate` may actually be like &quot;P.gt(18)&quot;
+         */
+<span class="nc" id="L858">        Pattern pattern = Pattern.compile(&quot;^P\\.([a-z]+)\\(([\\S ]*)\\)$&quot;);</span>
+<span class="nc" id="L859">        Matcher matcher = pattern.matcher(predicate);</span>
+<span class="nc bnc" id="L860" title="All 2 branches missed.">        if (!matcher.find()) {</span>
+<span class="nc" id="L861">            throw new HugeException(&quot;Invalid predicate: %s&quot;, predicate);</span>
+        }
+
+<span class="nc" id="L864">        String method = matcher.group(1);</span>
+<span class="nc" id="L865">        String value = matcher.group(2);</span>
+<span class="nc bnc" id="L866" title="All 13 branches missed.">        switch (method) {</span>
+            case &quot;eq&quot;:
+<span class="nc" id="L868">                return P.eq(predicateNumber(value));</span>
+            case &quot;neq&quot;:
+<span class="nc" id="L870">                return P.neq(predicateNumber(value));</span>
+            case &quot;lt&quot;:
+<span class="nc" id="L872">                return P.lt(predicateNumber(value));</span>
+            case &quot;lte&quot;:
+<span class="nc" id="L874">                return P.lte(predicateNumber(value));</span>
+            case &quot;gt&quot;:
+<span class="nc" id="L876">                return P.gt(predicateNumber(value));</span>
+            case &quot;gte&quot;:
+<span class="nc" id="L878">                return P.gte(predicateNumber(value));</span>
+            case &quot;between&quot;:
+<span class="nc" id="L880">                Number[] params = predicateNumbers(value, 2);</span>
+<span class="nc" id="L881">                return P.between(params[0], params[1]);</span>
+            case &quot;inside&quot;:
+<span class="nc" id="L883">                params = predicateNumbers(value, 2);</span>
+<span class="nc" id="L884">                return P.inside(params[0], params[1]);</span>
+            case &quot;outside&quot;:
+<span class="nc" id="L886">                params = predicateNumbers(value, 2);</span>
+<span class="nc" id="L887">                return P.outside(params[0], params[1]);</span>
+            case &quot;within&quot;:
+<span class="nc" id="L889">                return P.within(predicateArgs(value));</span>
+            case &quot;textcontains&quot;:
+<span class="nc" id="L891">                return ConditionP.textContains(predicateArg(value));</span>
+            case &quot;contains&quot;:
+                // Just for inner use case like auth filter
+<span class="nc" id="L894">                return ConditionP.contains(predicateArg(value));</span>
+            default:
+<span class="nc" id="L896">                throw new NotSupportException(&quot;predicate '%s'&quot;, method);</span>
+        }
+    }
+
+    public static Condition parsePredicate(PropertyKey pk, String predicate) {
+<span class="nc" id="L901">        Pattern pattern = Pattern.compile(&quot;^P\\.([a-z]+)\\(([\\S ]*)\\)$&quot;);</span>
+<span class="nc" id="L902">        Matcher matcher = pattern.matcher(predicate);</span>
+<span class="nc bnc" id="L903" title="All 2 branches missed.">        if (!matcher.find()) {</span>
+<span class="nc" id="L904">            throw new HugeException(&quot;Invalid predicate: %s&quot;, predicate);</span>
+        }
+
+<span class="nc" id="L907">        String method = matcher.group(1);</span>
+<span class="nc" id="L908">        String value = matcher.group(2);</span>
+        Object validValue;
+<span class="nc bnc" id="L910" title="All 13 branches missed.">        switch (method) {</span>
+            case &quot;eq&quot;:
+<span class="nc" id="L912">                validValue = validPropertyValue(predicateNumber(value), pk);</span>
+<span class="nc" id="L913">                return Condition.eq(pk.id(), validValue);</span>
+            case &quot;neq&quot;:
+<span class="nc" id="L915">                validValue = validPropertyValue(predicateNumber(value), pk);</span>
+<span class="nc" id="L916">                return Condition.neq(pk.id(), validValue);</span>
+            case &quot;lt&quot;:
+<span class="nc" id="L918">                validValue = validPropertyValue(predicateNumber(value), pk);</span>
+<span class="nc" id="L919">                return Condition.lt(pk.id(), validValue);</span>
+            case &quot;lte&quot;:
+<span class="nc" id="L921">                validValue = validPropertyValue(predicateNumber(value), pk);</span>
+<span class="nc" id="L922">                return Condition.lte(pk.id(), validValue);</span>
+            case &quot;gt&quot;:
+<span class="nc" id="L924">                validValue = validPropertyValue(predicateNumber(value), pk);</span>
+<span class="nc" id="L925">                return Condition.gt(pk.id(), validValue);</span>
+            case &quot;gte&quot;:
+<span class="nc" id="L927">                validValue = validPropertyValue(predicateNumber(value), pk);</span>
+<span class="nc" id="L928">                return Condition.gte(pk.id(), validValue);</span>
+            case &quot;between&quot;:
+<span class="nc" id="L930">                Number[] params = predicateNumbers(value, 2);</span>
+<span class="nc" id="L931">                Object v1 = validPropertyValue(params[0], pk);</span>
+<span class="nc" id="L932">                Object v2 = validPropertyValue(params[1], pk);</span>
+<span class="nc" id="L933">                return Condition.and(Condition.gte(pk.id(), v1),</span>
+<span class="nc" id="L934">                                     Condition.lt(pk.id(), v2));</span>
+            case &quot;inside&quot;:
+<span class="nc" id="L936">                params = predicateNumbers(value, 2);</span>
+<span class="nc" id="L937">                v1 = validPropertyValue(params[0], pk);</span>
+<span class="nc" id="L938">                v2 = validPropertyValue(params[1], pk);</span>
+<span class="nc" id="L939">                return Condition.and(Condition.gt(pk.id(), v1),</span>
+<span class="nc" id="L940">                                     Condition.lt(pk.id(), v2));</span>
+            case &quot;outside&quot;:
+<span class="nc" id="L942">                params = predicateNumbers(value, 2);</span>
+<span class="nc" id="L943">                v1 = validPropertyValue(params[0], pk);</span>
+<span class="nc" id="L944">                v2 = validPropertyValue(params[1], pk);</span>
+<span class="nc" id="L945">                return Condition.and(Condition.lt(pk.id(), v1),</span>
+<span class="nc" id="L946">                                     Condition.gt(pk.id(), v2));</span>
+            case &quot;within&quot;:
+<span class="nc" id="L948">                List&lt;T&gt; values = predicateArgs(value);</span>
+<span class="nc" id="L949">                List&lt;T&gt; validValues = new ArrayList&lt;&gt;(values.size());</span>
+<span class="nc bnc" id="L950" title="All 2 branches missed.">                for (T v : values) {</span>
+<span class="nc" id="L951">                    validValues.add(validPropertyValue(v, pk));</span>
+<span class="nc" id="L952">                }</span>
+<span class="nc" id="L953">                return Condition.in(pk.id(), validValues);</span>
+            case &quot;textcontains&quot;:
+<span class="nc" id="L955">                validValue = validPropertyValue(value, pk);</span>
+<span class="nc" id="L956">                return Condition.textContains(pk.id(), (String) validValue);</span>
+            case &quot;contains&quot;:
+<span class="nc" id="L958">                validValue = validPropertyValue(value, pk);</span>
+<span class="nc" id="L959">                return Condition.contains(pk.id(), validValue);</span>
+            default:
+<span class="nc" id="L961">                throw new NotSupportException(&quot;predicate '%s'&quot;, method);</span>
+        }
+    }
+
+    private static Number predicateNumber(String value) {
+        try {
+<span class="nc" id="L967">            return JsonUtil.fromJson(value, Number.class);</span>
+<span class="nc" id="L968">        } catch (Exception e) {</span>
+            // Try to parse date
+<span class="nc bnc" id="L970" title="All 2 branches missed.">            if (e.getMessage().contains(&quot;not a valid number&quot;) ||</span>
+<span class="nc bnc" id="L971" title="All 2 branches missed.">                e.getMessage().contains(&quot;Unexpected character ('-'&quot;)) {</span>
+                try {
+<span class="nc bnc" id="L973" title="All 2 branches missed.">                    if (value.startsWith(&quot;\&quot;&quot;)) {</span>
+<span class="nc" id="L974">                        value = JsonUtil.fromJson(value, String.class);</span>
+                    }
+<span class="nc" id="L976">                    return DateUtil.parse(value).getTime();</span>
+<span class="nc" id="L977">                } catch (Exception ignored) {</span>
+                    // TODO: improve to throw a exception here
+                }
+            }
+
+<span class="nc" id="L982">            throw new HugeException(</span>
+                      &quot;Invalid value '%s', expect a number&quot;, e, value);
+        }
+    }
+
+    private static Number[] predicateNumbers(String value, int count) {
+<span class="nc" id="L988">        List&lt;Object&gt; values = predicateArgs(value);</span>
+<span class="nc bnc" id="L989" title="All 2 branches missed.">        if (values.size() != count) {</span>
+<span class="nc" id="L990">            throw new HugeException(&quot;Invalid numbers size %s, expect %s&quot;,</span>
+<span class="nc" id="L991">                                    values.size(), count);</span>
+        }
+<span class="nc bnc" id="L993" title="All 2 branches missed.">        for (int i = 0; i &lt; count; i++) {</span>
+<span class="nc" id="L994">            Object v = values.get(i);</span>
+<span class="nc bnc" id="L995" title="All 2 branches missed.">            if (v instanceof Number) {</span>
+<span class="nc" id="L996">                continue;</span>
+            }
+            try {
+<span class="nc" id="L999">                v = predicateNumber(v.toString());</span>
+<span class="nc" id="L1000">            } catch (Exception ignored) {</span>
+                // pass
+<span class="nc" id="L1002">            }</span>
+<span class="nc bnc" id="L1003" title="All 2 branches missed.">            if (v instanceof Number) {</span>
+<span class="nc" id="L1004">                values.set(i, v);</span>
+<span class="nc" id="L1005">                continue;</span>
+            }
+<span class="nc" id="L1007">            throw new HugeException(</span>
+                      &quot;Invalid value '%s', expect a list of number&quot;, value);
+        }
+<span class="nc" id="L1010">        return values.toArray(new Number[0]);</span>
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private static &lt;V&gt; V predicateArg(String value) {
+        try {
+<span class="nc" id="L1016">            return (V) JsonUtil.fromJson(value, Object.class);</span>
+<span class="nc" id="L1017">        } catch (Exception e) {</span>
+<span class="nc" id="L1018">            throw new HugeException(</span>
+                      &quot;Invalid value '%s', expect a single value&quot;, e, value);
+        }
+    }
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private static &lt;V&gt; List&lt;V&gt; predicateArgs(String value) {
+        try {
+<span class="nc" id="L1026">            return JsonUtil.fromJson(&quot;[&quot; + value + &quot;]&quot;, List.class);</span>
+<span class="nc" id="L1027">        } catch (Exception e) {</span>
+<span class="nc" id="L1028">            throw new HugeException(</span>
+                      &quot;Invalid value '%s', expect a list&quot;, e, value);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

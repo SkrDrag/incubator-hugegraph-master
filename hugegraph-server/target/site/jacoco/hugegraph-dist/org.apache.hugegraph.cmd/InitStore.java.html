@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>InitStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-dist</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.cmd</a> &gt; <span class="el_source">InitStore.java</span></div><h1>InitStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.cmd;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.map.MultiValueMap;
+import org.apache.hugegraph.HugeFactory;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.auth.StandardAuthenticator;
+import org.apache.hugegraph.backend.store.BackendStoreInfo;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.dist.RegisterUtil;
+import org.apache.hugegraph.util.ConfigUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.util.GraphFactory;
+import org.slf4j.Logger;
+
+<span class="nc" id="L40">public class InitStore {</span>
+
+<span class="nc" id="L42">    private static final Logger LOG = Log.logger(InitStore.class);</span>
+
+    // 6~8 retries may be needed under high load for Cassandra backend
+    private static final int RETRIES = 10;
+    // Less than 5000 may cause mismatch exception with Cassandra backend
+    private static final long RETRY_INTERVAL = 5000;
+
+<span class="nc" id="L49">    private static final MultiValueMap EXCEPTIONS = new MultiValueMap();</span>
+
+    static {
+<span class="nc" id="L52">        EXCEPTIONS.put(&quot;OperationTimedOutException&quot;,</span>
+                       &quot;Timed out waiting for server response&quot;);
+<span class="nc" id="L54">        EXCEPTIONS.put(&quot;NoHostAvailableException&quot;,</span>
+                       &quot;All host(s) tried for query failed&quot;);
+<span class="nc" id="L56">        EXCEPTIONS.put(&quot;InvalidQueryException&quot;, &quot;does not exist&quot;);</span>
+<span class="nc" id="L57">        EXCEPTIONS.put(&quot;InvalidQueryException&quot;, &quot;unconfigured table&quot;);</span>
+<span class="nc" id="L58">    }</span>
+
+    public static void main(String[] args) throws Exception {
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        E.checkArgument(args.length == 1,</span>
+                        &quot;HugeGraph init-store need to pass the config file &quot; +
+                        &quot;of RestServer, like: conf/rest-server.properties&quot;);
+<span class="nc" id="L64">        E.checkArgument(args[0].endsWith(&quot;.properties&quot;),</span>
+                        &quot;Expect the parameter is properties config file.&quot;);
+
+<span class="nc" id="L67">        String restConf = args[0];</span>
+
+<span class="nc" id="L69">        RegisterUtil.registerBackends();</span>
+<span class="nc" id="L70">        RegisterUtil.registerPlugins();</span>
+<span class="nc" id="L71">        RegisterUtil.registerServer();</span>
+
+<span class="nc" id="L73">        HugeConfig restServerConfig = new HugeConfig(restConf);</span>
+<span class="nc" id="L74">        String graphsDir = restServerConfig.get(ServerOptions.GRAPHS);</span>
+<span class="nc" id="L75">        Map&lt;String, String&gt; graph2ConfigPaths = ConfigUtil.scanGraphsDir(graphsDir);</span>
+
+<span class="nc" id="L77">        List&lt;HugeGraph&gt; graphs = new ArrayList&lt;&gt;(graph2ConfigPaths.size());</span>
+        try {
+<span class="nc bnc" id="L79" title="All 2 branches missed.">            for (Map.Entry&lt;String, String&gt; entry : graph2ConfigPaths.entrySet()) {</span>
+<span class="nc" id="L80">                graphs.add(initGraph(entry.getValue()));</span>
+<span class="nc" id="L81">            }</span>
+<span class="nc" id="L82">            StandardAuthenticator.initAdminUserIfNeeded(restConf);</span>
+        } finally {
+<span class="nc bnc" id="L84" title="All 2 branches missed.">            for (HugeGraph graph : graphs) {</span>
+<span class="nc" id="L85">                graph.close();</span>
+<span class="nc" id="L86">            }</span>
+<span class="nc" id="L87">            HugeFactory.shutdown(30L, true);</span>
+        }
+<span class="nc" id="L89">    }</span>
+
+    private static HugeGraph initGraph(String configPath) throws Exception {
+<span class="nc" id="L92">        LOG.info(&quot;Init graph with config file: {}&quot;, configPath);</span>
+<span class="nc" id="L93">        HugeConfig config = new HugeConfig(configPath);</span>
+        // Forced set RAFT_MODE to false when initializing backend
+<span class="nc" id="L95">        config.setProperty(CoreOptions.RAFT_MODE.name(), &quot;false&quot;);</span>
+<span class="nc" id="L96">        HugeGraph graph = (HugeGraph) GraphFactory.open(config);</span>
+
+        try {
+<span class="nc" id="L99">            BackendStoreInfo backendStoreInfo = graph.backendStoreInfo();</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            if (backendStoreInfo.exists()) {</span>
+<span class="nc" id="L101">                LOG.info(&quot;Skip init-store due to the backend store of '{}' &quot; +</span>
+<span class="nc" id="L102">                         &quot;had been initialized&quot;, graph.name());</span>
+<span class="nc" id="L103">                backendStoreInfo.checkVersion();</span>
+                /*
+                 * Init the required information for creating the admin account
+                 * (when switch from non-auth mode to auth mode)
+                 */
+<span class="nc" id="L108">                graph.initSystemInfo();</span>
+            } else {
+<span class="nc" id="L110">                initBackend(graph);</span>
+            }
+<span class="nc" id="L112">        } catch (Throwable e) {</span>
+<span class="nc" id="L113">            graph.close();</span>
+<span class="nc" id="L114">            throw e;</span>
+<span class="nc" id="L115">        }</span>
+<span class="nc" id="L116">        return graph;</span>
+    }
+
+    private static void initBackend(final HugeGraph graph)
+                                    throws InterruptedException {
+<span class="nc" id="L121">        int retries = RETRIES;</span>
+        retry: do {
+            try {
+<span class="nc" id="L124">                graph.initBackend();</span>
+<span class="nc" id="L125">            } catch (Exception e) {</span>
+<span class="nc" id="L126">                String clz = e.getClass().getSimpleName();</span>
+<span class="nc" id="L127">                String message = e.getMessage();</span>
+<span class="nc bnc" id="L128" title="All 4 branches missed.">                if (EXCEPTIONS.containsKey(clz) &amp;&amp; retries &gt; 0) {</span>
+                    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L130">                    Collection&lt;String&gt; keywords = EXCEPTIONS.getCollection(clz);</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">                    for (String keyword : keywords) {</span>
+<span class="nc bnc" id="L132" title="All 2 branches missed.">                        if (message.contains(keyword)) {</span>
+<span class="nc" id="L133">                            LOG.info(&quot;Init failed with exception '{} : {}', &quot; +</span>
+                                     &quot;retry  {}...&quot;,
+<span class="nc" id="L135">                                     clz, message, RETRIES - retries + 1);</span>
+
+<span class="nc" id="L137">                            Thread.sleep(RETRY_INTERVAL);</span>
+<span class="nc" id="L138">                            continue retry;</span>
+                        }
+<span class="nc" id="L140">                    }</span>
+                }
+<span class="nc" id="L142">                throw e;</span>
+<span class="nc" id="L143">            }</span>
+            break;
+<span class="nc bnc" id="L145" title="All 2 branches missed.">        } while (retries-- &gt; 0);</span>
+<span class="nc" id="L146">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

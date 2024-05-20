@@ -1,0 +1,206 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>DoubleWayMultiPathsRecords.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.algorithm.records</a> &gt; <span class="el_source">DoubleWayMultiPathsRecords.java</span></div><h1>DoubleWayMultiPathsRecords.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.algorithm.records;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Stack;
+
+import org.apache.commons.collections.CollectionUtils;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.util.collection.IntIterator;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser.Path;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser.PathSet;
+import org.apache.hugegraph.traversal.algorithm.records.record.Record;
+import org.apache.hugegraph.traversal.algorithm.records.record.RecordType;
+import com.google.common.collect.Lists;
+
+public abstract class DoubleWayMultiPathsRecords extends AbstractRecords {
+
+    private final Stack&lt;Record&gt; sourceRecords;
+    private final Stack&lt;Record&gt; targetRecords;
+
+    private IntIterator parentRecordKeys;
+    private int currentKey;
+    private boolean movingForward;
+    private long accessed;
+
+    public DoubleWayMultiPathsRecords(RecordType type, boolean concurrent,
+                                      Id sourceV, Id targetV) {
+<span class="nc" id="L47">        super(type, concurrent);</span>
+<span class="nc" id="L48">        int sourceCode = this.code(sourceV);</span>
+<span class="nc" id="L49">        int targetCode = this.code(targetV);</span>
+<span class="nc" id="L50">        Record firstSourceRecord = this.newRecord();</span>
+<span class="nc" id="L51">        Record firstTargetRecord = this.newRecord();</span>
+<span class="nc" id="L52">        firstSourceRecord.addPath(sourceCode, 0);</span>
+<span class="nc" id="L53">        firstTargetRecord.addPath(targetCode, 0);</span>
+<span class="nc" id="L54">        this.sourceRecords = new Stack&lt;&gt;();</span>
+<span class="nc" id="L55">        this.targetRecords = new Stack&lt;&gt;();</span>
+<span class="nc" id="L56">        this.sourceRecords.push(firstSourceRecord);</span>
+<span class="nc" id="L57">        this.targetRecords.push(firstTargetRecord);</span>
+
+<span class="nc" id="L59">        this.accessed = 2L;</span>
+<span class="nc" id="L60">    }</span>
+
+    @Override
+    public void startOneLayer(boolean forward) {
+<span class="nc" id="L64">        this.movingForward = forward;</span>
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        Record parentRecord = this.movingForward ?</span>
+<span class="nc" id="L66">                              this.sourceRecords.peek() :</span>
+<span class="nc" id="L67">                              this.targetRecords.peek();</span>
+<span class="nc" id="L68">        this.currentRecord(this.newRecord(), parentRecord);</span>
+<span class="nc" id="L69">        this.parentRecordKeys = parentRecord.keys();</span>
+<span class="nc" id="L70">    }</span>
+
+    @Override
+    public void finishOneLayer() {
+<span class="nc" id="L74">        Record record = this.currentRecord();</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        if (this.movingForward) {</span>
+<span class="nc" id="L76">            this.sourceRecords.push(record);</span>
+        } else {
+<span class="nc" id="L78">            this.targetRecords.push(record);</span>
+        }
+<span class="nc" id="L80">        this.accessed += record.size();</span>
+<span class="nc" id="L81">    }</span>
+
+    @Watched
+    @Override
+    public boolean hasNextKey() {
+<span class="nc" id="L86">        return this.parentRecordKeys.hasNext();</span>
+    }
+
+    @Watched
+    @Override
+    public Id nextKey() {
+<span class="nc" id="L92">        this.currentKey = this.parentRecordKeys.next();</span>
+<span class="nc" id="L93">        return this.id(this.currentKey);</span>
+    }
+
+    public boolean parentsContain(int id) {
+<span class="nc" id="L97">        Record parentRecord = this.parentRecord();</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (parentRecord == null) {</span>
+<span class="nc" id="L99">            return false;</span>
+        }
+
+<span class="nc" id="L102">        IntIterator parents = parentRecord.get(this.currentKey);</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        while (parents.hasNext()) {</span>
+<span class="nc" id="L104">            int parent = parents.next();</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">            if (parent == id) {</span>
+                // Find backtrace path, stop
+<span class="nc" id="L107">                return true;</span>
+            }
+<span class="nc" id="L109">        }</span>
+<span class="nc" id="L110">        return false;</span>
+    }
+
+    @Override
+    public long accessed() {
+<span class="nc" id="L115">        return this.accessed;</span>
+    }
+
+    public boolean sourcesLessThanTargets() {
+<span class="nc" id="L119">        return this.sourceRecords.peek().size() &lt;=</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">               this.targetRecords.peek().size();</span>
+    }
+
+    @Watched
+    protected final PathSet linkPath(int source, int target, boolean ring) {
+<span class="nc" id="L125">        PathSet paths = new PathSet();</span>
+<span class="nc" id="L126">        PathSet sources = this.linkSourcePath(source);</span>
+<span class="nc" id="L127">        PathSet targets = this.linkTargetPath(target);</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">        for (Path tpath : targets) {</span>
+<span class="nc" id="L129">            tpath.reverse();</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">            for (Path spath : sources) {</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">                if (!ring) {</span>
+                    // Avoid loop in path
+<span class="nc bnc" id="L133" title="All 2 branches missed.">                    if (CollectionUtils.containsAny(spath.vertices(),</span>
+<span class="nc" id="L134">                                                    tpath.vertices())) {</span>
+<span class="nc" id="L135">                        continue;</span>
+                    }
+                }
+<span class="nc" id="L138">                List&lt;Id&gt; ids = new ArrayList&lt;&gt;(spath.vertices());</span>
+<span class="nc" id="L139">                ids.addAll(tpath.vertices());</span>
+<span class="nc bnc" id="L140" title="All 2 branches missed.">                Id crosspoint = this.id(this.movingForward ? target : source);</span>
+<span class="nc" id="L141">                paths.add(new Path(crosspoint, ids));</span>
+<span class="nc" id="L142">            }</span>
+<span class="nc" id="L143">        }</span>
+<span class="nc" id="L144">        return paths;</span>
+    }
+
+    private PathSet linkSourcePath(int source) {
+<span class="nc" id="L148">        return this.linkPathLayer(this.sourceRecords, source,</span>
+<span class="nc" id="L149">                                  this.sourceRecords.size() - 1);</span>
+    }
+
+    private PathSet linkTargetPath(int target) {
+<span class="nc" id="L153">        return this.linkPathLayer(this.targetRecords, target,</span>
+<span class="nc" id="L154">                                  this.targetRecords.size() - 1);</span>
+    }
+
+    private PathSet linkPathLayer(Stack&lt;Record&gt; all, int id, int layerIndex) {
+<span class="nc" id="L158">        PathSet results = new PathSet();</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (layerIndex == 0) {</span>
+<span class="nc" id="L160">            Id sid = this.id(id);</span>
+<span class="nc" id="L161">            results.add(new Path(Lists.newArrayList(sid)));</span>
+<span class="nc" id="L162">            return results;</span>
+        }
+
+<span class="nc" id="L165">        Id current = this.id(id);</span>
+<span class="nc" id="L166">        Record layer = all.elementAt(layerIndex);</span>
+<span class="nc" id="L167">        IntIterator iterator = layer.get(id);</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        while (iterator.hasNext()) {</span>
+<span class="nc" id="L169">            int parent = iterator.next();</span>
+<span class="nc" id="L170">            PathSet paths = this.linkPathLayer(all, parent, layerIndex - 1);</span>
+<span class="nc" id="L171">            paths.append(current);</span>
+<span class="nc" id="L172">            results.addAll(paths);</span>
+<span class="nc" id="L173">        }</span>
+<span class="nc" id="L174">        return results;</span>
+    }
+
+    @Watched
+    protected final void addPath(int current, int parent) {
+<span class="nc" id="L179">        this.currentRecord().addPath(current, parent);</span>
+<span class="nc" id="L180">    }</span>
+
+    protected final boolean sourceContains(int node) {
+<span class="nc" id="L183">        return this.sourceRecords.peek().containsKey(node);</span>
+    }
+
+    protected final boolean targetContains(int node) {
+<span class="nc" id="L187">        return this.targetRecords.peek().containsKey(node);</span>
+    }
+
+    protected final Stack&lt;Record&gt; sourceRecords() {
+<span class="nc" id="L191">        return this.sourceRecords;</span>
+    }
+
+    protected final Stack&lt;Record&gt; targetRecords() {
+<span class="nc" id="L195">        return this.targetRecords;</span>
+    }
+
+    protected final boolean movingForward() {
+<span class="nc" id="L199">        return this.movingForward;</span>
+    }
+
+    protected final int current() {
+<span class="nc" id="L203">        return this.currentKey;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

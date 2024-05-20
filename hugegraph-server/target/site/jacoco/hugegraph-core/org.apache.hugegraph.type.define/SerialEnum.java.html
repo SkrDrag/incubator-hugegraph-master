@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SerialEnum.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.type.define</a> &gt; <span class="el_source">SerialEnum.java</span></div><h1>SerialEnum.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.type.define;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.E;
+import com.google.common.collect.HashBasedTable;
+import com.google.common.collect.Table;
+
+public interface SerialEnum {
+
+    byte code();
+
+<span class="nc" id="L31">    Table&lt;Class&lt;?&gt;, Byte, SerialEnum&gt; TABLE = HashBasedTable.create();</span>
+
+    static void register(Class&lt;? extends SerialEnum&gt; clazz) {
+        Object enums;
+        try {
+<span class="nc" id="L36">            enums = clazz.getMethod(&quot;values&quot;).invoke(null);</span>
+<span class="nc" id="L37">        } catch (Exception e) {</span>
+<span class="nc" id="L38">            throw new BackendException(e);</span>
+<span class="nc" id="L39">        }</span>
+<span class="nc bnc" id="L40" title="All 2 branches missed.">        for (SerialEnum e : CollectionUtil.&lt;SerialEnum&gt;toList(enums)) {</span>
+<span class="nc" id="L41">            TABLE.put(clazz, e.code(), e);</span>
+<span class="nc" id="L42">        }</span>
+<span class="nc" id="L43">    }</span>
+
+    static &lt;T extends SerialEnum&gt; T fromCode(Class&lt;T&gt; clazz, byte code) {
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L47">        T value = (T) TABLE.get(clazz, code);</span>
+<span class="nc bnc" id="L48" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L49">            E.checkArgument(false, &quot;Can't construct %s from code %s&quot;,</span>
+<span class="nc" id="L50">                            clazz.getSimpleName(), code);</span>
+        }
+<span class="nc" id="L52">        return value;</span>
+    }
+
+    static void registerInternalEnums() {
+<span class="nc" id="L56">        SerialEnum.register(Action.class);</span>
+<span class="nc" id="L57">        SerialEnum.register(AggregateType.class);</span>
+<span class="nc" id="L58">        SerialEnum.register(Cardinality.class);</span>
+<span class="nc" id="L59">        SerialEnum.register(DataType.class);</span>
+<span class="nc" id="L60">        SerialEnum.register(Directions.class);</span>
+<span class="nc" id="L61">        SerialEnum.register(Frequency.class);</span>
+<span class="nc" id="L62">        SerialEnum.register(HugeType.class);</span>
+<span class="nc" id="L63">        SerialEnum.register(IdStrategy.class);</span>
+<span class="nc" id="L64">        SerialEnum.register(IndexType.class);</span>
+<span class="nc" id="L65">        SerialEnum.register(SchemaStatus.class);</span>
+<span class="nc" id="L66">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

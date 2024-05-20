@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<project name="maven-antrun-" default="main"  >
+<target name="main">
+  <tar destfile="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-dist/../apache-hugegraph-incubating-1.2.0.tar.gz" compression="gzip">
+    <tarfileset filemode="755" dir="E:\tool\incubator-hugegraph-master\hugegraph-server\hugegraph-dist/../">
+      <include name="apache-hugegraph-incubating-1.2.0/**"/>
+    </tarfileset>
+  </tar>
+</target>
+</project>

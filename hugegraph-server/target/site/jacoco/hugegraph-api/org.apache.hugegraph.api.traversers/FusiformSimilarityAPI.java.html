@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>FusiformSimilarityAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">FusiformSimilarityAPI.java</span></div><h1>FusiformSimilarityAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_CAPACITY;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_PATHS_LIMIT;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.NO_LIMIT;
+
+import java.util.Iterator;
+import java.util.Set;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.traversal.algorithm.FusiformSimilarityTraverser;
+import org.apache.hugegraph.traversal.algorithm.FusiformSimilarityTraverser.SimilarsMap;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/traversers/fusiformsimilarity&quot;)
+@Singleton
+@Tag(name = &quot;FusiformSimilarityAPI&quot;)
+<span class="nc" id="L56">public class FusiformSimilarityAPI extends API {</span>
+
+<span class="nc" id="L58">    private static final Logger LOG = Log.logger(FusiformSimilarityAPI.class);</span>
+
+    @POST
+    @Timed
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String post(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       FusiformSimilarityRequest request) {
+<span class="nc" id="L67">        E.checkArgumentNotNull(request, &quot;The fusiform similarity &quot; +</span>
+                                        &quot;request body can't be null&quot;);
+<span class="nc" id="L69">        E.checkArgumentNotNull(request.sources,</span>
+                               &quot;The sources of fusiform similarity &quot; +
+                               &quot;request can't be null&quot;);
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        if (request.direction == null) {</span>
+<span class="nc" id="L73">            request.direction = Directions.BOTH;</span>
+        }
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        E.checkArgument(request.minNeighbors &gt; 0,</span>
+                        &quot;The min neighbor count must be &gt; 0, but got: %s&quot;,
+<span class="nc" id="L77">                        request.minNeighbors);</span>
+<span class="nc bnc" id="L78" title="All 4 branches missed.">        E.checkArgument(request.maxDegree &gt; 0L || request.maxDegree == NO_LIMIT,</span>
+                        &quot;The max degree of request must be &gt; 0 or == -1, &quot; +
+<span class="nc" id="L80">                        &quot;but got: %s&quot;, request.maxDegree);</span>
+<span class="nc bnc" id="L81" title="All 4 branches missed.">        E.checkArgument(request.alpha &gt; 0 &amp;&amp; request.alpha &lt;= 1.0,</span>
+                        &quot;The alpha of request must be in range (0, 1], &quot; +
+<span class="nc" id="L83">                        &quot;but got '%s'&quot;, request.alpha);</span>
+<span class="nc bnc" id="L84" title="All 2 branches missed.">        E.checkArgument(request.minSimilars &gt;= 1,</span>
+                        &quot;The min similar count of request must be &gt;= 1, &quot; +
+<span class="nc" id="L86">                        &quot;but got: %s&quot;, request.minSimilars);</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">        E.checkArgument(request.top &gt;= 0,</span>
+<span class="nc" id="L88">                        &quot;The top must be &gt;= 0, but got: %s&quot;, request.top);</span>
+
+<span class="nc" id="L90">        LOG.debug(&quot;Graph [{}] get fusiform similars from '{}' with &quot; +</span>
+                  &quot;direction '{}', edge label '{}', min neighbor count '{}', &quot; +
+                  &quot;alpha '{}', min similar count '{}', group property '{}' &quot; +
+                  &quot;and min group count '{}'&quot;,
+                  graph, request.sources, request.direction, request.label,
+<span class="nc" id="L95">                  request.minNeighbors, request.alpha, request.minSimilars,</span>
+<span class="nc" id="L96">                  request.groupProperty, request.minGroups);</span>
+
+<span class="nc" id="L98">        ApiMeasurer measure = new ApiMeasurer();</span>
+<span class="nc" id="L99">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L100">        Iterator&lt;Vertex&gt; sources = request.sources.vertices(g);</span>
+<span class="nc bnc" id="L101" title="All 4 branches missed.">        E.checkArgument(sources != null &amp;&amp; sources.hasNext(),</span>
+                        &quot;The source vertices can't be empty&quot;);
+
+<span class="nc" id="L104">        FusiformSimilarityTraverser traverser = new FusiformSimilarityTraverser(g);</span>
+<span class="nc" id="L105">        SimilarsMap result = traverser.fusiformSimilarity(</span>
+                sources, request.direction, request.label,
+                request.minNeighbors, request.alpha,
+                request.minSimilars, request.top,
+                request.groupProperty, request.minGroups,
+                request.maxDegree, request.capacity,
+                request.limit, request.withIntermediary);
+
+<span class="nc" id="L113">        CloseableIterator.closeIterator(sources);</span>
+
+<span class="nc" id="L115">        measure.addIterCount(traverser.vertexIterCounter.get(),</span>
+<span class="nc" id="L116">                             traverser.edgeIterCounter.get());</span>
+
+        Iterator&lt;?&gt; iterVertex;
+<span class="nc" id="L119">        Set&lt;Id&gt; vertexIds = result.vertices();</span>
+<span class="nc bnc" id="L120" title="All 4 branches missed.">        if (request.withVertex &amp;&amp; !vertexIds.isEmpty()) {</span>
+<span class="nc" id="L121">            iterVertex = g.vertices(vertexIds.toArray());</span>
+<span class="nc" id="L122">            measure.addIterCount(vertexIds.size(), 0);</span>
+        } else {
+<span class="nc" id="L124">            iterVertex = vertexIds.iterator();</span>
+        }
+
+<span class="nc" id="L127">        return manager.serializer(g, measure.measures())</span>
+<span class="nc" id="L128">                      .writeSimilars(result, iterVertex);</span>
+    }
+
+<span class="nc" id="L131">    private static class FusiformSimilarityRequest {</span>
+
+        @JsonProperty(&quot;sources&quot;)
+        public Vertices sources;
+        @JsonProperty(&quot;label&quot;)
+        public String label;
+        @JsonProperty(&quot;direction&quot;)
+        public Directions direction;
+        @JsonProperty(&quot;min_neighbors&quot;)
+        public int minNeighbors;
+        @JsonProperty(&quot;alpha&quot;)
+        public double alpha;
+<span class="nc" id="L143">        @JsonProperty(&quot;min_similars&quot;)</span>
+        public int minSimilars = 1;
+        @JsonProperty(&quot;top&quot;)
+        public int top;
+        @JsonProperty(&quot;group_property&quot;)
+        public String groupProperty;
+        @JsonProperty(&quot;min_groups&quot;)
+        public int minGroups;
+<span class="nc" id="L151">        @JsonProperty(&quot;max_degree&quot;)</span>
+<span class="nc" id="L152">        public long maxDegree = Long.parseLong(DEFAULT_MAX_DEGREE);</span>
+<span class="nc" id="L153">        @JsonProperty(&quot;capacity&quot;)</span>
+<span class="nc" id="L154">        public long capacity = Long.parseLong(DEFAULT_CAPACITY);</span>
+<span class="nc" id="L155">        @JsonProperty(&quot;limit&quot;)</span>
+<span class="nc" id="L156">        public int limit = Integer.parseInt(DEFAULT_PATHS_LIMIT);</span>
+<span class="nc" id="L157">        @JsonProperty(&quot;with_intermediary&quot;)</span>
+        public boolean withIntermediary = false;
+<span class="nc" id="L159">        @JsonProperty(&quot;with_vertex&quot;)</span>
+        public boolean withVertex = false;
+
+        @Override
+        public String toString() {
+<span class="nc" id="L164">            return String.format(&quot;FusiformSimilarityRequest{sources=%s,&quot; +</span>
+                                 &quot;label=%s,direction=%s,minNeighbors=%s,&quot; +
+                                 &quot;alpha=%s,minSimilars=%s,top=%s,&quot; +
+                                 &quot;groupProperty=%s,minGroups=%s,&quot; +
+                                 &quot;maxDegree=%s,capacity=%s,limit=%s,&quot; +
+                                 &quot;withIntermediary=%s,withVertex=%s}&quot;,
+                                 this.sources, this.label, this.direction,
+<span class="nc" id="L171">                                 this.minNeighbors, this.alpha,</span>
+<span class="nc" id="L172">                                 this.minSimilars, this.top,</span>
+<span class="nc" id="L173">                                 this.groupProperty, this.minGroups,</span>
+<span class="nc" id="L174">                                 this.maxDegree, this.capacity, this.limit,</span>
+<span class="nc" id="L175">                                 this.withIntermediary, this.withVertex);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,931 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BytesBuffer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.serializer</a> &gt; <span class="el_source">BytesBuffer.java</span></div><h1>BytesBuffer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.serializer;
+
+import java.io.OutputStream;
+import java.nio.Buffer;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Date;
+import java.util.UUID;
+
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.Id.IdType;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.util.*;
+import org.apache.hugegraph.backend.serializer.BinaryBackendEntry.BinaryId;
+import org.apache.hugegraph.util.Blob;
+import org.apache.hugegraph.util.KryoUtil;
+import org.apache.hugegraph.util.StringEncoding;
+
+/**
+ * class BytesBuffer is a util for read/write binary
+ */
+public final class BytesBuffer extends OutputStream {
+
+    public static final int BYTE_LEN = Byte.BYTES;
+    public static final int SHORT_LEN = Short.BYTES;
+    public static final int INT_LEN = Integer.BYTES;
+    public static final int LONG_LEN = Long.BYTES;
+    public static final int CHAR_LEN = Character.BYTES;
+    public static final int FLOAT_LEN = Float.BYTES;
+    public static final int DOUBLE_LEN = Double.BYTES;
+    public static final int BLOB_LEN = 4;
+
+    public static final int UINT8_MAX = ((byte) -1) &amp; 0xff;
+    public static final int UINT16_MAX = ((short) -1) &amp; 0xffff;
+    public static final long UINT32_MAX = (-1) &amp; 0xffffffffL;
+
+    // NOTE: +1 to let code 0 represent length 1
+    public static final int ID_LEN_MASK = 0x7f;
+    public static final int ID_LEN_MAX = 0x7f + 1; // 128
+    public static final int BIG_ID_LEN_MAX = 0x7fff + 1; // 32768
+
+    public static final byte STRING_ENDING_BYTE = (byte) 0x00;
+    public static final byte STRING_ENDING_BYTE_FF = (byte) 0xff;
+    public static final int STRING_LEN_MAX = UINT16_MAX;
+    public static final long BLOB_LEN_MAX = 1 * Bytes.GB;
+
+    // The value must be in range [8, ID_LEN_MAX]
+    public static final int INDEX_HASH_ID_THRESHOLD = 32;
+
+    public static final int DEFAULT_CAPACITY = 64;
+    public static final int MAX_BUFFER_CAPACITY = 128 * 1024 * 1024; // 128M
+
+    public static final int BUF_EDGE_ID = 128;
+    public static final int BUF_PROPERTY = 64;
+
+<span class="nc" id="L79">    public static final byte[] BYTES_EMPTY = new byte[0];</span>
+
+    private ByteBuffer buffer;
+    private final boolean resize;
+
+    public BytesBuffer() {
+<span class="nc" id="L85">        this(DEFAULT_CAPACITY);</span>
+<span class="nc" id="L86">    }</span>
+
+<span class="nc" id="L88">    public BytesBuffer(int capacity) {</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        E.checkArgument(capacity &lt;= MAX_BUFFER_CAPACITY,</span>
+                        &quot;Capacity exceeds max buffer capacity: %s&quot;,
+<span class="nc" id="L91">                        MAX_BUFFER_CAPACITY);</span>
+<span class="nc" id="L92">        this.buffer = ByteBuffer.allocate(capacity);</span>
+<span class="nc" id="L93">        this.resize = true;</span>
+<span class="nc" id="L94">    }</span>
+
+<span class="nc" id="L96">    public BytesBuffer(ByteBuffer buffer) {</span>
+<span class="nc" id="L97">        E.checkNotNull(buffer, &quot;buffer&quot;);</span>
+<span class="nc" id="L98">        this.buffer = buffer;</span>
+<span class="nc" id="L99">        this.resize = false;</span>
+<span class="nc" id="L100">    }</span>
+
+    public static BytesBuffer allocate(int capacity) {
+<span class="nc" id="L103">        return new BytesBuffer(capacity);</span>
+    }
+
+    public static BytesBuffer wrap(ByteBuffer buffer) {
+<span class="nc" id="L107">        return new BytesBuffer(buffer);</span>
+    }
+
+    public static BytesBuffer wrap(byte[] array) {
+<span class="nc" id="L111">        return new BytesBuffer(ByteBuffer.wrap(array));</span>
+    }
+
+    public static BytesBuffer wrap(byte[] array, int offset, int length) {
+<span class="nc" id="L115">        return new BytesBuffer(ByteBuffer.wrap(array, offset, length));</span>
+    }
+
+    public ByteBuffer asByteBuffer() {
+<span class="nc" id="L119">        return this.buffer;</span>
+    }
+
+    public BytesBuffer forReadWritten() {
+<span class="nc" id="L123">        this.buffer.flip();</span>
+<span class="nc" id="L124">        return this;</span>
+    }
+
+    public BytesBuffer forReadAll() {
+<span class="nc" id="L128">        this.buffer.position(this.buffer.limit());</span>
+<span class="nc" id="L129">        return this;</span>
+    }
+
+    public byte[] array() {
+<span class="nc" id="L133">        return this.buffer.array();</span>
+    }
+
+    public byte[] bytes() {
+<span class="nc" id="L137">        byte[] bytes = this.buffer.array();</span>
+<span class="nc" id="L138">        int position = this.buffer.position();</span>
+<span class="nc bnc" id="L139" title="All 2 branches missed.">        if (position == bytes.length) {</span>
+<span class="nc" id="L140">            return bytes;</span>
+        } else {
+<span class="nc" id="L142">            return Arrays.copyOf(bytes, position);</span>
+        }
+    }
+
+    public int position() {
+<span class="nc" id="L147">        return this.buffer.position();</span>
+    }
+
+    public BytesBuffer copyFrom(BytesBuffer other) {
+<span class="nc" id="L151">        this.write(other.bytes());</span>
+<span class="nc" id="L152">        return this;</span>
+    }
+
+    public int remaining() {
+<span class="nc" id="L156">        return this.buffer.remaining();</span>
+    }
+
+    private void require(int size) {
+        // Does need to resize?
+<span class="nc bnc" id="L161" title="All 2 branches missed.">        if (this.buffer.limit() - this.buffer.position() &gt;= size) {</span>
+<span class="nc" id="L162">            return;</span>
+        }
+        // Can't resize for wrapped buffer since will change the origin ref
+<span class="nc" id="L165">        E.checkState(this.resize, &quot;Can't resize for wrapped buffer&quot;);</span>
+
+        // Extra capacity as buffer
+<span class="nc" id="L168">        int newCapacity = size + this.buffer.limit() + DEFAULT_CAPACITY;</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">        E.checkArgument(newCapacity &lt;= MAX_BUFFER_CAPACITY,</span>
+                        &quot;Capacity exceeds max buffer capacity: %s&quot;,
+<span class="nc" id="L171">                        MAX_BUFFER_CAPACITY);</span>
+<span class="nc" id="L172">        ByteBuffer newBuffer = ByteBuffer.allocate(newCapacity);</span>
+<span class="nc" id="L173">        ((Buffer) this.buffer).flip();</span>
+<span class="nc" id="L174">        newBuffer.put(this.buffer);</span>
+<span class="nc" id="L175">        this.buffer = newBuffer;</span>
+<span class="nc" id="L176">    }</span>
+
+    public BytesBuffer write(byte val) {
+<span class="nc" id="L179">        require(BYTE_LEN);</span>
+<span class="nc" id="L180">        this.buffer.put(val);</span>
+<span class="nc" id="L181">        return this;</span>
+    }
+
+    @Override
+    public void write(int val) {
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        assert val &lt;= UINT8_MAX;</span>
+<span class="nc" id="L187">        require(BYTE_LEN);</span>
+<span class="nc" id="L188">        this.buffer.put((byte) val);</span>
+<span class="nc" id="L189">    }</span>
+
+    @Override
+    public void write(byte[] val) {
+<span class="nc" id="L193">        require(BYTE_LEN * val.length);</span>
+<span class="nc" id="L194">        this.buffer.put(val);</span>
+<span class="nc" id="L195">    }</span>
+
+    @Override
+    public void write(byte[] val, int offset, int length) {
+<span class="nc" id="L199">        require(BYTE_LEN * length);</span>
+<span class="nc" id="L200">        this.buffer.put(val, offset, length);</span>
+<span class="nc" id="L201">    }</span>
+
+    public BytesBuffer writeBoolean(boolean val) {
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        this.write(val ? 1 : 0);</span>
+<span class="nc" id="L205">        return this;</span>
+    }
+
+    public BytesBuffer writeChar(char val) {
+<span class="nc" id="L209">        require(CHAR_LEN);</span>
+<span class="nc" id="L210">        this.buffer.putChar(val);</span>
+<span class="nc" id="L211">        return this;</span>
+    }
+
+    public BytesBuffer writeShort(short val) {
+<span class="nc" id="L215">        require(SHORT_LEN);</span>
+<span class="nc" id="L216">        this.buffer.putShort(val);</span>
+<span class="nc" id="L217">        return this;</span>
+    }
+
+    public BytesBuffer writeInt(int val) {
+<span class="nc" id="L221">        require(INT_LEN);</span>
+<span class="nc" id="L222">        this.buffer.putInt(val);</span>
+<span class="nc" id="L223">        return this;</span>
+    }
+
+    public BytesBuffer writeLong(long val) {
+<span class="nc" id="L227">        require(LONG_LEN);</span>
+<span class="nc" id="L228">        this.buffer.putLong(val);</span>
+<span class="nc" id="L229">        return this;</span>
+    }
+
+    public BytesBuffer writeFloat(float val) {
+<span class="nc" id="L233">        require(FLOAT_LEN);</span>
+<span class="nc" id="L234">        this.buffer.putFloat(val);</span>
+<span class="nc" id="L235">        return this;</span>
+    }
+
+    public BytesBuffer writeDouble(double val) {
+<span class="nc" id="L239">        require(DOUBLE_LEN);</span>
+<span class="nc" id="L240">        this.buffer.putDouble(val);</span>
+<span class="nc" id="L241">        return this;</span>
+    }
+
+    public byte peek() {
+<span class="nc" id="L245">        return this.buffer.get(this.buffer.position());</span>
+    }
+
+    public byte peekLast() {
+<span class="nc" id="L249">        return this.buffer.get(this.buffer.capacity() - 1);</span>
+    }
+
+    public byte read() {
+<span class="nc" id="L253">        return this.buffer.get();</span>
+    }
+
+    public byte[] read(int length) {
+<span class="nc" id="L257">        byte[] bytes = new byte[length];</span>
+<span class="nc" id="L258">        this.buffer.get(bytes);</span>
+<span class="nc" id="L259">        return bytes;</span>
+    }
+
+    public boolean readBoolean() {
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        return this.buffer.get() != 0;</span>
+    }
+
+    public char readChar() {
+<span class="nc" id="L267">        return this.buffer.getChar();</span>
+    }
+
+    public short readShort() {
+<span class="nc" id="L271">        return this.buffer.getShort();</span>
+    }
+
+    public int readInt() {
+<span class="nc" id="L275">        return this.buffer.getInt();</span>
+    }
+
+    public long readLong() {
+<span class="nc" id="L279">        return this.buffer.getLong();</span>
+    }
+
+    public float readFloat() {
+<span class="nc" id="L283">        return this.buffer.getFloat();</span>
+    }
+
+    public double readDouble() {
+<span class="nc" id="L287">        return this.buffer.getDouble();</span>
+    }
+
+    public BytesBuffer writeBytes(byte[] bytes) {
+<span class="nc bnc" id="L291" title="All 2 branches missed.">        E.checkArgument(bytes.length &lt;= UINT16_MAX,</span>
+                        &quot;The max length of bytes is %s, but got %s&quot;,
+<span class="nc" id="L293">                        UINT16_MAX, bytes.length);</span>
+<span class="nc" id="L294">        require(SHORT_LEN + bytes.length);</span>
+<span class="nc" id="L295">        this.writeVInt(bytes.length);</span>
+<span class="nc" id="L296">        this.write(bytes);</span>
+<span class="nc" id="L297">        return this;</span>
+    }
+
+    public byte[] readBytes() {
+<span class="nc" id="L301">        int length = this.readVInt();</span>
+<span class="nc bnc" id="L302" title="All 2 branches missed.">        assert length &gt;= 0;</span>
+<span class="nc" id="L303">        return this.read(length);</span>
+    }
+
+    public BytesBuffer writeBigBytes(byte[] bytes) {
+<span class="nc bnc" id="L307" title="All 2 branches missed.">        E.checkArgument(bytes.length &lt;= BLOB_LEN_MAX,</span>
+                        &quot;The max length of bytes is %s, but got %s&quot;,
+<span class="nc" id="L309">                        BLOB_LEN_MAX, bytes.length);</span>
+<span class="nc" id="L310">        require(BLOB_LEN + bytes.length);</span>
+<span class="nc" id="L311">        this.writeVInt(bytes.length);</span>
+<span class="nc" id="L312">        this.write(bytes);</span>
+<span class="nc" id="L313">        return this;</span>
+    }
+
+    public byte[] readBigBytes() {
+<span class="nc" id="L317">        int length = this.readVInt();</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">        assert length &gt;= 0;</span>
+<span class="nc" id="L319">        return this.read(length);</span>
+    }
+
+    public BytesBuffer writeStringRaw(String val) {
+<span class="nc" id="L323">        this.write(StringEncoding.encode(val));</span>
+<span class="nc" id="L324">        return this;</span>
+    }
+
+    public BytesBuffer writeString(String val) {
+<span class="nc" id="L328">        byte[] bytes = StringEncoding.encode(val);</span>
+<span class="nc" id="L329">        this.writeBytes(bytes);</span>
+<span class="nc" id="L330">        return this;</span>
+    }
+
+    public String readString() {
+<span class="nc" id="L334">        return StringEncoding.decode(this.readBytes());</span>
+    }
+
+    public BytesBuffer writeStringWithEnding(String value) {
+<span class="nc bnc" id="L338" title="All 2 branches missed.">        if (!value.isEmpty()) {</span>
+<span class="nc" id="L339">            byte[] bytes = StringEncoding.encode(value);</span>
+            /*
+             * assert '0x00'/'0xFF' not exist in string index id
+             * NOTE:
+             *   0x00 is NULL in UTF8(or ASCII) bytes
+             *   0xFF is not a valid byte in UTF8 bytes
+             */
+<span class="nc bnc" id="L346" title="All 2 branches missed.">            assert !Bytes.contains(bytes, STRING_ENDING_BYTE_FF) :</span>
+                   &quot;Invalid UTF8 bytes: &quot; + value;
+<span class="nc bnc" id="L348" title="All 2 branches missed.">            if (Bytes.contains(bytes, STRING_ENDING_BYTE)) {</span>
+<span class="nc" id="L349">                E.checkArgument(false,</span>
+                                &quot;Can't contains byte '0x00' in string: '%s'&quot;,
+                                value);
+            }
+<span class="nc" id="L353">            this.write(bytes);</span>
+        }
+        /*
+         * Choose 0x00 as ending symbol (see #1057)
+         * The following is out of date:
+         * A reasonable ending symbol should be 0x00(to ensure order), but
+         * considering that some backends like PG do not support 0x00 string,
+         * so choose 0xFF currently.
+         */
+<span class="nc" id="L362">        this.write(STRING_ENDING_BYTE);</span>
+<span class="nc" id="L363">        return this;</span>
+    }
+
+    public String readStringWithEnding() {
+<span class="nc" id="L367">        return StringEncoding.decode(this.readBytesWithEnding());</span>
+    }
+
+    public BytesBuffer writeStringToRemaining(String value) {
+<span class="nc" id="L371">        byte[] bytes = StringEncoding.encode(value);</span>
+<span class="nc" id="L372">        this.write(bytes);</span>
+<span class="nc" id="L373">        return this;</span>
+    }
+
+    public String readStringFromRemaining() {
+<span class="nc" id="L377">        byte[] bytes = new byte[this.buffer.remaining()];</span>
+<span class="nc" id="L378">        this.buffer.get(bytes);</span>
+<span class="nc" id="L379">        return StringEncoding.decode(bytes);</span>
+    }
+
+    public BytesBuffer writeUInt8(int val) {
+<span class="nc bnc" id="L383" title="All 2 branches missed.">        assert val &lt;= UINT8_MAX;</span>
+<span class="nc" id="L384">        this.write(val);</span>
+<span class="nc" id="L385">        return this;</span>
+    }
+
+    public int readUInt8() {
+<span class="nc" id="L389">        return this.read() &amp; 0x000000ff;</span>
+    }
+
+    public BytesBuffer writeUInt16(int val) {
+<span class="nc bnc" id="L393" title="All 2 branches missed.">        assert val &lt;= UINT16_MAX;</span>
+<span class="nc" id="L394">        this.writeShort((short) val);</span>
+<span class="nc" id="L395">        return this;</span>
+    }
+
+    public int readUInt16() {
+<span class="nc" id="L399">        return this.readShort() &amp; 0x0000ffff;</span>
+    }
+
+    public BytesBuffer writeUInt32(long val) {
+<span class="nc bnc" id="L403" title="All 2 branches missed.">        assert val &lt;= UINT32_MAX;</span>
+<span class="nc" id="L404">        this.writeInt((int) val);</span>
+<span class="nc" id="L405">        return this;</span>
+    }
+
+    public long readUInt32() {
+<span class="nc" id="L409">        return this.readInt() &amp; 0xffffffffL;</span>
+    }
+
+    public BytesBuffer writeVInt(int value) {
+        // NOTE: negative numbers are not compressed
+<span class="nc bnc" id="L414" title="All 4 branches missed.">        if (value &gt; 0x0fffffff || value &lt; 0) {</span>
+<span class="nc" id="L415">            this.write(0x80 | ((value &gt;&gt;&gt; 28) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L417" title="All 4 branches missed.">        if (value &gt; 0x1fffff || value &lt; 0) {</span>
+<span class="nc" id="L418">            this.write(0x80 | ((value &gt;&gt;&gt; 21) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L420" title="All 4 branches missed.">        if (value &gt; 0x3fff || value &lt; 0) {</span>
+<span class="nc" id="L421">            this.write(0x80 | ((value &gt;&gt;&gt; 14) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L423" title="All 4 branches missed.">        if (value &gt; 0x7f || value &lt; 0) {</span>
+<span class="nc" id="L424">            this.write(0x80 | ((value &gt;&gt;&gt;  7) &amp; 0x7f));</span>
+        }
+<span class="nc" id="L426">        this.write(value &amp; 0x7f);</span>
+
+<span class="nc" id="L428">        return this;</span>
+    }
+
+    public int readVInt() {
+<span class="nc" id="L432">        byte leading = this.read();</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">        E.checkArgument(leading != 0x80,</span>
+                        &quot;Unexpected varint with leading byte '0x%s'&quot;,
+<span class="nc" id="L435">                        Bytes.toHex(leading));</span>
+<span class="nc" id="L436">        int value = leading &amp; 0x7f;</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">        if (leading &gt;= 0) {</span>
+<span class="nc bnc" id="L438" title="All 2 branches missed.">            assert (leading &amp; 0x80) == 0;</span>
+<span class="nc" id="L439">            return value;</span>
+        }
+
+<span class="nc" id="L442">        int i = 1;</span>
+<span class="nc bnc" id="L443" title="All 2 branches missed.">        for (; i &lt; 5; i++) {</span>
+<span class="nc" id="L444">            byte b = this.read();</span>
+<span class="nc bnc" id="L445" title="All 2 branches missed.">            if (b &gt;= 0) {</span>
+<span class="nc" id="L446">                value = b | (value &lt;&lt; 7);</span>
+<span class="nc" id="L447">                break;</span>
+            } else {
+<span class="nc" id="L449">                value = (b &amp; 0x7f) | (value &lt;&lt; 7);</span>
+            }
+        }
+
+<span class="nc bnc" id="L453" title="All 2 branches missed.">        E.checkArgument(i &lt; 5,</span>
+                        &quot;Unexpected varint %s with too many bytes(%s)&quot;,
+<span class="nc" id="L455">                        value, i + 1);</span>
+<span class="nc bnc" id="L456" title="All 4 branches missed.">        E.checkArgument(i &lt; 4 || (leading &amp; 0x70) == 0,</span>
+                        &quot;Unexpected varint %s with leading byte '0x%s'&quot;,
+<span class="nc" id="L458">                        value, Bytes.toHex(leading));</span>
+<span class="nc" id="L459">        return value;</span>
+    }
+
+    public BytesBuffer writeVLong(long value) {
+<span class="nc bnc" id="L463" title="All 2 branches missed.">        if (value &lt; 0) {</span>
+<span class="nc" id="L464">            this.write((byte) 0x81);</span>
+        }
+<span class="nc bnc" id="L466" title="All 4 branches missed.">        if (value &gt; 0xffffffffffffffL || value &lt; 0L) {</span>
+<span class="nc" id="L467">            this.write(0x80 | ((int) (value &gt;&gt;&gt; 56) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L469" title="All 4 branches missed.">        if (value &gt; 0x1ffffffffffffL || value &lt; 0L) {</span>
+<span class="nc" id="L470">            this.write(0x80 | ((int) (value &gt;&gt;&gt; 49) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L472" title="All 4 branches missed.">        if (value &gt; 0x3ffffffffffL || value &lt; 0L) {</span>
+<span class="nc" id="L473">            this.write(0x80 | ((int) (value &gt;&gt;&gt; 42) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L475" title="All 4 branches missed.">        if (value &gt; 0x7ffffffffL || value &lt; 0L) {</span>
+<span class="nc" id="L476">            this.write(0x80 | ((int) (value &gt;&gt;&gt; 35) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L478" title="All 4 branches missed.">        if (value &gt; 0xfffffffL || value &lt; 0L) {</span>
+<span class="nc" id="L479">            this.write(0x80 | ((int) (value &gt;&gt;&gt; 28) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L481" title="All 4 branches missed.">        if (value &gt; 0x1fffffL || value &lt; 0L) {</span>
+<span class="nc" id="L482">            this.write(0x80 | ((int) (value &gt;&gt;&gt; 21) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L484" title="All 4 branches missed.">        if (value &gt; 0x3fffL || value &lt; 0L) {</span>
+<span class="nc" id="L485">            this.write(0x80 | ((int) (value &gt;&gt;&gt; 14) &amp; 0x7f));</span>
+        }
+<span class="nc bnc" id="L487" title="All 4 branches missed.">        if (value &gt; 0x7fL || value &lt; 0L) {</span>
+<span class="nc" id="L488">            this.write(0x80 | ((int) (value &gt;&gt;&gt;  7) &amp; 0x7f));</span>
+        }
+<span class="nc" id="L490">        this.write((int) value &amp; 0x7f);</span>
+
+<span class="nc" id="L492">        return this;</span>
+    }
+
+    public long readVLong() {
+<span class="nc" id="L496">        byte leading = this.read();</span>
+<span class="nc bnc" id="L497" title="All 2 branches missed.">        E.checkArgument(leading != 0x80,</span>
+                        &quot;Unexpected varlong with leading byte '0x%s'&quot;,
+<span class="nc" id="L499">                        Bytes.toHex(leading));</span>
+<span class="nc" id="L500">        long value = leading &amp; 0x7fL;</span>
+<span class="nc bnc" id="L501" title="All 2 branches missed.">        if (leading &gt;= 0) {</span>
+<span class="nc bnc" id="L502" title="All 2 branches missed.">            assert (leading &amp; 0x80) == 0;</span>
+<span class="nc" id="L503">            return value;</span>
+        }
+
+<span class="nc" id="L506">        int i = 1;</span>
+<span class="nc bnc" id="L507" title="All 2 branches missed.">        for (; i &lt; 10; i++) {</span>
+<span class="nc" id="L508">            byte b = this.read();</span>
+<span class="nc bnc" id="L509" title="All 2 branches missed.">            if (b &gt;= 0) {</span>
+<span class="nc" id="L510">                value = b | (value &lt;&lt; 7);</span>
+<span class="nc" id="L511">                break;</span>
+            } else {
+<span class="nc" id="L513">                value = (b &amp; 0x7f) | (value &lt;&lt; 7);</span>
+            }
+        }
+
+<span class="nc bnc" id="L517" title="All 2 branches missed.">        E.checkArgument(i &lt; 10,</span>
+                        &quot;Unexpected varlong %s with too many bytes(%s)&quot;,
+<span class="nc" id="L519">                        value, i + 1);</span>
+<span class="nc bnc" id="L520" title="All 4 branches missed.">        E.checkArgument(i &lt; 9 || (leading &amp; 0x7e) == 0,</span>
+                        &quot;Unexpected varlong %s with leading byte '0x%s'&quot;,
+<span class="nc" id="L522">                        value, Bytes.toHex(leading));</span>
+<span class="nc" id="L523">        return value;</span>
+    }
+
+    public BytesBuffer writeProperty(PropertyKey pkey, Object value) {
+<span class="nc bnc" id="L527" title="All 2 branches missed.">        if (pkey.cardinality() == Cardinality.SINGLE) {</span>
+<span class="nc" id="L528">            this.writeProperty(pkey.dataType(), value);</span>
+<span class="nc" id="L529">            return this;</span>
+        }
+
+<span class="nc bnc" id="L532" title="All 2 branches missed.">        assert pkey.cardinality() == Cardinality.LIST ||</span>
+<span class="nc bnc" id="L533" title="All 2 branches missed.">               pkey.cardinality() == Cardinality.SET;</span>
+<span class="nc" id="L534">        Collection&lt;?&gt; values = (Collection&lt;?&gt;) value;</span>
+<span class="nc" id="L535">        this.writeVInt(values.size());</span>
+<span class="nc bnc" id="L536" title="All 2 branches missed.">        for (Object o : values) {</span>
+<span class="nc" id="L537">            this.writeProperty(pkey.dataType(), o);</span>
+<span class="nc" id="L538">        }</span>
+<span class="nc" id="L539">        return this;</span>
+    }
+
+    public Object readProperty(PropertyKey pkey) {
+<span class="nc bnc" id="L543" title="All 2 branches missed.">        if (pkey.cardinality() == Cardinality.SINGLE) {</span>
+<span class="nc" id="L544">            return this.readProperty(pkey.dataType());</span>
+        }
+
+<span class="nc bnc" id="L547" title="All 2 branches missed.">        assert pkey.cardinality() == Cardinality.LIST ||</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">               pkey.cardinality() == Cardinality.SET;</span>
+<span class="nc" id="L549">        int size = this.readVInt();</span>
+<span class="nc" id="L550">        Collection&lt;Object&gt; values = pkey.newValue();</span>
+<span class="nc bnc" id="L551" title="All 2 branches missed.">        for (int i = 0; i &lt; size; i++) {</span>
+<span class="nc" id="L552">            values.add(this.readProperty(pkey.dataType()));</span>
+        }
+<span class="nc" id="L554">        return values;</span>
+    }
+
+    public void writeProperty(DataType dataType, Object value) {
+<span class="nc bnc" id="L558" title="All 11 branches missed.">        switch (dataType) {</span>
+            case BOOLEAN:
+<span class="nc bnc" id="L560" title="All 2 branches missed.">                this.writeVInt(((Boolean) value) ? 1 : 0);</span>
+<span class="nc" id="L561">                break;</span>
+            case BYTE:
+<span class="nc" id="L563">                this.writeVInt((Byte) value);</span>
+<span class="nc" id="L564">                break;</span>
+            case INT:
+<span class="nc" id="L566">                this.writeVInt((Integer) value);</span>
+<span class="nc" id="L567">                break;</span>
+            case FLOAT:
+<span class="nc" id="L569">                this.writeFloat((Float) value);</span>
+<span class="nc" id="L570">                break;</span>
+            case LONG:
+<span class="nc" id="L572">                this.writeVLong((Long) value);</span>
+<span class="nc" id="L573">                break;</span>
+            case DATE:
+<span class="nc" id="L575">                this.writeVLong(((Date) value).getTime());</span>
+<span class="nc" id="L576">                break;</span>
+            case DOUBLE:
+<span class="nc" id="L578">                this.writeDouble((Double) value);</span>
+<span class="nc" id="L579">                break;</span>
+            case TEXT:
+<span class="nc" id="L581">                this.writeString((String) value);</span>
+<span class="nc" id="L582">                break;</span>
+            case BLOB:
+<span class="nc bnc" id="L584" title="All 2 branches missed.">                byte[] bytes = value instanceof byte[] ?</span>
+<span class="nc" id="L585">                               (byte[]) value : ((Blob) value).bytes();</span>
+<span class="nc" id="L586">                this.writeBigBytes(bytes);</span>
+<span class="nc" id="L587">                break;</span>
+            case UUID:
+<span class="nc" id="L589">                UUID uuid = (UUID) value;</span>
+                // Generally writeVLong(uuid) can't save space
+<span class="nc" id="L591">                this.writeLong(uuid.getMostSignificantBits());</span>
+<span class="nc" id="L592">                this.writeLong(uuid.getLeastSignificantBits());</span>
+<span class="nc" id="L593">                break;</span>
+            default:
+<span class="nc" id="L595">                this.writeBytes(KryoUtil.toKryoWithType(value));</span>
+                break;
+        }
+<span class="nc" id="L598">    }</span>
+
+    public Object readProperty(DataType dataType) {
+<span class="nc bnc" id="L601" title="All 11 branches missed.">        switch (dataType) {</span>
+            case BOOLEAN:
+<span class="nc bnc" id="L603" title="All 2 branches missed.">                return this.readVInt() == 1;</span>
+            case BYTE:
+<span class="nc" id="L605">                return (byte) this.readVInt();</span>
+            case INT:
+<span class="nc" id="L607">                return this.readVInt();</span>
+            case FLOAT:
+<span class="nc" id="L609">                return this.readFloat();</span>
+            case LONG:
+<span class="nc" id="L611">                return this.readVLong();</span>
+            case DATE:
+<span class="nc" id="L613">                return new Date(this.readVLong());</span>
+            case DOUBLE:
+<span class="nc" id="L615">                return this.readDouble();</span>
+            case TEXT:
+<span class="nc" id="L617">                return this.readString();</span>
+            case BLOB:
+<span class="nc" id="L619">                return Blob.wrap(this.readBigBytes());</span>
+            case UUID:
+<span class="nc" id="L621">                return new UUID(this.readLong(), this.readLong());</span>
+            default:
+<span class="nc" id="L623">                return KryoUtil.fromKryoWithType(this.readBytes());</span>
+        }
+    }
+
+    public BytesBuffer writeId(Id id) {
+<span class="nc" id="L628">        return this.writeId(id, false);</span>
+    }
+
+    public BytesBuffer writeId(Id id, boolean big) {
+<span class="nc bnc" id="L632" title="All 4 branches missed.">        switch (id.type()) {</span>
+            case LONG:
+                // Number Id
+<span class="nc" id="L635">                long value = id.asLong();</span>
+<span class="nc" id="L636">                this.writeNumber(value);</span>
+<span class="nc" id="L637">                break;</span>
+            case UUID:
+                // UUID Id
+<span class="nc" id="L640">                byte[] bytes = id.asBytes();</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">                assert bytes.length == Id.UUID_LENGTH;</span>
+<span class="nc" id="L642">                this.writeUInt8(0x7f); // 0b01111111 means UUID</span>
+<span class="nc" id="L643">                this.write(bytes);</span>
+<span class="nc" id="L644">                break;</span>
+            case EDGE:
+                // Edge Id
+<span class="nc" id="L647">                this.writeUInt8(0x7e); // 0b01111110 means EdgeId</span>
+<span class="nc" id="L648">                this.writeEdgeId(id);</span>
+<span class="nc" id="L649">                break;</span>
+            default:
+                // String Id
+<span class="nc" id="L652">                bytes = id.asBytes();</span>
+<span class="nc" id="L653">                int len = bytes.length;</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">                E.checkArgument(len &gt; 0, &quot;Can't write empty id&quot;);</span>
+<span class="nc bnc" id="L655" title="All 2 branches missed.">                if (!big) {</span>
+<span class="nc bnc" id="L656" title="All 2 branches missed.">                    E.checkArgument(len &lt;= ID_LEN_MAX,</span>
+                                    &quot;Id max length is %s, but got %s {%s}&quot;,
+<span class="nc" id="L658">                                    ID_LEN_MAX, len, id);</span>
+<span class="nc" id="L659">                    len -= 1; // mapping [1, 128] to [0, 127]</span>
+<span class="nc" id="L660">                    this.writeUInt8(len | 0x80);</span>
+                } else {
+<span class="nc bnc" id="L662" title="All 2 branches missed.">                    E.checkArgument(len &lt;= BIG_ID_LEN_MAX,</span>
+                                    &quot;Big id max length is %s, but got %s {%s}&quot;,
+<span class="nc" id="L664">                                    BIG_ID_LEN_MAX, len, id);</span>
+<span class="nc" id="L665">                    len -= 1;</span>
+<span class="nc" id="L666">                    int high = len &gt;&gt; 8;</span>
+<span class="nc" id="L667">                    int low = len &amp; 0xff;</span>
+<span class="nc" id="L668">                    this.writeUInt8(high | 0x80);</span>
+<span class="nc" id="L669">                    this.writeUInt8(low);</span>
+                }
+<span class="nc" id="L671">                this.write(bytes);</span>
+                break;
+        }
+<span class="nc" id="L674">        return this;</span>
+    }
+
+    public Id readId() {
+<span class="nc" id="L678">        return this.readId(false);</span>
+    }
+
+    public Id readId(boolean big) {
+<span class="nc" id="L682">        byte b = this.read();</span>
+<span class="nc bnc" id="L683" title="All 2 branches missed.">        boolean number = (b &amp; 0x80) == 0;</span>
+<span class="nc bnc" id="L684" title="All 2 branches missed.">        if (number) {</span>
+<span class="nc bnc" id="L685" title="All 2 branches missed.">            if (b == 0x7f) {</span>
+                // UUID Id
+<span class="nc" id="L687">                return IdGenerator.of(this.read(Id.UUID_LENGTH), IdType.UUID);</span>
+<span class="nc bnc" id="L688" title="All 2 branches missed.">            } else if (b == 0x7e) {</span>
+                // Edge Id
+<span class="nc" id="L690">                return this.readEdgeId();</span>
+            } else {
+                // Number Id
+<span class="nc" id="L693">                return IdGenerator.of(this.readNumber(b));</span>
+            }
+        } else {
+            // String Id
+<span class="nc" id="L697">            int len = b &amp; ID_LEN_MASK;</span>
+<span class="nc bnc" id="L698" title="All 2 branches missed.">            if (big) {</span>
+<span class="nc" id="L699">                int high = len &lt;&lt; 8;</span>
+<span class="nc" id="L700">                int low = this.readUInt8();</span>
+<span class="nc" id="L701">                len = high + low;</span>
+            }
+<span class="nc" id="L703">            len += 1; // restore [0, 127] to [1, 128]</span>
+<span class="nc" id="L704">            byte[] id = this.read(len);</span>
+<span class="nc" id="L705">            return IdGenerator.of(id, IdType.STRING);</span>
+        }
+    }
+
+    public BytesBuffer writeEdgeId(Id id) {
+        // owner-vertex + dir + edge-label + sort-values + other-vertex
+<span class="nc" id="L711">        EdgeId edge = (EdgeId) id;</span>
+<span class="nc" id="L712">        this.writeId(edge.ownerVertexId());</span>
+<span class="nc" id="L713">        this.write(edge.directionCode());</span>
+<span class="nc" id="L714">        this.writeId(edge.edgeLabelId());</span>
+<span class="nc" id="L715">        this.writeStringWithEnding(edge.sortValues());</span>
+<span class="nc" id="L716">        this.writeId(edge.otherVertexId());</span>
+<span class="nc" id="L717">        return this;</span>
+    }
+
+    public Id readEdgeId() {
+<span class="nc" id="L721">        return new EdgeId(this.readId(), EdgeId.directionFromCode(this.read()),</span>
+<span class="nc" id="L722">                          this.readId(), this.readStringWithEnding(),</span>
+<span class="nc" id="L723">                          this.readId());</span>
+    }
+
+    public BytesBuffer writeIndexId(Id id, HugeType type) {
+<span class="nc" id="L727">        return this.writeIndexId(id, type, true);</span>
+    }
+
+    public BytesBuffer writeIndexId(Id id, HugeType type, boolean withEnding) {
+<span class="nc" id="L731">        byte[] bytes = id.asBytes();</span>
+<span class="nc" id="L732">        int len = bytes.length;</span>
+<span class="nc bnc" id="L733" title="All 2 branches missed.">        E.checkArgument(len &gt; 0, &quot;Can't write empty id&quot;);</span>
+
+<span class="nc" id="L735">        this.write(bytes);</span>
+<span class="nc bnc" id="L736" title="All 2 branches missed.">        if (type.isStringIndex()) {</span>
+<span class="nc bnc" id="L737" title="All 2 branches missed.">            if (Bytes.contains(bytes, STRING_ENDING_BYTE)) {</span>
+                // Not allow STRING_ENDING_BYTE exist in string index id
+<span class="nc" id="L739">                E.checkArgument(false,</span>
+                                &quot;The %s type index id can't contains &quot; +
+                                &quot;byte '0x%s', but got: 0x%s&quot;, type,
+<span class="nc" id="L742">                                Bytes.toHex(STRING_ENDING_BYTE),</span>
+<span class="nc" id="L743">                                Bytes.toHex(bytes));</span>
+            }
+<span class="nc bnc" id="L745" title="All 2 branches missed.">            if (withEnding) {</span>
+<span class="nc" id="L746">                this.writeStringWithEnding(&quot;&quot;);</span>
+            }
+        }
+<span class="nc" id="L749">        return this;</span>
+    }
+
+    public BinaryId readIndexId(HugeType type) {
+        byte[] id;
+<span class="nc bnc" id="L754" title="All 2 branches missed.">        if (type.isRange4Index()) {</span>
+            // IndexLabel 4 bytes + fieldValue 4 bytes
+<span class="nc" id="L756">            id = this.read(8);</span>
+<span class="nc bnc" id="L757" title="All 2 branches missed.">        } else if (type.isRange8Index()) {</span>
+            // IndexLabel 4 bytes + fieldValue 8 bytes
+<span class="nc" id="L759">            id = this.read(12);</span>
+        } else {
+<span class="nc bnc" id="L761" title="All 2 branches missed.">            assert type.isStringIndex();</span>
+<span class="nc" id="L762">            id = this.readBytesWithEnding();</span>
+        }
+<span class="nc" id="L764">        return new BinaryId(id, IdGenerator.of(id, IdType.STRING));</span>
+    }
+
+    public BinaryId asId() {
+<span class="nc" id="L768">        return new BinaryId(this.bytes(), null);</span>
+    }
+
+    public BinaryId parseId(HugeType type, boolean enablePartition) {
+<span class="nc bnc" id="L772" title="All 2 branches missed.">        if (type.isIndex()) {</span>
+<span class="nc" id="L773">            return this.readIndexId(type);</span>
+        }
+        // Parse id from bytes
+<span class="nc bnc" id="L776" title="All 6 branches missed.">        if ((type.isVertex() || type.isEdge()) &amp;&amp; enablePartition) {</span>
+<span class="nc" id="L777">            this.readShort();</span>
+        }
+<span class="nc" id="L779">        int start = this.buffer.position();</span>
+        /*
+         * Since edge id in edges table doesn't prefix with leading 0x7e,
+         * so readId() will return the source vertex id instead of edge id,
+         * can't call: type.isEdge() ? this.readEdgeId() : this.readId();
+         */
+<span class="nc" id="L785">        Id id = this.readId();</span>
+<span class="nc" id="L786">        int end = this.buffer.position();</span>
+<span class="nc" id="L787">        int len = end - start;</span>
+<span class="nc" id="L788">        byte[] bytes = new byte[len];</span>
+<span class="nc" id="L789">        System.arraycopy(this.array(), start, bytes, 0, len);</span>
+<span class="nc" id="L790">        return new BinaryId(bytes, id);</span>
+    }
+
+    private void writeNumber(long val) {
+        /*
+         * 8 kinds of number, 2 ~ 9 bytes number:
+         * 0b 0kkksxxx X...
+         * 0(1 bit) + kind(3 bits) + signed(1 bit) + number(n bits)
+         *
+         * 2 byte : 0b 0000 1xxx X(8 bits)                  [0, 2047]
+         *          0b 0000 0xxx X(8 bits)                  [-2048, -1]
+         * 3 bytes: 0b 0001 1xxx X X                        [0, 524287]
+         *          0b 0001 0xxx X X                        [-524288, -1]
+         * 4 bytes: 0b 0010 1xxx X X X                      [0, 134217727]
+         *          0b 0010 0xxx X X X                      [-134217728, -1]
+         * 5 bytes: 0b 0011 1xxx X X X X                    [0, 2^35 - 1]
+         *          0b 0011 0xxx X X X X                    [-2^35, -1]
+         * 6 bytes: 0b 0100 1xxx X X X X X                  [0, 2^43 - 1]
+         *          0b 0100 0xxx X X X X X                  [-2^43, -1]
+         * 7 bytes: 0b 0101 1xxx X X X X X X                [0, 2^51 - 1]
+         *          0b 0101 0xxx X X X X X X                [-2^51, -1]
+         * 8 bytes: 0b 0110 1xxx X X X X X X X              [0, 2^59 - 1]
+         *          0b 0110 0xxx X X X X X X X              [-2^59, -1]
+         * 9 bytes: 0b 0111 1000 X X X X X X X X            [0, 2^64 - 1]
+         *          0b 0111 0000 X X X X X X X X            [-2^64, -1]
+         *
+         * NOTE:    0b 0111 1111 is used by 128 bits UUID
+         *          0b 0111 1110 is used by EdgeId
+         */
+<span class="nc bnc" id="L819" title="All 2 branches missed.">        int positive = val &gt;= 0 ? 0x08 : 0x00;</span>
+<span class="nc bnc" id="L820" title="All 4 branches missed.">        if (~0x7ffL &lt;= val &amp;&amp; val &lt;= 0x7ffL) {</span>
+<span class="nc" id="L821">            int high3bits = (int) (val &gt;&gt; 8) &amp; 0x07;</span>
+<span class="nc" id="L822">            this.writeUInt8(0x00 | positive | high3bits);</span>
+<span class="nc" id="L823">            this.writeUInt8((byte) val);</span>
+<span class="nc bnc" id="L824" title="All 4 branches missed.">        } else if (~0x7ffffL &lt;= val &amp;&amp; val &lt;= 0x7ffffL) {</span>
+<span class="nc" id="L825">            int high3bits = (int) (val &gt;&gt; 16) &amp; 0x07;</span>
+<span class="nc" id="L826">            this.writeUInt8(0x10 | positive | high3bits);</span>
+<span class="nc" id="L827">            this.writeShort((short) val);</span>
+<span class="nc bnc" id="L828" title="All 4 branches missed.">        } else if (~0x7ffffffL &lt;= val &amp;&amp; val &lt;= 0x7ffffffL) {</span>
+<span class="nc" id="L829">            int high3bits = (int) (val &gt;&gt; 24 &amp; 0x07);</span>
+<span class="nc" id="L830">            this.writeUInt8(0x20 | positive | high3bits);</span>
+<span class="nc" id="L831">            this.write((byte) (val &gt;&gt; 16));</span>
+<span class="nc" id="L832">            this.writeShort((short) val);</span>
+<span class="nc bnc" id="L833" title="All 4 branches missed.">        } else if (~0x7ffffffffL &lt;= val &amp;&amp; val &lt;= 0x7ffffffffL) {</span>
+<span class="nc" id="L834">            int high3bits = (int) (val &gt;&gt; 32) &amp; 0x07;</span>
+<span class="nc" id="L835">            this.writeUInt8(0x30 | positive | high3bits);</span>
+<span class="nc" id="L836">            this.writeInt((int) val);</span>
+<span class="nc bnc" id="L837" title="All 4 branches missed.">        } else if (~0x7ffffffffffL &lt;= val &amp;&amp; val &lt;= 0x7ffffffffffL) {</span>
+<span class="nc" id="L838">            int high3bits = (int) (val &gt;&gt; 40) &amp; 0x07;</span>
+<span class="nc" id="L839">            this.writeUInt8(0x40 | positive | high3bits);</span>
+<span class="nc" id="L840">            this.write((byte) (val &gt;&gt; 32));</span>
+<span class="nc" id="L841">            this.writeInt((int) val);</span>
+<span class="nc bnc" id="L842" title="All 4 branches missed.">        } else if (~0x7ffffffffffffL &lt;= val &amp;&amp; val &lt;= 0x7ffffffffffffL) {</span>
+<span class="nc" id="L843">            int high3bits = (int) (val &gt;&gt; 48) &amp; 0x07;</span>
+<span class="nc" id="L844">            this.writeUInt8(0x50 | positive | high3bits);</span>
+<span class="nc" id="L845">            this.writeShort((short) (val &gt;&gt; 32));</span>
+<span class="nc" id="L846">            this.writeInt((int) val);</span>
+<span class="nc bnc" id="L847" title="All 4 branches missed.">        } else if (~0x7ffffffffffffffL &lt;= val &amp;&amp; val &lt;= 0x7ffffffffffffffL) {</span>
+<span class="nc" id="L848">            int high3bits = (int) (val &gt;&gt; 56) &amp; 0x07;</span>
+<span class="nc" id="L849">            this.writeUInt8(0x60 | positive | high3bits);</span>
+<span class="nc" id="L850">            this.write((byte) (val &gt;&gt; 48));</span>
+<span class="nc" id="L851">            this.writeShort((short) (val &gt;&gt; 32));</span>
+<span class="nc" id="L852">            this.writeInt((int) val);</span>
+<span class="nc" id="L853">        } else {</span>
+            // high3bits is always 0b000 for 9 bytes number
+<span class="nc" id="L855">            this.writeUInt8(0x70 | positive);</span>
+<span class="nc" id="L856">            this.writeLong(val);</span>
+        }
+<span class="nc" id="L858">    }</span>
+
+    private long readNumber(byte b) {
+<span class="nc bnc" id="L861" title="All 2 branches missed.">        E.checkArgument((b &amp; 0x80) == 0,</span>
+                        &quot;Not a number type with prefix byte '0x%s'&quot;,
+<span class="nc" id="L863">                        Bytes.toHex(b));</span>
+        // Parse the kind from byte 0kkksxxx
+<span class="nc" id="L865">        int kind = b &gt;&gt;&gt; 4;</span>
+<span class="nc bnc" id="L866" title="All 2 branches missed.">        boolean positive = (b &amp; 0x08) &gt; 0;</span>
+<span class="nc" id="L867">        long high3bits = b &amp; 0x07;</span>
+<span class="nc" id="L868">        long value = high3bits &lt;&lt; ((kind + 1) * 8);</span>
+<span class="nc bnc" id="L869" title="All 9 branches missed.">        switch (kind) {</span>
+            case 0:
+<span class="nc" id="L871">                value |= this.readUInt8();</span>
+<span class="nc" id="L872">                break;</span>
+            case 1:
+<span class="nc" id="L874">                value |= this.readUInt16();</span>
+<span class="nc" id="L875">                break;</span>
+            case 2:
+<span class="nc" id="L877">                value |= this.readUInt8() &lt;&lt; 16 | this.readUInt16();</span>
+<span class="nc" id="L878">                break;</span>
+            case 3:
+<span class="nc" id="L880">                value |= this.readUInt32();</span>
+<span class="nc" id="L881">                break;</span>
+            case 4:
+<span class="nc" id="L883">                value |= (long) this.readUInt8() &lt;&lt; 32 | this.readUInt32();</span>
+<span class="nc" id="L884">                break;</span>
+            case 5:
+<span class="nc" id="L886">                value |= (long) this.readUInt16() &lt;&lt; 32 | this.readUInt32();</span>
+<span class="nc" id="L887">                break;</span>
+            case 6:
+<span class="nc" id="L889">                value |= (long) this.readUInt8() &lt;&lt; 48 |</span>
+<span class="nc" id="L890">                         (long) this.readUInt16() &lt;&lt; 32 |</span>
+<span class="nc" id="L891">                         this.readUInt32();</span>
+<span class="nc" id="L892">                break;</span>
+            case 7:
+<span class="nc bnc" id="L894" title="All 2 branches missed.">                assert high3bits == 0L;</span>
+<span class="nc" id="L895">                value |= this.readLong();</span>
+<span class="nc" id="L896">                break;</span>
+            default:
+<span class="nc" id="L898">                throw new AssertionError(&quot;Invalid length of number: &quot; + kind);</span>
+        }
+<span class="nc bnc" id="L900" title="All 4 branches missed.">        if (!positive &amp;&amp; kind &lt; 7) {</span>
+            // Restore the bits of the original negative number
+<span class="nc" id="L902">            long mask = Long.MIN_VALUE &gt;&gt; (52 - kind * 8);</span>
+<span class="nc" id="L903">            value |= mask;</span>
+        }
+<span class="nc" id="L905">        return value;</span>
+    }
+
+    private byte[] readBytesWithEnding() {
+<span class="nc" id="L909">        int start = this.buffer.position();</span>
+<span class="nc" id="L910">        boolean foundEnding = false;</span>
+<span class="nc" id="L911">        int remaining = this.remaining();</span>
+<span class="nc bnc" id="L912" title="All 2 branches missed.">        for (int i = 0; i &lt; remaining; i++) {</span>
+<span class="nc" id="L913">            byte current = this.read();</span>
+<span class="nc bnc" id="L914" title="All 2 branches missed.">            if (current == STRING_ENDING_BYTE) {</span>
+<span class="nc" id="L915">                foundEnding = true;</span>
+<span class="nc" id="L916">                break;</span>
+            }
+        }
+<span class="nc" id="L919">        E.checkArgument(foundEnding, &quot;Not found ending '0x%s'&quot;,</span>
+<span class="nc" id="L920">                        Bytes.toHex(STRING_ENDING_BYTE));</span>
+<span class="nc" id="L921">        int end = this.buffer.position() - 1;</span>
+<span class="nc" id="L922">        int len = end - start;</span>
+<span class="nc bnc" id="L923" title="All 2 branches missed.">        if (len &lt;= 0) {</span>
+<span class="nc" id="L924">            return BYTES_EMPTY;</span>
+        }
+<span class="nc" id="L926">        byte[] bytes = new byte[len];</span>
+<span class="nc" id="L927">        System.arraycopy(this.array(), start, bytes, 0, len);</span>
+<span class="nc" id="L928">        return bytes;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

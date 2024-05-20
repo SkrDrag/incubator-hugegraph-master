@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RingsDetectAlgorithm.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.path</a> &gt; <span class="el_source">RingsDetectAlgorithm.java</span></div><h1>RingsDetectAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.path;
+
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.job.algorithm.AbstractAlgorithm;
+import org.apache.hugegraph.job.algorithm.Consumers.StopExecution;
+import org.apache.hugegraph.traversal.algorithm.SubGraphTraverser;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.ParameterUtil;
+
+<span class="nc" id="L32">public class RingsDetectAlgorithm extends AbstractAlgorithm {</span>
+
+    public static final String ALGO_NAME = &quot;rings&quot;;
+
+    public static final String KEY_COUNT_ONLY = &quot;count_only&quot;;
+
+    @Override
+    public String category() {
+<span class="nc" id="L40">        return CATEGORY_PATH;</span>
+    }
+
+    @Override
+    public String name() {
+<span class="nc" id="L45">        return ALGO_NAME;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L50">        depth(parameters);</span>
+<span class="nc" id="L51">        degree(parameters);</span>
+<span class="nc" id="L52">        eachLimit(parameters);</span>
+<span class="nc" id="L53">        limit(parameters);</span>
+<span class="nc" id="L54">        sourceLabel(parameters);</span>
+<span class="nc" id="L55">        sourceCLabel(parameters);</span>
+<span class="nc" id="L56">        direction(parameters);</span>
+<span class="nc" id="L57">        edgeLabel(parameters);</span>
+<span class="nc" id="L58">        countOnly(parameters);</span>
+<span class="nc" id="L59">        workers(parameters);</span>
+<span class="nc" id="L60">    }</span>
+
+    @Override
+    public Object call(UserJob&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L64">        int workers = workers(parameters);</span>
+<span class="nc" id="L65">        try (Traverser traverser = new Traverser(job, workers)) {</span>
+<span class="nc" id="L66">            return traverser.rings(sourceLabel(parameters),</span>
+<span class="nc" id="L67">                                   sourceCLabel(parameters),</span>
+<span class="nc" id="L68">                                   direction(parameters),</span>
+<span class="nc" id="L69">                                   edgeLabel(parameters),</span>
+<span class="nc" id="L70">                                   depth(parameters),</span>
+<span class="nc" id="L71">                                   degree(parameters),</span>
+<span class="nc" id="L72">                                   eachLimit(parameters),</span>
+<span class="nc" id="L73">                                   limit(parameters),</span>
+<span class="nc" id="L74">                                   countOnly(parameters));</span>
+        }
+    }
+
+    protected boolean countOnly(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_COUNT_ONLY)) {</span>
+<span class="nc" id="L80">            return false;</span>
+        }
+<span class="nc" id="L82">        return ParameterUtil.parameterBoolean(parameters, KEY_COUNT_ONLY);</span>
+    }
+
+<span class="nc" id="L85">    private static class Traverser extends AlgoTraverser {</span>
+
+        public Traverser(UserJob&lt;Object&gt; job, int workers) {
+<span class="nc" id="L88">            super(job, ALGO_NAME, workers);</span>
+<span class="nc" id="L89">        }</span>
+
+        public Object rings(String sourceLabel, String sourceCLabel,
+                            Directions dir, String label, int depth,
+                            long degree, long eachLimit, long limit,
+                            boolean countOnly) {
+<span class="nc" id="L95">            JsonMap ringsJson = new JsonMap();</span>
+<span class="nc" id="L96">            ringsJson.startObject();</span>
+<span class="nc bnc" id="L97" title="All 2 branches missed.">            if (countOnly) {</span>
+<span class="nc" id="L98">                ringsJson.appendKey(&quot;rings_count&quot;);</span>
+            } else {
+<span class="nc" id="L100">                ringsJson.appendKey(&quot;rings&quot;);</span>
+<span class="nc" id="L101">                ringsJson.startList();</span>
+            }
+
+<span class="nc" id="L104">            SubGraphTraverser traverser = new SubGraphTraverser(this.graph());</span>
+<span class="nc" id="L105">            AtomicLong count = new AtomicLong(0L);</span>
+
+<span class="nc" id="L107">            this.traverse(sourceLabel, sourceCLabel, v -&gt; {</span>
+<span class="nc" id="L108">                Id source = (Id) v.id();</span>
+<span class="nc" id="L109">                PathSet rings = traverser.rings(source, dir, label, depth,</span>
+                                                true, degree, MAX_CAPACITY,
+                                                eachLimit);
+<span class="nc bnc" id="L112" title="All 4 branches missed.">                assert eachLimit == NO_LIMIT || rings.size() &lt;= eachLimit;</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">                for (Path ring : rings) {</span>
+<span class="nc bnc" id="L114" title="All 4 branches missed.">                    if (eachLimit == NO_LIMIT &amp;&amp; !ring.ownedBy(source)) {</span>
+                        // Only dedup rings when each_limit!=NO_LIMIT
+<span class="nc" id="L116">                        continue;</span>
+                    }
+
+<span class="nc bnc" id="L119" title="All 4 branches missed.">                    if (count.incrementAndGet() &gt; limit &amp;&amp; limit != NO_LIMIT) {</span>
+<span class="nc" id="L120">                        throw new StopExecution(&quot;exceed limit %s&quot;, limit);</span>
+                    }
+<span class="nc bnc" id="L122" title="All 2 branches missed.">                    if (!countOnly) {</span>
+<span class="nc" id="L123">                        String ringJson = JsonUtil.toJson(ring.vertices());</span>
+<span class="nc" id="L124">                        synchronized (ringsJson) {</span>
+<span class="nc" id="L125">                            ringsJson.appendRaw(ringJson);</span>
+<span class="nc" id="L126">                        }</span>
+                    }
+<span class="nc" id="L128">                }</span>
+<span class="nc" id="L129">            });</span>
+
+<span class="nc bnc" id="L131" title="All 2 branches missed.">            if (countOnly) {</span>
+<span class="nc" id="L132">                long counted = count.get();</span>
+<span class="nc bnc" id="L133" title="All 4 branches missed.">                if (limit != NO_LIMIT &amp;&amp; counted &gt; limit) {</span>
+                    // The count increased by multi threads and exceed limit
+<span class="nc" id="L135">                    counted = limit;</span>
+                }
+<span class="nc" id="L137">                ringsJson.append(counted);</span>
+<span class="nc" id="L138">            } else {</span>
+<span class="nc" id="L139">                ringsJson.endList();</span>
+            }
+<span class="nc" id="L141">            ringsJson.endObject();</span>
+
+<span class="nc" id="L143">            return ringsJson.asJson();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

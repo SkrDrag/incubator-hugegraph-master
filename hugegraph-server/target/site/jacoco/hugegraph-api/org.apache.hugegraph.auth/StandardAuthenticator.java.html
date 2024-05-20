@@ -1,0 +1,292 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StandardAuthenticator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">StandardAuthenticator.java</span></div><h1>StandardAuthenticator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.io.Console;
+import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Scanner;
+
+import org.apache.commons.lang.StringUtils;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.masterelection.RoleElectionOptions;
+import org.apache.hugegraph.rpc.RpcClientProviderWithAuth;
+import org.apache.hugegraph.util.ConfigUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.StringEncoding;
+import org.apache.tinkerpop.gremlin.server.auth.AuthenticatedUser;
+import org.apache.tinkerpop.gremlin.server.auth.AuthenticationException;
+import org.apache.tinkerpop.gremlin.structure.util.GraphFactory;
+
+<span class="nc" id="L42">public class StandardAuthenticator implements HugeAuthenticator {</span>
+
+    private static final String INITING_STORE = &quot;initing_store&quot;;
+
+<span class="nc" id="L46">    private HugeGraph graph = null;</span>
+
+    private void initAdminUser() throws Exception {
+<span class="nc bnc" id="L49" title="All 2 branches missed.">        if (this.requireInitAdminUser()) {</span>
+<span class="nc" id="L50">            this.initAdminUser(this.inputPassword());</span>
+        }
+<span class="nc" id="L52">        this.graph.close();</span>
+<span class="nc" id="L53">    }</span>
+
+    @Override
+    public HugeGraph graph() {
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        E.checkState(this.graph != null, &quot;Must setup Authenticator first&quot;);</span>
+<span class="nc" id="L58">        return this.graph;</span>
+    }
+
+    @Override
+    public void initAdminUser(String password) {
+        // Not allowed to call by non-main thread
+<span class="nc" id="L64">        String caller = Thread.currentThread().getName();</span>
+<span class="nc" id="L65">        E.checkState(&quot;main&quot;.equals(caller), &quot;Invalid caller '%s'&quot;, caller);</span>
+
+<span class="nc" id="L67">        AuthManager authManager = this.graph().hugegraph().authManager();</span>
+        // Only init user when local mode and user has not been initialized
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (this.requireInitAdminUser()) {</span>
+<span class="nc" id="L70">            HugeUser admin = new HugeUser(HugeAuthenticator.USER_ADMIN);</span>
+<span class="nc" id="L71">            admin.password(StringEncoding.hashPassword(password));</span>
+<span class="nc" id="L72">            admin.creator(HugeAuthenticator.USER_SYSTEM);</span>
+<span class="nc" id="L73">            authManager.createUser(admin);</span>
+        }
+<span class="nc" id="L75">    }</span>
+
+    private boolean requireInitAdminUser() {
+<span class="nc" id="L78">        AuthManager authManager = this.graph().hugegraph().authManager();</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        return StandardAuthManager.isLocal(authManager) &amp;&amp;</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">               authManager.findUser(HugeAuthenticator.USER_ADMIN) == null;</span>
+    }
+
+    private String inputPassword() {
+<span class="nc" id="L84">        String inputPrompt = &quot;Please input the admin password:&quot;;</span>
+<span class="nc" id="L85">        String notEmptyPrompt = &quot;The admin password can't be empty&quot;;</span>
+<span class="nc" id="L86">        Console console = System.console();</span>
+        while (true) {
+            String password;
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            if (console != null) {</span>
+<span class="nc" id="L90">                char[] chars = console.readPassword(inputPrompt);</span>
+<span class="nc" id="L91">                password = new String(chars);</span>
+<span class="nc" id="L92">            } else {</span>
+                // CHECKSTYLE:OFF
+<span class="nc" id="L94">                System.out.println(inputPrompt);</span>
+                // CHECKSTYLE:ON
+                // just wrapper of System.in
+<span class="nc" id="L97">                Scanner scanner = new Scanner(System.in);</span>
+<span class="nc" id="L98">                password = scanner.nextLine();</span>
+            }
+<span class="nc bnc" id="L100" title="All 2 branches missed.">            if (!password.isEmpty()) {</span>
+<span class="nc" id="L101">                return password;</span>
+            }
+            // CHECKSTYLE:OFF
+<span class="nc" id="L104">            System.out.println(notEmptyPrompt);</span>
+            // CHECKSTYLE:ON
+<span class="nc" id="L106">        }</span>
+    }
+
+    @Override
+    public void setup(HugeConfig config) {
+<span class="nc" id="L111">        String graphName = config.get(ServerOptions.AUTH_GRAPH_STORE);</span>
+<span class="nc" id="L112">        Map&lt;String, String&gt; graphConfs = ConfigUtil.scanGraphsDir(</span>
+<span class="nc" id="L113">                                         config.get(ServerOptions.GRAPHS));</span>
+<span class="nc" id="L114">        String graphPath = graphConfs.get(graphName);</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        E.checkArgument(graphPath != null,</span>
+                        &quot;Can't find graph name '%s' in config '%s' at &quot; +
+                        &quot;'rest-server.properties' to store auth information, &quot; +
+                        &quot;please ensure the value of '%s' matches it correctly&quot;,
+                        graphName, ServerOptions.GRAPHS,
+<span class="nc" id="L120">                        ServerOptions.AUTH_GRAPH_STORE.name());</span>
+
+<span class="nc" id="L122">        HugeConfig graphConfig = new HugeConfig(graphPath);</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (config.getProperty(INITING_STORE) != null &amp;&amp;</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            config.getBoolean(INITING_STORE)) {</span>
+            // Forced set RAFT_MODE to false when initializing backend
+<span class="nc" id="L126">            graphConfig.setProperty(CoreOptions.RAFT_MODE.name(), &quot;false&quot;);</span>
+        }
+
+        // Transfer `raft.group_peers` from server config to graph config
+<span class="nc" id="L130">        String raftGroupPeers = config.get(ServerOptions.RAFT_GROUP_PEERS);</span>
+<span class="nc" id="L131">        graphConfig.addProperty(ServerOptions.RAFT_GROUP_PEERS.name(),</span>
+                                raftGroupPeers);
+<span class="nc" id="L133">        this.transferRoleWorkerConfig(graphConfig, config);</span>
+
+<span class="nc" id="L135">        this.graph = (HugeGraph) GraphFactory.open(graphConfig);</span>
+
+<span class="nc" id="L137">        String remoteUrl = config.get(ServerOptions.AUTH_REMOTE_URL);</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(remoteUrl)) {</span>
+<span class="nc" id="L139">            RpcClientProviderWithAuth clientProvider =</span>
+                                      new RpcClientProviderWithAuth(config);
+<span class="nc" id="L141">            this.graph.switchAuthManager(clientProvider.authManager());</span>
+        }
+<span class="nc" id="L143">    }</span>
+
+    private void transferRoleWorkerConfig(HugeConfig graphConfig, HugeConfig config) {
+<span class="nc" id="L146">        graphConfig.addProperty(RoleElectionOptions.NODE_EXTERNAL_URL.name(),</span>
+<span class="nc" id="L147">                                config.get(ServerOptions.REST_SERVER_URL));</span>
+<span class="nc" id="L148">        graphConfig.addProperty(RoleElectionOptions.BASE_TIMEOUT_MILLISECOND.name(),</span>
+<span class="nc" id="L149">                                config.get(RoleElectionOptions.BASE_TIMEOUT_MILLISECOND));</span>
+<span class="nc" id="L150">        graphConfig.addProperty(RoleElectionOptions.EXCEEDS_FAIL_COUNT.name(),</span>
+<span class="nc" id="L151">                                config.get(RoleElectionOptions.EXCEEDS_FAIL_COUNT));</span>
+<span class="nc" id="L152">        graphConfig.addProperty(RoleElectionOptions.RANDOM_TIMEOUT_MILLISECOND.name(),</span>
+<span class="nc" id="L153">                                config.get(RoleElectionOptions.RANDOM_TIMEOUT_MILLISECOND));</span>
+<span class="nc" id="L154">        graphConfig.addProperty(RoleElectionOptions.HEARTBEAT_INTERVAL_SECOND.name(),</span>
+<span class="nc" id="L155">                                config.get(RoleElectionOptions.HEARTBEAT_INTERVAL_SECOND));</span>
+<span class="nc" id="L156">        graphConfig.addProperty(RoleElectionOptions.MASTER_DEAD_TIMES.name(),</span>
+<span class="nc" id="L157">                                config.get(RoleElectionOptions.MASTER_DEAD_TIMES));</span>
+<span class="nc" id="L158">    }</span>
+
+    /**
+     * Verify if a user is legal
+     * @param username the username for authentication
+     * @param password the password for authentication
+     * @param token the token for authentication
+     * @return String No permission if return ROLE_NONE else return a role
+     */
+    @Override
+    public UserWithRole authenticate(String username, String password,
+                                     String token) {
+        UserWithRole userWithRole;
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        if (StringUtils.isNotEmpty(token)) {</span>
+<span class="nc" id="L172">            userWithRole = this.authManager().validateUser(token);</span>
+        } else {
+<span class="nc" id="L174">            E.checkArgumentNotNull(username,</span>
+                                   &quot;The username parameter can't be null&quot;);
+<span class="nc" id="L176">            E.checkArgumentNotNull(password,</span>
+                                   &quot;The password parameter can't be null&quot;);
+<span class="nc" id="L178">            userWithRole = this.authManager().validateUser(username, password);</span>
+        }
+
+<span class="nc" id="L181">        RolePermission role = userWithRole.role();</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        if (role == null) {</span>
+<span class="nc" id="L183">            role = ROLE_NONE;</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        } else if (USER_ADMIN.equals(userWithRole.username())) {</span>
+<span class="nc" id="L185">            role = ROLE_ADMIN;</span>
+        } else {
+<span class="nc" id="L187">            return userWithRole;</span>
+        }
+
+<span class="nc" id="L190">        return new UserWithRole(userWithRole.userId(),</span>
+<span class="nc" id="L191">                                userWithRole.username(), role);</span>
+    }
+
+    @Override
+    public AuthManager authManager() {
+<span class="nc" id="L196">        return this.graph().authManager();</span>
+    }
+
+    @Override
+    public SaslNegotiator newSaslNegotiator(InetAddress remoteAddress) {
+<span class="nc" id="L201">        return new TokenSaslAuthenticator();</span>
+    }
+
+    public static void initAdminUserIfNeeded(String confFile) throws Exception {
+<span class="nc" id="L205">        StandardAuthenticator auth = new StandardAuthenticator();</span>
+<span class="nc" id="L206">        HugeConfig config = new HugeConfig(confFile);</span>
+<span class="nc" id="L207">        String authClass = config.get(ServerOptions.AUTHENTICATOR);</span>
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        if (authClass.isEmpty()) {</span>
+<span class="nc" id="L209">            return;</span>
+        }
+<span class="nc" id="L211">        config.addProperty(INITING_STORE, true);</span>
+<span class="nc" id="L212">        auth.setup(config);</span>
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (auth.graph().backendStoreFeatures().supportsPersistence()) {</span>
+<span class="nc" id="L214">            auth.initAdminUser();</span>
+        }
+<span class="nc" id="L216">    }</span>
+
+<span class="nc" id="L218">    private class TokenSaslAuthenticator implements SaslNegotiator {</span>
+
+        private static final byte NUL = 0;
+        private String username;
+        private String password;
+        private String token;
+
+        @Override
+        public byte[] evaluateResponse(final byte[] clientResponse) throws AuthenticationException {
+<span class="nc" id="L227">            decode(clientResponse);</span>
+<span class="nc" id="L228">            return null;</span>
+        }
+
+        @Override
+        public boolean isComplete() {
+<span class="nc bnc" id="L233" title="All 2 branches missed.">            return this.username != null;</span>
+        }
+
+        @Override
+        public AuthenticatedUser getAuthenticatedUser() throws AuthenticationException {
+<span class="nc bnc" id="L238" title="All 2 branches missed.">            if (!this.isComplete()) {</span>
+<span class="nc" id="L239">                throw new AuthenticationException(</span>
+                        &quot;The SASL negotiation has not yet been completed.&quot;);
+            }
+
+<span class="nc" id="L243">            final Map&lt;String, String&gt; credentials = new HashMap&lt;&gt;(6, 1);</span>
+<span class="nc" id="L244">            credentials.put(KEY_USERNAME, username);</span>
+<span class="nc" id="L245">            credentials.put(KEY_PASSWORD, password);</span>
+<span class="nc" id="L246">            credentials.put(KEY_TOKEN, token);</span>
+
+<span class="nc" id="L248">            return authenticate(credentials);</span>
+        }
+
+        /**
+         * SASL PLAIN mechanism specifies that credentials are encoded in a
+         * sequence of UTF-8 bytes, delimited by 0 (US-ASCII NUL).
+         * The form is : {code}authzId&lt;NUL&gt;authnId&lt;NUL&gt;password&lt;NUL&gt;{code}.
+         *
+         * @param bytes encoded credentials string sent by the client
+         */
+        private void decode(byte[] bytes) throws AuthenticationException {
+<span class="nc" id="L259">            this.username = null;</span>
+<span class="nc" id="L260">            this.password = null;</span>
+
+<span class="nc" id="L262">            int end = bytes.length;</span>
+
+<span class="nc bnc" id="L264" title="All 2 branches missed.">            for (int i = bytes.length - 1; i &gt;= 0; i--) {</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">                if (bytes[i] != NUL) {</span>
+<span class="nc" id="L266">                    continue;</span>
+                }
+<span class="nc bnc" id="L268" title="All 2 branches missed.">                if (this.password == null) {</span>
+<span class="nc" id="L269">                    password = new String(Arrays.copyOfRange(bytes, i + 1, end),</span>
+                                          StandardCharsets.UTF_8);
+<span class="nc bnc" id="L271" title="All 2 branches missed.">                } else if (this.username == null) {</span>
+<span class="nc" id="L272">                    username = new String(Arrays.copyOfRange(bytes, i + 1, end),</span>
+                                          StandardCharsets.UTF_8);
+                }
+<span class="nc" id="L275">                end = i;</span>
+            }
+
+<span class="nc bnc" id="L278" title="All 2 branches missed.">            if (this.username == null) {</span>
+<span class="nc" id="L279">                throw new AuthenticationException(&quot;SASL authentication ID must not be null.&quot;);</span>
+            }
+<span class="nc bnc" id="L281" title="All 2 branches missed.">            if (this.password == null) {</span>
+<span class="nc" id="L282">                throw new AuthenticationException(&quot;SASL password must not be null.&quot;);</span>
+            }
+
+            /* The trick is here. &gt;_*/
+<span class="nc bnc" id="L286" title="All 2 branches missed.">            if (password.isEmpty()) {</span>
+<span class="nc" id="L287">                token = username;</span>
+            }
+<span class="nc" id="L289">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

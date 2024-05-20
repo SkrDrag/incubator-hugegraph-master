@@ -1,0 +1,462 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RaftContext.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.raft</a> &gt; <span class="el_source">RaftContext.java</span></div><h1>RaftContext.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.raft;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadPoolExecutor;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.cache.Cache;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendAction;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.backend.store.raft.compress.CompressStrategyManager;
+import org.apache.hugegraph.backend.store.raft.rpc.AddPeerProcessor;
+import org.apache.hugegraph.backend.store.raft.rpc.ListPeersProcessor;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.StoreType;
+import org.apache.hugegraph.backend.store.raft.rpc.RemovePeerProcessor;
+import org.apache.hugegraph.backend.store.raft.rpc.RpcForwarder;
+import org.apache.hugegraph.backend.store.raft.rpc.SetLeaderProcessor;
+import org.apache.hugegraph.backend.store.raft.rpc.StoreCommandProcessor;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Events;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.alipay.sofa.jraft.NodeManager;
+import com.alipay.sofa.jraft.conf.Configuration;
+import com.alipay.sofa.jraft.entity.PeerId;
+import com.alipay.sofa.jraft.option.NodeOptions;
+import com.alipay.sofa.jraft.option.RaftOptions;
+import com.alipay.sofa.jraft.option.ReadOnlyOption;
+import com.alipay.sofa.jraft.rpc.RaftRpcServerFactory;
+import com.alipay.sofa.jraft.rpc.RpcServer;
+import com.alipay.sofa.jraft.rpc.impl.BoltRpcServer;
+import com.alipay.sofa.jraft.util.NamedThreadFactory;
+import com.alipay.sofa.jraft.util.ThreadPoolUtil;
+
+public final class RaftContext {
+
+<span class="nc" id="L75">    private static final Logger LOG = Log.logger(RaftContext.class);</span>
+
+    // unit is ms
+    public static final int NO_TIMEOUT = -1;
+    public static final int POLL_INTERVAL = 5000;
+    public static final int WAIT_RAFTLOG_TIMEOUT = 30 * 60 * 1000;
+    public static final int WAIT_LEADER_TIMEOUT = 10 * 60 * 1000;
+    public static final int BUSY_MIN_SLEEP_FACTOR = 3 * 1000;
+    public static final int BUSY_MAX_SLEEP_FACTOR = 5 * 1000;
+    public static final int WAIT_RPC_TIMEOUT = 30 * 60 * 1000;
+    public static final int LOG_WARN_INTERVAL = 60 * 1000;
+
+    // compress block size
+    public static final int BLOCK_SIZE = (int) (Bytes.KB * 8);
+
+    // work queue size
+<span class="nc" id="L91">    public static final int QUEUE_SIZE = CoreOptions.CPUS;</span>
+    public static final long KEEP_ALIVE_SECOND = 300L;
+
+    private final HugeGraphParams params;
+
+    private final Configuration groupPeers;
+
+    private final RaftBackendStore[] stores;
+
+    private final ExecutorService readIndexExecutor;
+    private final ExecutorService snapshotExecutor;
+    private final ExecutorService backendExecutor;
+
+    private RpcServer raftRpcServer;
+    private PeerId endpoint;
+
+    private RaftNode raftNode;
+    private RaftGroupManager raftGroupManager;
+    private RpcForwarder rpcForwarder;
+
+<span class="nc" id="L111">    public RaftContext(HugeGraphParams params) {</span>
+<span class="nc" id="L112">        this.params = params;</span>
+
+<span class="nc" id="L114">        HugeConfig config = params.configuration();</span>
+
+        /*
+         * NOTE: `raft.group_peers` option is transferred from ServerConfig
+         * to CoreConfig, since it's shared by all graphs.
+         */
+<span class="nc" id="L120">        String groupPeersString = this.config().getString(&quot;raft.group_peers&quot;);</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        E.checkArgument(groupPeersString != null,</span>
+                        &quot;Please ensure config `raft.group_peers` in raft mode&quot;);
+<span class="nc" id="L123">        this.groupPeers = new Configuration();</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        if (!this.groupPeers.parse(groupPeersString)) {</span>
+<span class="nc" id="L125">            throw new HugeException(&quot;Failed to parse raft.group_peers: '%s'&quot;,</span>
+                                    groupPeersString);
+        }
+
+<span class="nc" id="L129">        this.stores = new RaftBackendStore[StoreType.ALL.getNumber()];</span>
+
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        if (config.get(CoreOptions.RAFT_SAFE_READ)) {</span>
+<span class="nc" id="L132">            int threads = config.get(CoreOptions.RAFT_READ_INDEX_THREADS);</span>
+<span class="nc" id="L133">            this.readIndexExecutor = this.createReadIndexExecutor(threads);</span>
+<span class="nc" id="L134">        } else {</span>
+<span class="nc" id="L135">            this.readIndexExecutor = null;</span>
+        }
+
+<span class="nc" id="L138">        int threads = config.get(CoreOptions.RAFT_SNAPSHOT_THREADS);</span>
+<span class="nc" id="L139">        this.snapshotExecutor = this.createSnapshotExecutor(threads);</span>
+
+<span class="nc" id="L141">        threads = config.get(CoreOptions.RAFT_BACKEND_THREADS);</span>
+<span class="nc" id="L142">        this.backendExecutor = this.createBackendExecutor(threads);</span>
+
+<span class="nc" id="L144">        CompressStrategyManager.init(config);</span>
+
+<span class="nc" id="L146">        this.raftRpcServer = null;</span>
+<span class="nc" id="L147">        this.endpoint = null;</span>
+
+<span class="nc" id="L149">        this.raftNode = null;</span>
+<span class="nc" id="L150">        this.raftGroupManager = null;</span>
+<span class="nc" id="L151">        this.rpcForwarder = null;</span>
+<span class="nc" id="L152">    }</span>
+
+    public void initRaftNode(com.alipay.remoting.rpc.RpcServer rpcServer) {
+<span class="nc" id="L155">        this.raftRpcServer = this.wrapRpcServer(rpcServer);</span>
+<span class="nc" id="L156">        this.endpoint = new PeerId(rpcServer.ip(), rpcServer.port());</span>
+
+<span class="nc" id="L158">        this.registerRpcRequestProcessors();</span>
+<span class="nc" id="L159">        LOG.info(&quot;Start raft server successfully: {}&quot;, this.endpoint());</span>
+
+<span class="nc" id="L161">        this.raftNode = new RaftNode(this);</span>
+<span class="nc" id="L162">        this.rpcForwarder = new RpcForwarder(this.raftNode.node());</span>
+<span class="nc" id="L163">        this.raftGroupManager = new RaftGroupManagerImpl(this);</span>
+<span class="nc" id="L164">    }</span>
+
+    public void waitRaftNodeStarted() {
+<span class="nc" id="L167">        RaftNode node = this.node();</span>
+<span class="nc" id="L168">        node.waitLeaderElected(RaftContext.WAIT_LEADER_TIMEOUT);</span>
+<span class="nc" id="L169">        node.waitRaftLogSynced(RaftContext.NO_TIMEOUT);</span>
+<span class="nc" id="L170">    }</span>
+
+    public void close() {
+<span class="nc" id="L173">        LOG.info(&quot;Stop raft server: {}&quot;, this.endpoint());</span>
+
+<span class="nc" id="L175">        RaftNode node = this.node();</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">        if (node != null) {</span>
+<span class="nc" id="L177">            node.shutdown();</span>
+        }
+
+<span class="nc" id="L180">        this.shutdownRpcServer();</span>
+<span class="nc" id="L181">    }</span>
+
+    public RaftNode node() {
+<span class="nc" id="L184">        return this.raftNode;</span>
+    }
+
+    protected RpcServer rpcServer() {
+<span class="nc" id="L188">        return this.raftRpcServer;</span>
+    }
+
+    protected RpcForwarder rpcForwarder() {
+<span class="nc" id="L192">        return this.rpcForwarder;</span>
+    }
+
+    public RaftGroupManager raftNodeManager() {
+<span class="nc" id="L196">        return this.raftGroupManager;</span>
+    }
+
+    public String group() {
+        // Use graph name as group name
+<span class="nc" id="L201">        return this.params.name();</span>
+    }
+
+    public void addStore(StoreType type, RaftBackendStore store) {
+<span class="nc" id="L205">        this.stores[type.getNumber()] = store;</span>
+<span class="nc" id="L206">    }</span>
+
+    public StoreType storeType(String store) {
+<span class="nc bnc" id="L209" title="All 2 branches missed.">        if (BackendStoreProvider.SCHEMA_STORE.equals(store)) {</span>
+<span class="nc" id="L210">            return StoreType.SCHEMA;</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        } else if (BackendStoreProvider.GRAPH_STORE.equals(store)) {</span>
+<span class="nc" id="L212">            return StoreType.GRAPH;</span>
+        } else {
+<span class="nc bnc" id="L214" title="All 2 branches missed.">            assert BackendStoreProvider.SYSTEM_STORE.equals(store);</span>
+<span class="nc" id="L215">            return StoreType.SYSTEM;</span>
+        }
+    }
+
+    protected RaftBackendStore[] stores() {
+<span class="nc" id="L220">        return this.stores;</span>
+    }
+
+    public BackendStore originStore(StoreType storeType) {
+<span class="nc" id="L224">        RaftBackendStore raftStore = this.stores[storeType.getNumber()];</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">        E.checkState(raftStore != null,</span>
+                     &quot;The raft store of type %s shouldn't be null&quot;, storeType);
+<span class="nc" id="L227">        return raftStore.originStore();</span>
+    }
+
+    public NodeOptions nodeOptions() throws IOException {
+<span class="nc" id="L231">        HugeConfig config = this.config();</span>
+
+<span class="nc" id="L233">        NodeOptions nodeOptions = new NodeOptions();</span>
+<span class="nc" id="L234">        nodeOptions.setEnableMetrics(false);</span>
+<span class="nc" id="L235">        nodeOptions.setRpcProcessorThreadPoolSize(</span>
+<span class="nc" id="L236">                    config.get(CoreOptions.RAFT_RPC_THREADS));</span>
+<span class="nc" id="L237">        nodeOptions.setRpcConnectTimeoutMs(</span>
+<span class="nc" id="L238">                    config.get(CoreOptions.RAFT_RPC_CONNECT_TIMEOUT));</span>
+<span class="nc" id="L239">        nodeOptions.setRpcDefaultTimeout(</span>
+<span class="nc" id="L240">                    1000 * config.get(CoreOptions.RAFT_RPC_TIMEOUT));</span>
+<span class="nc" id="L241">        nodeOptions.setRpcInstallSnapshotTimeout(</span>
+<span class="nc" id="L242">                    1000 * config.get(CoreOptions.RAFT_INSTALL_SNAPSHOT_TIMEOUT));</span>
+
+<span class="nc" id="L244">        int electionTimeout = config.get(CoreOptions.RAFT_ELECTION_TIMEOUT);</span>
+<span class="nc" id="L245">        nodeOptions.setElectionTimeoutMs(electionTimeout);</span>
+<span class="nc" id="L246">        nodeOptions.setDisableCli(false);</span>
+
+<span class="nc" id="L248">        int snapshotInterval = config.get(CoreOptions.RAFT_SNAPSHOT_INTERVAL);</span>
+<span class="nc" id="L249">        nodeOptions.setSnapshotIntervalSecs(snapshotInterval);</span>
+<span class="nc" id="L250">        nodeOptions.setInitialConf(this.groupPeers);</span>
+
+<span class="nc" id="L252">        String raftPath = config.get(CoreOptions.RAFT_PATH);</span>
+<span class="nc" id="L253">        String logUri = Paths.get(raftPath, &quot;log&quot;).toString();</span>
+<span class="nc" id="L254">        FileUtils.forceMkdir(new File(logUri));</span>
+<span class="nc" id="L255">        nodeOptions.setLogUri(logUri);</span>
+
+<span class="nc" id="L257">        String metaUri = Paths.get(raftPath, &quot;meta&quot;).toString();</span>
+<span class="nc" id="L258">        FileUtils.forceMkdir(new File(metaUri));</span>
+<span class="nc" id="L259">        nodeOptions.setRaftMetaUri(metaUri);</span>
+
+<span class="nc" id="L261">        String snapshotUri = Paths.get(raftPath, &quot;snapshot&quot;).toString();</span>
+<span class="nc" id="L262">        FileUtils.forceMkdir(new File(snapshotUri));</span>
+<span class="nc" id="L263">        nodeOptions.setSnapshotUri(snapshotUri);</span>
+
+<span class="nc" id="L265">        RaftOptions raftOptions = nodeOptions.getRaftOptions();</span>
+        /*
+         * NOTE: if buffer size is too small(&lt;=1024), will throw exception
+         * &quot;LogManager is busy, disk queue overload&quot;
+         */
+<span class="nc" id="L270">        raftOptions.setApplyBatch(config.get(CoreOptions.RAFT_APPLY_BATCH));</span>
+<span class="nc" id="L271">        raftOptions.setDisruptorBufferSize(</span>
+<span class="nc" id="L272">                    config.get(CoreOptions.RAFT_QUEUE_SIZE));</span>
+<span class="nc" id="L273">        raftOptions.setDisruptorPublishEventWaitTimeoutSecs(</span>
+<span class="nc" id="L274">                    config.get(CoreOptions.RAFT_QUEUE_PUBLISH_TIMEOUT));</span>
+<span class="nc" id="L275">        raftOptions.setReplicatorPipeline(</span>
+<span class="nc" id="L276">                    config.get(CoreOptions.RAFT_REPLICATOR_PIPELINE));</span>
+<span class="nc" id="L277">        raftOptions.setOpenStatistics(false);</span>
+<span class="nc" id="L278">        raftOptions.setReadOnlyOptions(</span>
+<span class="nc" id="L279">                    ReadOnlyOption.valueOf(</span>
+<span class="nc" id="L280">                    config.get(CoreOptions.RAFT_READ_STRATEGY)));</span>
+
+<span class="nc" id="L282">        return nodeOptions;</span>
+    }
+
+    protected void clearCache() {
+        // Just choose two representatives used to represent schema and graph
+<span class="nc" id="L287">        this.notifyCache(Cache.ACTION_CLEAR, HugeType.VERTEX_LABEL, null);</span>
+<span class="nc" id="L288">        this.notifyCache(Cache.ACTION_CLEAR, HugeType.VERTEX, null);</span>
+<span class="nc" id="L289">    }</span>
+
+    protected void updateCacheIfNeeded(BackendMutation mutation,
+                                       boolean forwarded) {
+        // Update cache only when graph run in general mode
+<span class="nc bnc" id="L294" title="All 2 branches missed.">        if (this.graphMode() != GraphMode.NONE) {</span>
+<span class="nc" id="L295">            return;</span>
+        }
+        /*
+         * 1. If Follower, need to update cache from store to tx
+         * 3. If Leader, request is forwarded by follower, need to update cache
+         * 2. If Leader, request comes from leader, don't need to update cache,
+         *    because the cache will be updated by upper layer
+         */
+<span class="nc bnc" id="L303" title="All 4 branches missed.">        if (!forwarded &amp;&amp; this.node().selfIsLeader()) {</span>
+<span class="nc" id="L304">            return;</span>
+        }
+<span class="nc bnc" id="L306" title="All 2 branches missed.">        for (HugeType type : mutation.types()) {</span>
+<span class="nc" id="L307">            List&lt;Id&gt; ids = new ArrayList&lt;&gt;((int) Query.COMMIT_BATCH);</span>
+<span class="nc bnc" id="L308" title="All 4 branches missed.">            if (type.isSchema() || type.isGraph()) {</span>
+<span class="nc" id="L309">                java.util.Iterator&lt;BackendAction&gt; it = mutation.mutation(type);</span>
+<span class="nc bnc" id="L310" title="All 2 branches missed.">                while (it.hasNext()) {</span>
+<span class="nc" id="L311">                    ids.add(it.next().entry().originId());</span>
+                }
+<span class="nc" id="L313">                this.notifyCache(Cache.ACTION_INVALID, type, ids);</span>
+            } else {
+                // Ignore other types due to not cached them
+            }
+<span class="nc" id="L317">        }</span>
+<span class="nc" id="L318">    }</span>
+
+    protected void notifyCache(String action, HugeType type, List&lt;Id&gt; ids) {
+        EventHub eventHub;
+<span class="nc bnc" id="L322" title="All 2 branches missed.">        if (type.isGraph()) {</span>
+<span class="nc" id="L323">            eventHub = this.params.graphEventHub();</span>
+<span class="nc bnc" id="L324" title="All 2 branches missed.">        } else if (type.isSchema()) {</span>
+<span class="nc" id="L325">            eventHub = this.params.schemaEventHub();</span>
+        } else {
+<span class="nc" id="L327">            return;</span>
+        }
+        try {
+            // How to avoid update cache from server info
+<span class="nc bnc" id="L331" title="All 2 branches missed.">            if (ids == null) {</span>
+<span class="nc" id="L332">                eventHub.call(Events.CACHE, action, type);</span>
+            } else {
+<span class="nc bnc" id="L334" title="All 2 branches missed.">                if (ids.size() == 1) {</span>
+<span class="nc" id="L335">                    eventHub.call(Events.CACHE, action, type, ids.get(0));</span>
+                } else {
+<span class="nc" id="L337">                    eventHub.call(Events.CACHE, action, type, ids.toArray());</span>
+                }
+            }
+<span class="nc" id="L340">        } catch (RejectedExecutionException e) {</span>
+<span class="nc" id="L341">            LOG.warn(&quot;Can't update cache due to EventHub is too busy&quot;);</span>
+<span class="nc" id="L342">        }</span>
+<span class="nc" id="L343">    }</span>
+
+    public PeerId endpoint() {
+<span class="nc" id="L346">        return this.endpoint;</span>
+    }
+
+    public boolean safeRead() {
+<span class="nc" id="L350">        return this.config().get(CoreOptions.RAFT_SAFE_READ);</span>
+    }
+
+    public ExecutorService snapshotExecutor() {
+<span class="nc" id="L354">        return this.snapshotExecutor;</span>
+    }
+
+    public ExecutorService backendExecutor() {
+<span class="nc" id="L358">        return this.backendExecutor;</span>
+    }
+
+    public ExecutorService readIndexExecutor() {
+<span class="nc" id="L362">        return this.readIndexExecutor;</span>
+    }
+
+    public GraphMode graphMode() {
+<span class="nc" id="L366">        return this.params.mode();</span>
+    }
+
+    private HugeConfig config() {
+<span class="nc" id="L370">        return this.params.configuration();</span>
+    }
+
+    @SuppressWarnings(&quot;unused&quot;)
+    private RpcServer initAndStartRpcServer() {
+<span class="nc" id="L375">        Integer lowWaterMark = this.config().get(</span>
+                               CoreOptions.RAFT_RPC_BUF_LOW_WATER_MARK);
+<span class="nc" id="L377">        System.setProperty(&quot;bolt.channel_write_buf_low_water_mark&quot;,</span>
+<span class="nc" id="L378">                           String.valueOf(lowWaterMark));</span>
+<span class="nc" id="L379">        Integer highWaterMark = this.config().get(</span>
+                                CoreOptions.RAFT_RPC_BUF_HIGH_WATER_MARK);
+<span class="nc" id="L381">        System.setProperty(&quot;bolt.channel_write_buf_high_water_mark&quot;,</span>
+<span class="nc" id="L382">                           String.valueOf(highWaterMark));</span>
+
+<span class="nc" id="L384">        PeerId endpoint = this.endpoint();</span>
+<span class="nc" id="L385">        NodeManager.getInstance().addAddress(endpoint.getEndpoint());</span>
+<span class="nc" id="L386">        RpcServer rpcServer = RaftRpcServerFactory.createAndStartRaftRpcServer(</span>
+<span class="nc" id="L387">                                                   endpoint.getEndpoint());</span>
+<span class="nc" id="L388">        LOG.info(&quot;Raft-RPC server is started successfully&quot;);</span>
+<span class="nc" id="L389">        return rpcServer;</span>
+    }
+
+    private RpcServer wrapRpcServer(com.alipay.remoting.rpc.RpcServer rpcServer) {
+        // TODO: pass ServerOptions instead of CoreOptions, to share by graphs
+<span class="nc" id="L394">        Integer lowWaterMark = this.config().get(</span>
+                               CoreOptions.RAFT_RPC_BUF_LOW_WATER_MARK);
+<span class="nc" id="L396">        System.setProperty(&quot;bolt.channel_write_buf_low_water_mark&quot;,</span>
+<span class="nc" id="L397">                           String.valueOf(lowWaterMark));</span>
+<span class="nc" id="L398">        Integer highWaterMark = this.config().get(</span>
+                                CoreOptions.RAFT_RPC_BUF_HIGH_WATER_MARK);
+<span class="nc" id="L400">        System.setProperty(&quot;bolt.channel_write_buf_high_water_mark&quot;,</span>
+<span class="nc" id="L401">                           String.valueOf(highWaterMark));</span>
+
+        // Reference from RaftRpcServerFactory.createAndStartRaftRpcServer
+<span class="nc" id="L404">        RpcServer raftRpcServer = new BoltRpcServer(rpcServer);</span>
+<span class="nc" id="L405">        RaftRpcServerFactory.addRaftRequestProcessors(raftRpcServer);</span>
+
+<span class="nc" id="L407">        return raftRpcServer;</span>
+    }
+
+    private void shutdownRpcServer() {
+<span class="nc" id="L411">        this.raftRpcServer.shutdown();</span>
+<span class="nc" id="L412">        PeerId endpoint = this.endpoint();</span>
+<span class="nc" id="L413">        NodeManager.getInstance().removeAddress(endpoint.getEndpoint());</span>
+<span class="nc" id="L414">    }</span>
+
+    private void registerRpcRequestProcessors() {
+<span class="nc" id="L417">        this.raftRpcServer.registerProcessor(new AddPeerProcessor(this));</span>
+<span class="nc" id="L418">        this.raftRpcServer.registerProcessor(new RemovePeerProcessor(this));</span>
+<span class="nc" id="L419">        this.raftRpcServer.registerProcessor(new StoreCommandProcessor(this));</span>
+<span class="nc" id="L420">        this.raftRpcServer.registerProcessor(new SetLeaderProcessor(this));</span>
+<span class="nc" id="L421">        this.raftRpcServer.registerProcessor(new ListPeersProcessor(this));</span>
+<span class="nc" id="L422">    }</span>
+
+    private ExecutorService createReadIndexExecutor(int coreThreads) {
+<span class="nc" id="L425">        int maxThreads = coreThreads &lt;&lt; 2;</span>
+<span class="nc" id="L426">        String name = &quot;store-read-index-callback&quot;;</span>
+<span class="nc" id="L427">        RejectedExecutionHandler handler = new ThreadPoolExecutor.AbortPolicy();</span>
+<span class="nc" id="L428">        return newPool(coreThreads, maxThreads, name, handler);</span>
+    }
+
+    private ExecutorService createSnapshotExecutor(int coreThreads) {
+<span class="nc" id="L432">        int maxThreads = coreThreads &lt;&lt; 2;</span>
+<span class="nc" id="L433">        String name = &quot;store-snapshot-executor&quot;;</span>
+        RejectedExecutionHandler handler;
+<span class="nc" id="L435">        handler = new ThreadPoolExecutor.CallerRunsPolicy();</span>
+<span class="nc" id="L436">        return newPool(coreThreads, maxThreads, name, handler);</span>
+    }
+
+    private ExecutorService createBackendExecutor(int threads) {
+<span class="nc" id="L440">        String name = &quot;store-backend-executor&quot;;</span>
+<span class="nc" id="L441">        RejectedExecutionHandler handler =</span>
+                                 new ThreadPoolExecutor.CallerRunsPolicy();
+<span class="nc" id="L443">        return newPool(threads, threads, name, handler);</span>
+    }
+
+    private static ExecutorService newPool(int coreThreads, int maxThreads,
+                                           String name,
+                                           RejectedExecutionHandler handler) {
+<span class="nc" id="L449">        BlockingQueue&lt;Runnable&gt; queue = new ArrayBlockingQueue&lt;&gt;(QUEUE_SIZE);</span>
+<span class="nc" id="L450">        return ThreadPoolUtil.newBuilder()</span>
+<span class="nc" id="L451">                             .poolName(name)</span>
+<span class="nc" id="L452">                             .enableMetric(false)</span>
+<span class="nc" id="L453">                             .coreThreads(coreThreads)</span>
+<span class="nc" id="L454">                             .maximumThreads(maxThreads)</span>
+<span class="nc" id="L455">                             .keepAliveSeconds(KEEP_ALIVE_SECOND)</span>
+<span class="nc" id="L456">                             .workQueue(queue)</span>
+<span class="nc" id="L457">                             .threadFactory(new NamedThreadFactory(name, true))</span>
+<span class="nc" id="L458">                             .rejectedHandler(handler)</span>
+<span class="nc" id="L459">                             .build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

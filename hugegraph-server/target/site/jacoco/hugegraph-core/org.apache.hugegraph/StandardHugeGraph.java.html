@@ -1,0 +1,1654 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StandardHugeGraph.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph</a> &gt; <span class="el_source">StandardHugeGraph.java</span></div><h1>StandardHugeGraph.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph;
+
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.hugegraph.analyzer.Analyzer;
+import org.apache.hugegraph.analyzer.AnalyzerFactory;
+import org.apache.hugegraph.auth.AuthManager;
+import org.apache.hugegraph.auth.StandardAuthManager;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.LocalCounter;
+import org.apache.hugegraph.backend.cache.Cache;
+import org.apache.hugegraph.backend.cache.CacheNotifier;
+import org.apache.hugegraph.backend.cache.CacheNotifier.GraphCacheNotifier;
+import org.apache.hugegraph.backend.cache.CacheNotifier.SchemaCacheNotifier;
+import org.apache.hugegraph.backend.cache.CachedGraphTransaction;
+import org.apache.hugegraph.backend.cache.CachedSchemaTransaction;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.id.SnowflakeIdGenerator;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.serializer.AbstractSerializer;
+import org.apache.hugegraph.backend.serializer.SerializerFactory;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendProviderFactory;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.backend.store.BackendStoreInfo;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.backend.store.raft.RaftBackendStoreProvider;
+import org.apache.hugegraph.backend.store.raft.RaftGroupManager;
+import org.apache.hugegraph.backend.store.ram.RamTable;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.config.TypedOption;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.event.EventListener;
+import org.apache.hugegraph.exception.NotAllowException;
+import org.apache.hugegraph.io.HugeGraphIoRegistry;
+import org.apache.hugegraph.job.EphemeralJob;
+import org.apache.hugegraph.masterelection.ClusterRoleStore;
+import org.apache.hugegraph.masterelection.Config;
+import org.apache.hugegraph.masterelection.GlobalMasterInfo;
+import org.apache.hugegraph.masterelection.RoleElectionConfig;
+import org.apache.hugegraph.masterelection.RoleElectionOptions;
+import org.apache.hugegraph.masterelection.RoleElectionStateMachine;
+import org.apache.hugegraph.masterelection.StandardClusterRoleStore;
+import org.apache.hugegraph.masterelection.StandardRoleElectionStateMachine;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.rpc.RpcServiceConfig4Client;
+import org.apache.hugegraph.rpc.RpcServiceConfig4Server;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeEdgeProperty;
+import org.apache.hugegraph.structure.HugeFeatures;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.structure.HugeVertexProperty;
+import org.apache.hugegraph.task.EphemeralJobQueue;
+import org.apache.hugegraph.task.ServerInfoManager;
+import org.apache.hugegraph.task.TaskManager;
+import org.apache.hugegraph.task.TaskScheduler;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.type.define.GraphReadMode;
+import org.apache.hugegraph.util.ConfigUtil;
+import org.apache.hugegraph.util.DateUtil;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Events;
+import org.apache.hugegraph.util.LockUtil;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.variables.HugeVariables;
+import org.apache.tinkerpop.gremlin.process.computer.GraphComputer;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.Property;
+import org.apache.tinkerpop.gremlin.structure.Transaction;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.VertexProperty;
+import org.apache.tinkerpop.gremlin.structure.io.Io;
+import org.apache.tinkerpop.gremlin.structure.util.AbstractThreadLocalTransaction;
+import org.apache.tinkerpop.gremlin.structure.util.StringFactory;
+import org.slf4j.Logger;
+
+import com.alipay.remoting.rpc.RpcServer;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.util.concurrent.RateLimiter;
+
+/**
+ * StandardHugeGraph is the entrance of the graph system, you can modify or
+ * query the schema/vertex/edge data through this class.
+ */
+public class StandardHugeGraph implements HugeGraph {
+
+<span class="nc" id="L123">    public static final Class&lt;?&gt;[] PROTECT_CLASSES = {</span>
+        StandardHugeGraph.class,
+        StandardHugeGraph.StandardHugeGraphParams.class,
+        TinkerPopTransaction.class,
+        StandardHugeGraph.Txs.class,
+        StandardHugeGraph.SysTransaction.class
+    };
+
+<span class="nc" id="L131">    public static final Set&lt;TypedOption&lt;?, ?&gt;&gt; ALLOWED_CONFIGS = ImmutableSet.of(</span>
+           CoreOptions.TASK_WAIT_TIMEOUT,
+           CoreOptions.TASK_SYNC_DELETION,
+           CoreOptions.TASK_TTL_DELETE_BATCH,
+           CoreOptions.TASK_INPUT_SIZE_LIMIT,
+           CoreOptions.TASK_RESULT_SIZE_LIMIT,
+           CoreOptions.OLTP_CONCURRENT_THREADS,
+           CoreOptions.OLTP_CONCURRENT_DEPTH,
+           CoreOptions.OLTP_COLLECTION_TYPE,
+           CoreOptions.VERTEX_DEFAULT_LABEL,
+           CoreOptions.VERTEX_ENCODE_PK_NUMBER,
+           CoreOptions.STORE_GRAPH,
+           CoreOptions.STORE
+    );
+
+<span class="nc" id="L146">    private static final Logger LOG = Log.logger(StandardHugeGraph.class);</span>
+
+    private volatile boolean started;
+    private volatile boolean closed;
+    private volatile GraphMode mode;
+    private volatile GraphReadMode readMode;
+    private volatile HugeVariables variables;
+
+    private final String name;
+
+    private final StandardHugeGraphParams params;
+
+    private final HugeConfig configuration;
+
+    private final EventHub schemaEventHub;
+    private final EventHub graphEventHub;
+    private final EventHub indexEventHub;
+
+    private final LocalCounter localCounter;
+    private final RateLimiter writeRateLimiter;
+    private final RateLimiter readRateLimiter;
+    private final TaskManager taskManager;
+    private AuthManager authManager;
+
+    private RoleElectionStateMachine roleElectionStateMachine;
+
+    private final HugeFeatures features;
+
+    private final BackendStoreProvider storeProvider;
+    private final TinkerPopTransaction tx;
+
+    private final RamTable ramtable;
+
+<span class="nc" id="L179">    public StandardHugeGraph(HugeConfig config) {</span>
+<span class="nc" id="L180">        this.params = new StandardHugeGraphParams();</span>
+<span class="nc" id="L181">        this.configuration = config;</span>
+
+<span class="nc" id="L183">        this.schemaEventHub = new EventHub(&quot;schema&quot;);</span>
+<span class="nc" id="L184">        this.graphEventHub = new EventHub(&quot;graph&quot;);</span>
+<span class="nc" id="L185">        this.indexEventHub = new EventHub(&quot;index&quot;);</span>
+
+<span class="nc" id="L187">        this.localCounter = new LocalCounter();</span>
+
+<span class="nc" id="L189">        final int writeLimit = config.get(CoreOptions.RATE_LIMIT_WRITE);</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        this.writeRateLimiter = writeLimit &gt; 0 ?</span>
+<span class="nc" id="L191">                                RateLimiter.create(writeLimit) : null;</span>
+<span class="nc" id="L192">        final int readLimit = config.get(CoreOptions.RATE_LIMIT_READ);</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        this.readRateLimiter = readLimit &gt; 0 ?</span>
+<span class="nc" id="L194">                               RateLimiter.create(readLimit) : null;</span>
+
+<span class="nc" id="L196">        boolean ramtableEnable = config.get(CoreOptions.QUERY_RAMTABLE_ENABLE);</span>
+<span class="nc bnc" id="L197" title="All 2 branches missed.">        if (ramtableEnable) {</span>
+<span class="nc" id="L198">            long vc = config.get(CoreOptions.QUERY_RAMTABLE_VERTICES_CAPACITY);</span>
+<span class="nc" id="L199">            int ec = config.get(CoreOptions.QUERY_RAMTABLE_EDGES_CAPACITY);</span>
+<span class="nc" id="L200">            this.ramtable = new RamTable(this, vc, ec);</span>
+<span class="nc" id="L201">        } else {</span>
+<span class="nc" id="L202">            this.ramtable = null;</span>
+        }
+
+<span class="nc" id="L205">        this.taskManager = TaskManager.instance();</span>
+
+<span class="nc" id="L207">        this.name = config.get(CoreOptions.STORE);</span>
+<span class="nc" id="L208">        this.started = false;</span>
+<span class="nc" id="L209">        this.closed = false;</span>
+<span class="nc" id="L210">        this.mode = GraphMode.NONE;</span>
+<span class="nc" id="L211">        this.readMode = GraphReadMode.OLTP_ONLY;</span>
+
+<span class="nc" id="L213">        LockUtil.init(this.name);</span>
+
+        try {
+<span class="nc" id="L216">            this.storeProvider = this.loadStoreProvider();</span>
+<span class="nc" id="L217">        } catch (Exception e) {</span>
+<span class="nc" id="L218">            LockUtil.destroy(this.name);</span>
+<span class="nc" id="L219">            String message = &quot;Failed to load backend store provider&quot;;</span>
+<span class="nc" id="L220">            LOG.error(&quot;{}: {}&quot;, message, e.getMessage());</span>
+<span class="nc" id="L221">            throw new HugeException(message, e);</span>
+<span class="nc" id="L222">        }</span>
+
+        try {
+<span class="nc" id="L225">            this.tx = new TinkerPopTransaction(this);</span>
+<span class="nc" id="L226">            boolean supportsPersistence = this.backendStoreFeatures().supportsPersistence();</span>
+<span class="nc" id="L227">            this.features = new HugeFeatures(this, supportsPersistence);</span>
+
+<span class="nc" id="L229">            SnowflakeIdGenerator.init(this.params);</span>
+
+<span class="nc" id="L231">            this.taskManager.addScheduler(this.params);</span>
+<span class="nc" id="L232">            this.authManager = new StandardAuthManager(this.params);</span>
+<span class="nc" id="L233">            this.variables = null;</span>
+<span class="nc" id="L234">        } catch (Exception e) {</span>
+<span class="nc" id="L235">            this.storeProvider.close();</span>
+<span class="nc" id="L236">            LockUtil.destroy(this.name);</span>
+<span class="nc" id="L237">            throw e;</span>
+<span class="nc" id="L238">        }</span>
+<span class="nc" id="L239">    }</span>
+
+    @Override
+    public String name() {
+<span class="nc" id="L243">        return this.name;</span>
+    }
+
+    @Override
+    public HugeGraph hugegraph() {
+<span class="nc" id="L248">        return this;</span>
+    }
+
+    @Override
+    public String backend() {
+<span class="nc" id="L253">        return this.storeProvider.type();</span>
+    }
+
+    @Override
+    public BackendStoreInfo backendStoreInfo() {
+        // Just for trigger Tx.getOrNewTransaction, then load 3 stores
+        // TODO: pass storeProvider.metaStore()
+<span class="nc" id="L260">        this.systemTransaction();</span>
+<span class="nc" id="L261">        return new BackendStoreInfo(this.configuration, this.storeProvider);</span>
+    }
+
+    @Override
+    public BackendFeatures backendStoreFeatures() {
+<span class="nc" id="L266">        return this.graphTransaction().storeFeatures();</span>
+    }
+
+    @Override
+    public void serverStarted(GlobalMasterInfo nodeInfo) {
+<span class="nc" id="L271">        LOG.info(&quot;Init system info for graph '{}'&quot;, this.name);</span>
+<span class="nc" id="L272">        this.initSystemInfo();</span>
+
+<span class="nc" id="L274">        LOG.info(&quot;Init server info [{}-{}] for graph '{}'...&quot;,</span>
+<span class="nc" id="L275">                 nodeInfo.nodeId(), nodeInfo.nodeRole(), this.name);</span>
+<span class="nc" id="L276">        this.serverInfoManager().initServerInfo(nodeInfo);</span>
+
+<span class="nc" id="L278">        this.initRoleStateMachine(nodeInfo.nodeId());</span>
+
+        // TODO: check necessary?
+<span class="nc" id="L281">        LOG.info(&quot;Check olap property-key tables for graph '{}'&quot;, this.name);</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        for (PropertyKey pk : this.schemaTransaction().getPropertyKeys()) {</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            if (pk.olap()) {</span>
+<span class="nc" id="L284">                this.graphTransaction().initAndRegisterOlapTable(pk.id());</span>
+            }
+<span class="nc" id="L286">        }</span>
+
+<span class="nc" id="L288">        LOG.info(&quot;Restoring incomplete tasks for graph '{}'...&quot;, this.name);</span>
+<span class="nc" id="L289">        this.taskScheduler().restoreTasks();</span>
+
+<span class="nc" id="L291">        this.started = true;</span>
+<span class="nc" id="L292">    }</span>
+
+    private void initRoleStateMachine(Id serverId) {
+<span class="nc" id="L295">        HugeConfig conf = this.configuration;</span>
+<span class="nc" id="L296">        Config roleConfig = new RoleElectionConfig(serverId.toString(),</span>
+<span class="nc" id="L297">                            conf.get(RoleElectionOptions.NODE_EXTERNAL_URL),</span>
+<span class="nc" id="L298">                            conf.get(RoleElectionOptions.EXCEEDS_FAIL_COUNT),</span>
+<span class="nc" id="L299">                            conf.get(RoleElectionOptions.RANDOM_TIMEOUT_MILLISECOND),</span>
+<span class="nc" id="L300">                            conf.get(RoleElectionOptions.HEARTBEAT_INTERVAL_SECOND),</span>
+<span class="nc" id="L301">                            conf.get(RoleElectionOptions.MASTER_DEAD_TIMES),</span>
+<span class="nc" id="L302">                            conf.get(RoleElectionOptions.BASE_TIMEOUT_MILLISECOND));</span>
+<span class="nc" id="L303">        ClusterRoleStore roleStore = new StandardClusterRoleStore(this.params);</span>
+<span class="nc" id="L304">        this.roleElectionStateMachine = new StandardRoleElectionStateMachine(roleConfig, </span>
+                                                                             roleStore);
+<span class="nc" id="L306">    }</span>
+
+    @Override
+    public boolean started() {
+<span class="nc" id="L310">        return this.started;</span>
+    }
+
+    @Override
+    public boolean closed() {
+<span class="nc bnc" id="L315" title="All 4 branches missed.">        if (this.closed &amp;&amp; !this.tx.closed()) {</span>
+<span class="nc" id="L316">            LOG.warn(&quot;The tx is not closed while graph '{}' is closed&quot;, this);</span>
+        }
+<span class="nc" id="L318">        return this.closed;</span>
+    }
+
+    @Override
+    public GraphMode mode() {
+<span class="nc" id="L323">        return this.mode;</span>
+    }
+
+    @Override
+    public void mode(GraphMode mode) {
+<span class="nc" id="L328">        LOG.info(&quot;Graph {} will work in {} mode&quot;, this, mode);</span>
+<span class="nc" id="L329">        this.mode = mode;</span>
+<span class="nc" id="L330">    }</span>
+
+    @Override
+    public GraphReadMode readMode() {
+<span class="nc" id="L334">        return this.readMode;</span>
+    }
+
+    @Override
+    public void readMode(GraphReadMode readMode) {
+<span class="nc" id="L339">        this.clearVertexCache();</span>
+<span class="nc" id="L340">        this.readMode = readMode;</span>
+<span class="nc" id="L341">    }</span>
+
+    @Override
+    public void waitReady(RpcServer rpcServer) {
+        // Just for trigger Tx.getOrNewTransaction, then load 3 stores
+<span class="nc" id="L346">        this.schemaTransaction();</span>
+<span class="nc" id="L347">        this.storeProvider.waitReady(rpcServer);</span>
+<span class="nc" id="L348">    }</span>
+
+    @Override
+    public void initBackend() {
+<span class="nc" id="L352">        this.loadSchemaStore().open(this.configuration);</span>
+<span class="nc" id="L353">        this.loadSystemStore().open(this.configuration);</span>
+<span class="nc" id="L354">        this.loadGraphStore().open(this.configuration);</span>
+
+<span class="nc" id="L356">        LockUtil.lock(this.name, LockUtil.GRAPH_LOCK);</span>
+        try {
+<span class="nc" id="L358">            this.storeProvider.init();</span>
+            /*
+             * NOTE: The main goal is to write the serverInfo to the central
+             * node, such as etcd, and also create the system schema in memory,
+             * which has no side effects
+             */
+<span class="nc" id="L364">            this.initSystemInfo();</span>
+        } finally {
+<span class="nc" id="L366">            LockUtil.unlock(this.name, LockUtil.GRAPH_LOCK);</span>
+<span class="nc" id="L367">            this.loadGraphStore().close();</span>
+<span class="nc" id="L368">            this.loadSystemStore().close();</span>
+<span class="nc" id="L369">            this.loadSchemaStore().close();</span>
+        }
+
+<span class="nc" id="L372">        LOG.info(&quot;Graph '{}' has been initialized&quot;, this.name);</span>
+<span class="nc" id="L373">    }</span>
+
+    @Override
+    public void clearBackend() {
+<span class="nc" id="L377">        this.waitUntilAllTasksCompleted();</span>
+
+<span class="nc" id="L379">        this.loadSchemaStore().open(this.configuration);</span>
+<span class="nc" id="L380">        this.loadSystemStore().open(this.configuration);</span>
+<span class="nc" id="L381">        this.loadGraphStore().open(this.configuration);</span>
+
+<span class="nc" id="L383">        LockUtil.lock(this.name, LockUtil.GRAPH_LOCK);</span>
+        try {
+<span class="nc" id="L385">            this.storeProvider.clear();</span>
+        } finally {
+<span class="nc" id="L387">            LockUtil.unlock(this.name, LockUtil.GRAPH_LOCK);</span>
+<span class="nc" id="L388">            this.loadGraphStore().close();</span>
+<span class="nc" id="L389">            this.loadSystemStore().close();</span>
+<span class="nc" id="L390">            this.loadSchemaStore().close();</span>
+        }
+
+<span class="nc" id="L393">        LOG.info(&quot;Graph '{}' has been cleared&quot;, this.name);</span>
+<span class="nc" id="L394">    }</span>
+
+    @Override
+    public void truncateBackend() {
+<span class="nc" id="L398">        this.waitUntilAllTasksCompleted();</span>
+
+<span class="nc" id="L400">        LockUtil.lock(this.name, LockUtil.GRAPH_LOCK);</span>
+        try {
+<span class="nc" id="L402">            this.storeProvider.truncate();</span>
+            // TODO: remove this after serverinfo saved in etcd
+<span class="nc" id="L404">            this.serverStarted(this.serverInfoManager().globalNodeRoleInfo());</span>
+        } finally {
+<span class="nc" id="L406">            LockUtil.unlock(this.name, LockUtil.GRAPH_LOCK);</span>
+        }
+
+<span class="nc" id="L409">        LOG.info(&quot;Graph '{}' has been truncated&quot;, this.name);</span>
+<span class="nc" id="L410">    }</span>
+
+    @Override
+    public void initSystemInfo() {
+        try {
+<span class="nc" id="L415">            this.taskScheduler().init();</span>
+<span class="nc" id="L416">            this.serverInfoManager().init();</span>
+<span class="nc" id="L417">            this.authManager().init();</span>
+        } finally {
+<span class="nc" id="L419">            this.closeTx();</span>
+        }
+<span class="nc" id="L421">        LOG.debug(&quot;Graph '{}' system info has been initialized&quot;, this);</span>
+<span class="nc" id="L422">    }</span>
+
+    @Override
+    public void createSnapshot() {
+<span class="nc" id="L426">        LockUtil.lock(this.name, LockUtil.GRAPH_LOCK);</span>
+        try {
+<span class="nc" id="L428">            this.storeProvider.createSnapshot();</span>
+        } finally {
+<span class="nc" id="L430">            LockUtil.unlock(this.name, LockUtil.GRAPH_LOCK);</span>
+        }
+<span class="nc" id="L432">        LOG.info(&quot;Graph '{}' has created snapshot&quot;, this.name);</span>
+<span class="nc" id="L433">    }</span>
+
+    @Override
+    public void resumeSnapshot() {
+<span class="nc" id="L437">        LockUtil.lock(this.name, LockUtil.GRAPH_LOCK);</span>
+        try {
+<span class="nc" id="L439">            this.storeProvider.resumeSnapshot();</span>
+        } finally {
+<span class="nc" id="L441">            LockUtil.unlock(this.name, LockUtil.GRAPH_LOCK);</span>
+        }
+<span class="nc" id="L443">        LOG.info(&quot;Graph '{}' has resumed from snapshot&quot;, this.name);</span>
+<span class="nc" id="L444">    }</span>
+
+    private void clearVertexCache() {
+<span class="nc" id="L447">        Future&lt;?&gt; future = this.graphEventHub.notify(Events.CACHE, &quot;clear&quot;,</span>
+                                                     HugeType.VERTEX);
+        try {
+<span class="nc" id="L450">            future.get();</span>
+<span class="nc" id="L451">        } catch (Throwable e) {</span>
+<span class="nc" id="L452">            LOG.warn(&quot;Error when waiting for event execution: vertex cache &quot; +</span>
+                     &quot;clear&quot;, e);
+<span class="nc" id="L454">        }</span>
+<span class="nc" id="L455">    }</span>
+
+    private SchemaTransaction openSchemaTransaction() throws HugeException {
+<span class="nc" id="L458">        this.checkGraphNotClosed();</span>
+        try {
+<span class="nc" id="L460">            return new CachedSchemaTransaction(this.params, loadSchemaStore());</span>
+<span class="nc" id="L461">        } catch (BackendException e) {</span>
+<span class="nc" id="L462">            String message = &quot;Failed to open schema transaction&quot;;</span>
+<span class="nc" id="L463">            LOG.error(&quot;{}&quot;, message, e);</span>
+<span class="nc" id="L464">            throw new HugeException(message, e);</span>
+        }
+    }
+
+    private SysTransaction openSystemTransaction() throws HugeException {
+<span class="nc" id="L469">        this.checkGraphNotClosed();</span>
+        try {
+<span class="nc" id="L471">            return new SysTransaction(this.params, loadSystemStore());</span>
+<span class="nc" id="L472">        } catch (BackendException e) {</span>
+<span class="nc" id="L473">            String message = &quot;Failed to open system transaction&quot;;</span>
+<span class="nc" id="L474">            LOG.error(&quot;{}&quot;, message, e);</span>
+<span class="nc" id="L475">            throw new HugeException(message);</span>
+        }
+    }
+
+    private GraphTransaction openGraphTransaction() throws HugeException {
+        // Open a new one
+<span class="nc" id="L481">        this.checkGraphNotClosed();</span>
+        try {
+<span class="nc" id="L483">            return new CachedGraphTransaction(this.params, loadGraphStore());</span>
+<span class="nc" id="L484">        } catch (BackendException e) {</span>
+<span class="nc" id="L485">            String message = &quot;Failed to open graph transaction&quot;;</span>
+<span class="nc" id="L486">            LOG.error(&quot;{}&quot;, message, e);</span>
+<span class="nc" id="L487">            throw new HugeException(message);</span>
+        }
+    }
+
+    private void checkGraphNotClosed() {
+<span class="nc bnc" id="L492" title="All 2 branches missed.">        E.checkState(!this.closed, &quot;Graph '%s' has been closed&quot;, this);</span>
+<span class="nc" id="L493">    }</span>
+
+    private BackendStore loadSchemaStore() {
+<span class="nc" id="L496">        return this.storeProvider.loadSchemaStore(this.configuration);</span>
+    }
+
+    private BackendStore loadGraphStore() {
+<span class="nc" id="L500">        return this.storeProvider.loadGraphStore(this.configuration);</span>
+    }
+
+    private BackendStore loadSystemStore() {
+<span class="nc" id="L504">        return this.storeProvider.loadSystemStore(this.configuration);</span>
+    }
+
+    @Watched
+    private SchemaTransaction schemaTransaction() {
+<span class="nc" id="L509">        this.checkGraphNotClosed();</span>
+        /*
+         * NOTE: each schema operation will be auto committed,
+         * Don't need to open tinkerpop tx by readWrite() and commit manually.
+         */
+<span class="nc" id="L514">        return this.tx.schemaTransaction();</span>
+    }
+
+    private SysTransaction systemTransaction() {
+<span class="nc" id="L518">        this.checkGraphNotClosed();</span>
+        /*
+         * NOTE: system operations must be committed manually,
+         * Maybe users need to auto open tinkerpop tx by readWrite().
+         */
+<span class="nc" id="L523">        this.tx.readWrite();</span>
+<span class="nc" id="L524">        return this.tx.systemTransaction();</span>
+    }
+
+    @Watched
+    private GraphTransaction graphTransaction() {
+<span class="nc" id="L529">        this.checkGraphNotClosed();</span>
+        /*
+         * NOTE: graph operations must be committed manually,
+         * Maybe users need to auto open tinkerpop tx by readWrite().
+         */
+<span class="nc" id="L534">        this.tx.readWrite();</span>
+<span class="nc" id="L535">        return this.tx.graphTransaction();</span>
+    }
+
+    private BackendStoreProvider loadStoreProvider() {
+<span class="nc" id="L539">        return BackendProviderFactory.open(this.params);</span>
+    }
+
+    private AbstractSerializer serializer() {
+<span class="nc" id="L543">        String name = this.configuration.get(CoreOptions.SERIALIZER);</span>
+<span class="nc" id="L544">        LOG.debug(&quot;Loading serializer '{}' for graph '{}'&quot;, name, this.name);</span>
+<span class="nc" id="L545">        AbstractSerializer serializer = SerializerFactory.serializer(this.configuration, name);</span>
+<span class="nc bnc" id="L546" title="All 2 branches missed.">        if (serializer == null) {</span>
+<span class="nc" id="L547">            throw new HugeException(&quot;Can't load serializer with name &quot; + name);</span>
+        }
+<span class="nc" id="L549">        return serializer;</span>
+    }
+
+    private Analyzer analyzer() {
+<span class="nc" id="L553">        String name = this.configuration.get(CoreOptions.TEXT_ANALYZER);</span>
+<span class="nc" id="L554">        String mode = this.configuration.get(CoreOptions.TEXT_ANALYZER_MODE);</span>
+<span class="nc" id="L555">        LOG.debug(&quot;Loading text analyzer '{}' with mode '{}' for graph '{}'&quot;,</span>
+                  name, mode, this.name);
+<span class="nc" id="L557">        return AnalyzerFactory.analyzer(name, mode);</span>
+    }
+
+    protected void reloadRamtable() {
+<span class="nc" id="L561">        this.reloadRamtable(false);</span>
+<span class="nc" id="L562">    }</span>
+
+    protected void reloadRamtable(boolean loadFromFile) {
+        // Expect triggered manually, like gremlin job
+<span class="nc bnc" id="L566" title="All 2 branches missed.">        if (this.ramtable != null) {</span>
+<span class="nc" id="L567">            this.ramtable.reload(loadFromFile, this.name);</span>
+        } else {
+<span class="nc" id="L569">            LOG.warn(&quot;The ramtable feature is not enabled for graph {}&quot;, this);</span>
+        }
+<span class="nc" id="L571">    }</span>
+
+    @Override
+    public &lt;C extends GraphComputer&gt; C compute(Class&lt;C&gt; clazz)
+                                               throws IllegalArgumentException {
+<span class="nc" id="L576">        throw Graph.Exceptions.graphComputerNotSupported();</span>
+    }
+
+    @Override
+    public GraphComputer compute() throws IllegalArgumentException {
+<span class="nc" id="L581">        throw Graph.Exceptions.graphComputerNotSupported();</span>
+    }
+
+    @SuppressWarnings({ &quot;unchecked&quot;, &quot;rawtypes&quot; })
+    @Override
+    public &lt;I extends Io&gt; I io(final Io.Builder&lt;I&gt; builder) {
+<span class="nc" id="L587">        return (I) builder.graph(this).onMapper(mapper -&gt;</span>
+<span class="nc" id="L588">            mapper.addRegistry(HugeGraphIoRegistry.instance())</span>
+<span class="nc" id="L589">        ).create();</span>
+    }
+
+    @Override
+    public Vertex addVertex(Object... keyValues) {
+<span class="nc" id="L594">        return this.graphTransaction().addVertex(keyValues);</span>
+    }
+
+    @Override
+    public void removeVertex(Vertex vertex) {
+<span class="nc" id="L599">        this.graphTransaction().removeVertex((HugeVertex) vertex);</span>
+<span class="nc" id="L600">    }</span>
+
+    @Override
+    public void removeVertex(String label, Object id) {
+<span class="nc bnc" id="L604" title="All 2 branches missed.">        if (label != null) {</span>
+<span class="nc" id="L605">            VertexLabel vl = this.vertexLabel(label);</span>
+            // It's OK even if exist adjacent edges `vl.existsLinkLabel()`
+<span class="nc bnc" id="L607" title="All 2 branches missed.">            if (!vl.existsIndexLabel()) {</span>
+                // Improve perf by removeVertex(id)
+<span class="nc" id="L609">                Id idValue = HugeVertex.getIdValue(id);</span>
+<span class="nc" id="L610">                HugeVertex vertex = new HugeVertex(this, idValue, vl);</span>
+<span class="nc" id="L611">                this.removeVertex(vertex);</span>
+<span class="nc" id="L612">                return;</span>
+            }
+        }
+
+<span class="nc" id="L616">        this.vertex(id).remove();</span>
+<span class="nc" id="L617">    }</span>
+
+    @Override
+    public &lt;V&gt; void addVertexProperty(VertexProperty&lt;V&gt; p) {
+<span class="nc" id="L621">        this.graphTransaction().addVertexProperty((HugeVertexProperty&lt;V&gt;) p);</span>
+<span class="nc" id="L622">    }</span>
+
+    @Override
+    public &lt;V&gt; void removeVertexProperty(VertexProperty&lt;V&gt; p) {
+<span class="nc" id="L626">        this.graphTransaction().removeVertexProperty((HugeVertexProperty&lt;V&gt;) p);</span>
+<span class="nc" id="L627">    }</span>
+
+    @Override
+    public Edge addEdge(Edge edge) {
+<span class="nc" id="L631">        return this.graphTransaction().addEdge((HugeEdge) edge);</span>
+    }
+
+    @Override
+    public void canAddEdge(Edge edge) {
+        // pass
+<span class="nc" id="L637">    }</span>
+
+    @Override
+    public void removeEdge(Edge edge) {
+<span class="nc" id="L641">        this.graphTransaction().removeEdge((HugeEdge) edge);</span>
+<span class="nc" id="L642">    }</span>
+
+    @Override
+    public void removeEdge(String label, Object id) {
+<span class="nc bnc" id="L646" title="All 2 branches missed.">        if (label != null) {</span>
+<span class="nc" id="L647">            EdgeLabel el = this.edgeLabel(label);</span>
+<span class="nc bnc" id="L648" title="All 2 branches missed.">            if (!el.existsIndexLabel()) {</span>
+                // Improve perf by removeEdge(id)
+<span class="nc" id="L650">                Id idValue = HugeEdge.getIdValue(id, false);</span>
+<span class="nc" id="L651">                HugeEdge edge = new HugeEdge(this, idValue, el);</span>
+<span class="nc" id="L652">                this.removeEdge(edge);</span>
+<span class="nc" id="L653">                return;</span>
+            }
+        }
+
+<span class="nc" id="L657">        this.edge(id).remove();</span>
+<span class="nc" id="L658">    }</span>
+
+    @Override
+    public &lt;V&gt; void addEdgeProperty(Property&lt;V&gt; p) {
+<span class="nc" id="L662">        this.graphTransaction().addEdgeProperty((HugeEdgeProperty&lt;V&gt;) p);</span>
+<span class="nc" id="L663">    }</span>
+
+    @Override
+    public &lt;V&gt; void removeEdgeProperty(Property&lt;V&gt; p) {
+<span class="nc" id="L667">        this.graphTransaction().removeEdgeProperty((HugeEdgeProperty&lt;V&gt;) p);</span>
+<span class="nc" id="L668">    }</span>
+
+    @Override
+    public Vertex vertex(Object object) {
+<span class="nc" id="L672">        return this.graphTransaction().queryVertex(object);</span>
+    }
+
+    @Override
+    public Iterator&lt;Vertex&gt; vertices(Object... objects) {
+<span class="nc bnc" id="L677" title="All 2 branches missed.">        if (objects.length == 0) {</span>
+<span class="nc" id="L678">            return this.graphTransaction().queryVertices();</span>
+        }
+<span class="nc" id="L680">        return this.graphTransaction().queryVertices(objects);</span>
+    }
+
+    @Override
+    public Iterator&lt;Vertex&gt; vertices(Query query) {
+<span class="nc" id="L685">        return this.graphTransaction().queryVertices(query);</span>
+    }
+
+    @Override
+    public Iterator&lt;Vertex&gt; adjacentVertex(Object id) {
+<span class="nc" id="L690">        return this.graphTransaction().queryAdjacentVertices(id);</span>
+    }
+
+    @Override
+    public boolean checkAdjacentVertexExist() {
+<span class="nc" id="L695">        return this.graphTransaction().checkAdjacentVertexExist();</span>
+    }
+
+    @Override
+    public Edge edge(Object object) {
+<span class="nc" id="L700">        return this.graphTransaction().queryEdge(object);</span>
+    }
+
+    @Override
+    public Iterator&lt;Edge&gt; edges(Object... objects) {
+<span class="nc bnc" id="L705" title="All 2 branches missed.">        if (objects.length == 0) {</span>
+<span class="nc" id="L706">            return this.graphTransaction().queryEdges();</span>
+        }
+<span class="nc" id="L708">        return this.graphTransaction().queryEdges(objects);</span>
+    }
+
+    @Override
+    @Watched
+    public Iterator&lt;Edge&gt; edges(Query query) {
+<span class="nc" id="L714">        return this.graphTransaction().queryEdges(query);</span>
+    }
+
+    @Override
+    public Iterator&lt;Vertex&gt; adjacentVertices(Iterator&lt;Edge&gt; edges) {
+<span class="nc" id="L719">        return this.graphTransaction().queryAdjacentVertices(edges);</span>
+    }
+
+    @Override
+    public Iterator&lt;Edge&gt; adjacentEdges(Id vertexId) {
+<span class="nc" id="L724">        return this.graphTransaction().queryEdgesByVertex(vertexId);</span>
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+<span class="nc" id="L729">        return this.graphTransaction().queryNumber(query);</span>
+    }
+
+    @Override
+    public Id addPropertyKey(PropertyKey pkey) {
+<span class="nc bnc" id="L734" title="All 2 branches missed.">        assert this.name.equals(pkey.graph().name());</span>
+<span class="nc bnc" id="L735" title="All 2 branches missed.">        if (pkey.olap()) {</span>
+<span class="nc" id="L736">            this.clearVertexCache();</span>
+        }
+<span class="nc" id="L738">        return this.schemaTransaction().addPropertyKey(pkey);</span>
+    }
+
+    @Override
+    public void updatePropertyKey(PropertyKey pkey) {
+<span class="nc bnc" id="L743" title="All 2 branches missed.">        assert this.name.equals(pkey.graph().name());</span>
+<span class="nc" id="L744">        this.schemaTransaction().updatePropertyKey(pkey);</span>
+<span class="nc" id="L745">    }</span>
+
+    @Override
+    public Id removePropertyKey(Id pkey) {
+<span class="nc bnc" id="L749" title="All 2 branches missed.">        if (this.propertyKey(pkey).olap()) {</span>
+<span class="nc" id="L750">            this.clearVertexCache();</span>
+        }
+<span class="nc" id="L752">        return this.schemaTransaction().removePropertyKey(pkey);</span>
+    }
+
+    @Override
+    public Collection&lt;PropertyKey&gt; propertyKeys() {
+<span class="nc" id="L757">        return this.schemaTransaction().getPropertyKeys();</span>
+    }
+
+    @Override
+    public PropertyKey propertyKey(Id id) {
+<span class="nc" id="L762">        PropertyKey pk = this.schemaTransaction().getPropertyKey(id);</span>
+<span class="nc bnc" id="L763" title="All 2 branches missed.">        E.checkArgument(pk != null, &quot;Undefined property key with id: '%s'&quot;, id);</span>
+<span class="nc" id="L764">        return pk;</span>
+    }
+
+    @Override
+    public PropertyKey propertyKey(String name) {
+<span class="nc" id="L769">        PropertyKey pk = this.schemaTransaction().getPropertyKey(name);</span>
+<span class="nc bnc" id="L770" title="All 2 branches missed.">        E.checkArgument(pk != null, &quot;Undefined property key: '%s'&quot;, name);</span>
+<span class="nc" id="L771">        return pk;</span>
+    }
+
+    @Override
+    public Id clearPropertyKey(PropertyKey propertyKey) {
+<span class="nc bnc" id="L776" title="All 2 branches missed.">        if (propertyKey.oltp()) {</span>
+<span class="nc" id="L777">            return IdGenerator.ZERO;</span>
+        }
+<span class="nc" id="L779">        this.clearVertexCache();</span>
+<span class="nc" id="L780">        return this.schemaTransaction().clearOlapPk(propertyKey);</span>
+    }
+
+    @Override
+    public boolean existsPropertyKey(String name) {
+<span class="nc bnc" id="L785" title="All 2 branches missed.">        return this.schemaTransaction().getPropertyKey(name) != null;</span>
+    }
+
+    @Override
+    public void addVertexLabel(VertexLabel label) {
+<span class="nc bnc" id="L790" title="All 2 branches missed.">        assert this.name.equals(label.graph().name());</span>
+<span class="nc" id="L791">        this.schemaTransaction().addVertexLabel(label);</span>
+<span class="nc" id="L792">    }</span>
+
+    @Override
+    public void updateVertexLabel(VertexLabel label) {
+<span class="nc bnc" id="L796" title="All 2 branches missed.">        assert this.name.equals(label.graph().name());</span>
+<span class="nc" id="L797">        this.schemaTransaction().updateVertexLabel(label);</span>
+<span class="nc" id="L798">    }</span>
+
+    @Override
+    public Id removeVertexLabel(Id label) {
+<span class="nc" id="L802">        return this.schemaTransaction().removeVertexLabel(label);</span>
+    }
+
+    @Override
+    public Collection&lt;VertexLabel&gt; vertexLabels() {
+<span class="nc" id="L807">        return this.schemaTransaction().getVertexLabels();</span>
+    }
+
+    @Override
+    @Watched
+    public VertexLabel vertexLabelOrNone(Id id) {
+<span class="nc" id="L813">        VertexLabel vl = this.schemaTransaction().getVertexLabel(id);</span>
+<span class="nc bnc" id="L814" title="All 2 branches missed.">        if (vl == null) {</span>
+<span class="nc" id="L815">            vl = VertexLabel.undefined(this, id);</span>
+        }
+<span class="nc" id="L817">        return vl;</span>
+    }
+
+    @Override
+    public VertexLabel vertexLabel(Id id) {
+<span class="nc" id="L822">        VertexLabel vl = this.schemaTransaction().getVertexLabel(id);</span>
+<span class="nc bnc" id="L823" title="All 2 branches missed.">        E.checkArgument(vl != null, &quot;Undefined vertex label with id: '%s'&quot;, id);</span>
+<span class="nc" id="L824">        return vl;</span>
+    }
+
+    @Override
+    public VertexLabel vertexLabel(String name) {
+<span class="nc" id="L829">        VertexLabel vl = this.schemaTransaction().getVertexLabel(name);</span>
+<span class="nc bnc" id="L830" title="All 2 branches missed.">        E.checkArgument(vl != null, &quot;Undefined vertex label: '%s'&quot;, name);</span>
+<span class="nc" id="L831">        return vl;</span>
+    }
+
+    @Override
+    public boolean existsVertexLabel(String name) {
+<span class="nc bnc" id="L836" title="All 2 branches missed.">        return this.schemaTransaction().getVertexLabel(name) != null;</span>
+    }
+
+    @Override
+    public boolean existsLinkLabel(Id vertexLabel) {
+<span class="nc" id="L841">        List&lt;EdgeLabel&gt; edgeLabels = this.schemaTransaction().getEdgeLabels();</span>
+<span class="nc bnc" id="L842" title="All 2 branches missed.">        for (EdgeLabel edgeLabel : edgeLabels) {</span>
+<span class="nc bnc" id="L843" title="All 2 branches missed.">            if (edgeLabel.linkWithLabel(vertexLabel)) {</span>
+<span class="nc" id="L844">                return true;</span>
+            }
+<span class="nc" id="L846">        }</span>
+<span class="nc" id="L847">        return false;</span>
+    }
+
+    @Override
+    public void addEdgeLabel(EdgeLabel label) {
+<span class="nc bnc" id="L852" title="All 2 branches missed.">        assert this.name.equals(label.graph().name());</span>
+<span class="nc" id="L853">        this.schemaTransaction().addEdgeLabel(label);</span>
+<span class="nc" id="L854">    }</span>
+
+    @Override
+    public void updateEdgeLabel(EdgeLabel label) {
+<span class="nc bnc" id="L858" title="All 2 branches missed.">        assert this.name.equals(label.graph().name());</span>
+<span class="nc" id="L859">        this.schemaTransaction().updateEdgeLabel(label);</span>
+<span class="nc" id="L860">    }</span>
+
+    @Override
+    public Id removeEdgeLabel(Id id) {
+<span class="nc" id="L864">        return this.schemaTransaction().removeEdgeLabel(id);</span>
+    }
+
+    @Override
+    public Collection&lt;EdgeLabel&gt; edgeLabels() {
+<span class="nc" id="L869">        return this.schemaTransaction().getEdgeLabels();</span>
+    }
+
+    @Override
+    public EdgeLabel edgeLabelOrNone(Id id) {
+<span class="nc" id="L874">        EdgeLabel el = this.schemaTransaction().getEdgeLabel(id);</span>
+<span class="nc bnc" id="L875" title="All 2 branches missed.">        if (el == null) {</span>
+<span class="nc" id="L876">            el = EdgeLabel.undefined(this, id);</span>
+        }
+<span class="nc" id="L878">        return el;</span>
+    }
+
+    @Override
+    public EdgeLabel edgeLabel(Id id) {
+<span class="nc" id="L883">        EdgeLabel el = this.schemaTransaction().getEdgeLabel(id);</span>
+<span class="nc bnc" id="L884" title="All 2 branches missed.">        E.checkArgument(el != null, &quot;Undefined edge label with id: '%s'&quot;, id);</span>
+<span class="nc" id="L885">        return el;</span>
+    }
+
+    @Override
+    public EdgeLabel edgeLabel(String name) {
+<span class="nc" id="L890">        EdgeLabel el = this.schemaTransaction().getEdgeLabel(name);</span>
+<span class="nc bnc" id="L891" title="All 2 branches missed.">        E.checkArgument(el != null, &quot;Undefined edge label: '%s'&quot;, name);</span>
+<span class="nc" id="L892">        return el;</span>
+    }
+
+    @Override
+    public boolean existsEdgeLabel(String name) {
+<span class="nc bnc" id="L897" title="All 2 branches missed.">        return this.schemaTransaction().getEdgeLabel(name) != null;</span>
+    }
+
+    @Override
+    public void addIndexLabel(SchemaLabel schemaLabel, IndexLabel indexLabel) {
+<span class="nc bnc" id="L902" title="All 2 branches missed.">        assert VertexLabel.OLAP_VL.equals(schemaLabel) ||</span>
+<span class="nc bnc" id="L903" title="All 2 branches missed.">               this.name.equals(schemaLabel.graph().name());</span>
+<span class="nc bnc" id="L904" title="All 2 branches missed.">        assert this.name.equals(indexLabel.graph().name());</span>
+<span class="nc" id="L905">        this.schemaTransaction().addIndexLabel(schemaLabel, indexLabel);</span>
+<span class="nc" id="L906">    }</span>
+
+    @Override
+    public void updateIndexLabel(IndexLabel label) {
+<span class="nc bnc" id="L910" title="All 2 branches missed.">        assert this.name.equals(label.graph().name());</span>
+<span class="nc" id="L911">        this.schemaTransaction().updateIndexLabel(label);</span>
+<span class="nc" id="L912">    }</span>
+
+    @Override
+    public Id removeIndexLabel(Id id) {
+<span class="nc" id="L916">        return this.schemaTransaction().removeIndexLabel(id);</span>
+    }
+
+    @Override
+    public Id rebuildIndex(SchemaElement schema) {
+<span class="nc" id="L921">        return this.schemaTransaction().rebuildIndex(schema);</span>
+    }
+
+    @Override
+    public Collection&lt;IndexLabel&gt; indexLabels() {
+<span class="nc" id="L926">        return this.schemaTransaction().getIndexLabels();</span>
+    }
+
+    @Override
+    public IndexLabel indexLabel(Id id) {
+<span class="nc" id="L931">        IndexLabel il = this.schemaTransaction().getIndexLabel(id);</span>
+<span class="nc bnc" id="L932" title="All 2 branches missed.">        E.checkArgument(il != null, &quot;Undefined index label with id: '%s'&quot;, id);</span>
+<span class="nc" id="L933">        return il;</span>
+    }
+
+    @Override
+    public IndexLabel indexLabel(String name) {
+<span class="nc" id="L938">        IndexLabel il = this.schemaTransaction().getIndexLabel(name);</span>
+<span class="nc bnc" id="L939" title="All 2 branches missed.">        E.checkArgument(il != null, &quot;Undefined index label: '%s'&quot;, name);</span>
+<span class="nc" id="L940">        return il;</span>
+    }
+
+    @Override
+    public boolean existsIndexLabel(String name) {
+<span class="nc bnc" id="L945" title="All 2 branches missed.">        return this.schemaTransaction().getIndexLabel(name) != null;</span>
+    }
+
+    @Override
+    public Transaction tx() {
+<span class="nc" id="L950">        return this.tx;</span>
+    }
+
+    @Override
+    public synchronized void close() throws Exception {
+<span class="nc bnc" id="L955" title="All 2 branches missed.">        if (this.closed()) {</span>
+<span class="nc" id="L956">            return;</span>
+        }
+
+<span class="nc" id="L959">        LOG.info(&quot;Close graph {}&quot;, this);</span>
+<span class="nc bnc" id="L960" title="All 2 branches missed.">        if (StandardAuthManager.isLocal(this.authManager)) {</span>
+<span class="nc" id="L961">            this.authManager.close();</span>
+        }
+<span class="nc" id="L963">        this.taskManager.closeScheduler(this.params);</span>
+        try {
+<span class="nc" id="L965">            this.closeTx();</span>
+        } finally {
+<span class="nc" id="L967">            this.closed = true;</span>
+<span class="nc" id="L968">            this.storeProvider.close();</span>
+<span class="nc" id="L969">            LockUtil.destroy(this.name);</span>
+        }
+        // Make sure that all transactions are closed in all threads
+<span class="nc" id="L972">        E.checkState(this.tx.closed(),</span>
+                     &quot;Ensure tx closed in all threads when closing graph '%s'&quot;,
+                     this.name);
+<span class="nc" id="L975">    }</span>
+
+    @Override
+    public void create(String configPath, GlobalMasterInfo nodeInfo) {
+<span class="nc" id="L979">        this.initBackend();</span>
+<span class="nc" id="L980">        this.serverStarted(nodeInfo);</span>
+
+        // Write config to disk file
+<span class="nc" id="L983">        String confPath = ConfigUtil.writeToFile(configPath, this.name(),</span>
+<span class="nc" id="L984">                                                 this.configuration());</span>
+<span class="nc" id="L985">        this.configuration.file(confPath);</span>
+<span class="nc" id="L986">    }</span>
+
+    @Override
+    public void drop() {
+<span class="nc" id="L990">        this.clearBackend();</span>
+
+<span class="nc" id="L992">        HugeConfig config = this.configuration();</span>
+<span class="nc" id="L993">        this.storeProvider.onDeleteConfig(config);</span>
+<span class="nc" id="L994">        ConfigUtil.deleteFile(config.file());</span>
+
+        try {
+            /*
+             * It's hard to ensure all threads close the tx.
+             * TODO:
+             *  - schedule a tx-close to each thread,
+             *   or
+             *  - add forceClose() method to backend store.
+             */
+<span class="nc" id="L1004">            this.close();</span>
+<span class="nc" id="L1005">        } catch (Throwable e) {</span>
+<span class="nc" id="L1006">            LOG.warn(&quot;Failed to close graph {} {}&quot;, this, e);</span>
+<span class="nc" id="L1007">        }</span>
+<span class="nc" id="L1008">    }</span>
+
+    @Override
+    public HugeConfig cloneConfig(String newGraph) {
+<span class="nc" id="L1012">        HugeConfig config = (HugeConfig) this.configuration().clone();</span>
+<span class="nc" id="L1013">        this.storeProvider.onCloneConfig(config, newGraph);</span>
+<span class="nc" id="L1014">        return config;</span>
+    }
+
+    @Override
+    public HugeFeatures features() {
+<span class="nc" id="L1019">        return this.features;</span>
+    }
+
+    @Override
+    public synchronized Variables variables() {
+<span class="nc bnc" id="L1024" title="All 2 branches missed.">        if (this.variables == null) {</span>
+<span class="nc" id="L1025">            this.variables = new HugeVariables(this.params);</span>
+        }
+        // Ensure variables() work after variables schema was cleared
+<span class="nc" id="L1028">        this.variables.initSchemaIfNeeded();</span>
+<span class="nc" id="L1029">        return this.variables;</span>
+    }
+
+    @Override
+    public SchemaManager schema() {
+<span class="nc" id="L1034">        return new SchemaManager(this.schemaTransaction(), this);</span>
+    }
+
+    @Override
+    public Id getNextId(HugeType type) {
+<span class="nc" id="L1039">        return this.schemaTransaction().getNextId(type);</span>
+    }
+
+    @Override
+    public &lt;T&gt; T metadata(HugeType type, String meta, Object... args) {
+<span class="nc" id="L1044">        return this.graphTransaction().metadata(type, meta, args);</span>
+    }
+
+    @Override
+    public TaskScheduler taskScheduler() {
+<span class="nc" id="L1049">        TaskScheduler scheduler = this.taskManager.getScheduler(this.params);</span>
+<span class="nc bnc" id="L1050" title="All 2 branches missed.">        E.checkState(scheduler != null,</span>
+                     &quot;Can't find task scheduler for graph '%s'&quot;, this);
+<span class="nc" id="L1052">        return scheduler;</span>
+    }
+
+    private ServerInfoManager serverInfoManager() {
+<span class="nc" id="L1056">        ServerInfoManager manager = this.taskManager.getServerInfoManager(this.params);</span>
+<span class="nc bnc" id="L1057" title="All 2 branches missed.">        E.checkState(manager != null,</span>
+                     &quot;Can't find server info manager for graph '%s'&quot;, this);
+<span class="nc" id="L1059">        return manager;</span>
+    }
+
+    @Override
+    public AuthManager authManager() {
+        // this.authManager.initSchemaIfNeeded();
+<span class="nc" id="L1065">        return this.authManager;</span>
+    }
+
+    @Override
+    public RoleElectionStateMachine roleElectionStateMachine() {
+<span class="nc" id="L1070">        return this.roleElectionStateMachine;</span>
+    }
+
+    @Override
+    public void switchAuthManager(AuthManager authManager) {
+<span class="nc" id="L1075">        this.authManager = authManager;</span>
+<span class="nc" id="L1076">    }</span>
+
+    @Override
+    public RaftGroupManager raftGroupManager() {
+<span class="nc bnc" id="L1080" title="All 2 branches missed.">        if (!(this.storeProvider instanceof RaftBackendStoreProvider)) {</span>
+<span class="nc" id="L1081">            return null;</span>
+        }
+<span class="nc" id="L1083">        RaftBackendStoreProvider provider =</span>
+                ((RaftBackendStoreProvider) this.storeProvider);
+<span class="nc" id="L1085">        return provider.raftNodeManager();</span>
+    }
+
+    @Override
+    public HugeConfig configuration() {
+<span class="nc" id="L1090">        return this.configuration;</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L1095">        return StringFactory.graphString(this, this.name());</span>
+    }
+
+    @Override
+    public final void proxy(HugeGraph graph) {
+<span class="nc" id="L1100">        this.params.graph(graph);</span>
+<span class="nc" id="L1101">    }</span>
+
+    @Override
+    public boolean sameAs(HugeGraph graph) {
+<span class="nc bnc" id="L1105" title="All 2 branches missed.">        return this == graph;</span>
+    }
+
+    @Override
+    public long now() {
+<span class="nc" id="L1110">        return ((TinkerPopTransaction) this.tx()).openedTime();</span>
+    }
+
+    @Override
+    public &lt;K, V&gt; V option(TypedOption&lt;K, V&gt; option) {
+<span class="nc" id="L1115">        HugeConfig config = this.configuration();</span>
+<span class="nc bnc" id="L1116" title="All 2 branches missed.">        if (!ALLOWED_CONFIGS.contains(option)) {</span>
+<span class="nc" id="L1117">            throw new NotAllowException(&quot;Not allowed to access config: %s&quot;,</span>
+<span class="nc" id="L1118">                                        option.name());</span>
+        }
+<span class="nc" id="L1120">        return config.get(option);</span>
+    }
+
+    @Override
+    public void registerRpcServices(RpcServiceConfig4Server serverConfig,
+                                    RpcServiceConfig4Client clientConfig) {
+        /*
+         * Skip register cache-rpc service if it's non-shared storage,
+         * because we assume cache of non-shared storage is updated by raft.
+         */
+<span class="nc bnc" id="L1130" title="All 2 branches missed.">        if (!this.backendStoreFeatures().supportsSharedStorage()) {</span>
+<span class="nc" id="L1131">            return;</span>
+        }
+
+<span class="nc" id="L1134">        Class&lt;GraphCacheNotifier&gt; clazz1 = GraphCacheNotifier.class;</span>
+        // The proxy is sometimes unavailable (issue #664)
+<span class="nc" id="L1136">        CacheNotifier proxy = clientConfig.serviceProxy(this.name, clazz1);</span>
+<span class="nc" id="L1137">        serverConfig.addService(this.name, clazz1, new HugeGraphCacheNotifier(</span>
+                                                   this.graphEventHub, proxy));
+
+<span class="nc" id="L1140">        Class&lt;SchemaCacheNotifier&gt; clazz2 = SchemaCacheNotifier.class;</span>
+<span class="nc" id="L1141">        proxy = clientConfig.serviceProxy(this.name, clazz2);</span>
+<span class="nc" id="L1142">        serverConfig.addService(this.name, clazz2, new HugeSchemaCacheNotifier(</span>
+                                                   this.schemaEventHub, proxy));
+<span class="nc" id="L1144">    }</span>
+
+    private void closeTx() {
+        try {
+<span class="nc bnc" id="L1148" title="All 2 branches missed.">            if (this.tx.isOpen()) {</span>
+<span class="nc" id="L1149">                this.tx.close();</span>
+            }
+        } finally {
+<span class="nc" id="L1152">            this.tx.destroyTransaction();</span>
+        }
+<span class="nc" id="L1154">    }</span>
+
+    private void waitUntilAllTasksCompleted() {
+<span class="nc" id="L1157">        long timeout = this.configuration.get(CoreOptions.TASK_WAIT_TIMEOUT);</span>
+        try {
+<span class="nc" id="L1159">            this.taskScheduler().waitUntilAllTasksCompleted(timeout);</span>
+<span class="nc" id="L1160">        } catch (TimeoutException e) {</span>
+<span class="nc" id="L1161">            throw new HugeException(&quot;Failed to wait all tasks to complete&quot;, e);</span>
+<span class="nc" id="L1162">        }</span>
+<span class="nc" id="L1163">    }</span>
+
+<span class="nc" id="L1165">    private class StandardHugeGraphParams implements HugeGraphParams {</span>
+
+<span class="nc" id="L1167">        private HugeGraph graph = StandardHugeGraph.this;</span>
+<span class="nc" id="L1168">        private final EphemeralJobQueue ephemeralJobQueue = new EphemeralJobQueue(this);</span>
+
+        private void graph(HugeGraph graph) {
+<span class="nc" id="L1171">            this.graph = graph;</span>
+<span class="nc" id="L1172">        }</span>
+
+        @Override
+        public HugeGraph graph() {
+<span class="nc" id="L1176">            return this.graph;</span>
+        }
+
+        @Override
+        public String name() {
+<span class="nc" id="L1181">            return StandardHugeGraph.this.name();</span>
+        }
+
+        @Override
+        public GraphMode mode() {
+<span class="nc" id="L1186">            return StandardHugeGraph.this.mode();</span>
+        }
+
+        @Override
+        public GraphReadMode readMode() {
+<span class="nc" id="L1191">            return StandardHugeGraph.this.readMode();</span>
+        }
+
+        @Override
+        public SchemaTransaction schemaTransaction() {
+<span class="nc" id="L1196">            return StandardHugeGraph.this.schemaTransaction();</span>
+        }
+
+        @Override
+        public GraphTransaction systemTransaction() {
+<span class="nc" id="L1201">            return StandardHugeGraph.this.systemTransaction();</span>
+        }
+
+        @Override
+        public GraphTransaction graphTransaction() {
+<span class="nc" id="L1206">            return StandardHugeGraph.this.graphTransaction();</span>
+        }
+
+        @Override
+        public GraphTransaction openTransaction() {
+            // Open a new one
+<span class="nc" id="L1212">            return StandardHugeGraph.this.openGraphTransaction();</span>
+        }
+
+        @Override
+        public void closeTx() {
+<span class="nc" id="L1217">            StandardHugeGraph.this.closeTx();</span>
+<span class="nc" id="L1218">        }</span>
+
+        @Override
+        public boolean started() {
+<span class="nc" id="L1222">            return StandardHugeGraph.this.started();</span>
+        }
+
+        @Override
+        public boolean closed() {
+<span class="nc" id="L1227">            return StandardHugeGraph.this.closed();</span>
+        }
+
+        @Override
+        public boolean initialized() {
+<span class="nc" id="L1232">            return StandardHugeGraph.this.graphTransaction().storeInitialized();</span>
+        }
+
+        @Override
+        public BackendFeatures backendStoreFeatures() {
+<span class="nc" id="L1237">            return StandardHugeGraph.this.backendStoreFeatures();</span>
+        }
+
+        @Override
+        public BackendStore loadSchemaStore() {
+<span class="nc" id="L1242">            return StandardHugeGraph.this.loadSchemaStore();</span>
+        }
+
+        @Override
+        public BackendStore loadGraphStore() {
+<span class="nc" id="L1247">            return StandardHugeGraph.this.loadGraphStore();</span>
+        }
+
+        @Override
+        public BackendStore loadSystemStore() {
+<span class="nc" id="L1252">            return StandardHugeGraph.this.loadSystemStore();</span>
+        }
+
+        @Override
+        public EventHub schemaEventHub() {
+<span class="nc" id="L1257">            return StandardHugeGraph.this.schemaEventHub;</span>
+        }
+
+        @Override
+        public EventHub graphEventHub() {
+<span class="nc" id="L1262">            return StandardHugeGraph.this.graphEventHub;</span>
+        }
+
+        @Override
+        public EventHub indexEventHub() {
+<span class="nc" id="L1267">            return StandardHugeGraph.this.indexEventHub;</span>
+        }
+
+        @Override
+        public HugeConfig configuration() {
+<span class="nc" id="L1272">            return StandardHugeGraph.this.configuration();</span>
+        }
+
+        @Override
+        public ServerInfoManager serverManager() {
+            // this.serverManager.initSchemaIfNeeded();
+<span class="nc" id="L1278">            return StandardHugeGraph.this.serverInfoManager();</span>
+        }
+
+        @Override
+        public LocalCounter counter() {
+<span class="nc" id="L1283">            return StandardHugeGraph.this.localCounter;</span>
+        }
+
+        @Override
+        public AbstractSerializer serializer() {
+<span class="nc" id="L1288">            return StandardHugeGraph.this.serializer();</span>
+        }
+
+        @Override
+        public Analyzer analyzer() {
+<span class="nc" id="L1293">            return StandardHugeGraph.this.analyzer();</span>
+        }
+
+        @Override
+        public RateLimiter writeRateLimiter() {
+<span class="nc" id="L1298">            return StandardHugeGraph.this.writeRateLimiter;</span>
+        }
+
+        @Override
+        public RateLimiter readRateLimiter() {
+<span class="nc" id="L1303">            return StandardHugeGraph.this.readRateLimiter;</span>
+        }
+
+        @Override
+        public RamTable ramtable() {
+<span class="nc" id="L1308">            return StandardHugeGraph.this.ramtable;</span>
+        }
+
+        @Override
+        public &lt;T&gt; void submitEphemeralJob(EphemeralJob&lt;T&gt; job) {
+<span class="nc" id="L1313">            this.ephemeralJobQueue.add(job);</span>
+<span class="nc" id="L1314">        }</span>
+    }
+
+<span class="nc" id="L1317">    private class TinkerPopTransaction extends AbstractThreadLocalTransaction {</span>
+
+        // Times opened from upper layer
+        private final AtomicInteger refs;
+        // Flag opened of each thread
+        private final ThreadLocal&lt;Boolean&gt; opened;
+        // Backend transactions
+        private final ThreadLocal&lt;Txs&gt; transactions;
+
+<span class="nc" id="L1326">        public TinkerPopTransaction(Graph graph) {</span>
+<span class="nc" id="L1327">            super(graph);</span>
+
+<span class="nc" id="L1329">            this.refs = new AtomicInteger();</span>
+<span class="nc" id="L1330">            this.opened = ThreadLocal.withInitial(() -&gt; false);</span>
+<span class="nc" id="L1331">            this.transactions = ThreadLocal.withInitial(() -&gt; null);</span>
+<span class="nc" id="L1332">        }</span>
+
+        public boolean closed() {
+<span class="nc" id="L1335">            int refs = this.refs.get();</span>
+<span class="nc bnc" id="L1336" title="All 2 branches missed.">            assert refs &gt;= 0 : refs;</span>
+<span class="nc bnc" id="L1337" title="All 2 branches missed.">            return refs == 0;</span>
+        }
+
+        /**
+         * Commit tx if batch size reaches the specified value,
+         * it may be used by Gremlin
+         */
+        @SuppressWarnings(&quot;unused&quot;)
+        public void commitIfGtSize(int size) {
+            // Only commit graph transaction data (schema auto committed)
+<span class="nc" id="L1347">            this.graphTransaction().commitIfGtSize(size);</span>
+<span class="nc" id="L1348">        }</span>
+
+        @Override
+        public void commit() {
+            try {
+<span class="nc" id="L1353">                super.commit();</span>
+            } finally {
+<span class="nc" id="L1355">                this.setClosed();</span>
+            }
+<span class="nc" id="L1357">        }</span>
+
+        @Override
+        public void rollback() {
+            try {
+<span class="nc" id="L1362">                super.rollback();</span>
+            } finally {
+<span class="nc" id="L1364">                this.setClosed();</span>
+            }
+<span class="nc" id="L1366">        }</span>
+
+        @Override
+        public &lt;G extends Graph&gt; G createThreadedTx() {
+<span class="nc" id="L1370">            throw Transaction.Exceptions.threadedTransactionsNotSupported();</span>
+        }
+
+        @Override
+        public boolean isOpen() {
+<span class="nc" id="L1375">            return this.opened.get();</span>
+        }
+
+        @Override
+        protected void doOpen() {
+<span class="nc" id="L1380">            this.getOrNewTransaction();</span>
+<span class="nc" id="L1381">            this.setOpened();</span>
+<span class="nc" id="L1382">        }</span>
+
+        @Override
+        protected void doCommit() {
+<span class="nc" id="L1386">            this.verifyOpened();</span>
+<span class="nc" id="L1387">            this.getOrNewTransaction().commit();</span>
+<span class="nc" id="L1388">        }</span>
+
+        @Override
+        protected void doRollback() {
+<span class="nc" id="L1392">            this.verifyOpened();</span>
+<span class="nc" id="L1393">            this.getOrNewTransaction().rollback();</span>
+<span class="nc" id="L1394">        }</span>
+
+        @Override
+        protected void doClose() {
+<span class="nc" id="L1398">            this.verifyOpened();</span>
+
+            try {
+                // Calling super.doClose() will clear listeners
+<span class="nc" id="L1402">                super.doClose();</span>
+            } finally {
+<span class="nc" id="L1404">                this.resetState();</span>
+            }
+<span class="nc" id="L1406">        }</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L1410">            return String.format(&quot;TinkerPopTransaction{opened=%s, txs=%s}&quot;,</span>
+<span class="nc" id="L1411">                                 this.opened.get(), this.transactions.get());</span>
+        }
+
+        public long openedTime() {
+<span class="nc" id="L1415">            return this.transactions.get().openedTime();</span>
+        }
+
+        private void verifyOpened() {
+<span class="nc bnc" id="L1419" title="All 2 branches missed.">            if (!this.isOpen()) {</span>
+<span class="nc" id="L1420">                throw new HugeException(&quot;Transaction has not been opened&quot;);</span>
+            }
+<span class="nc" id="L1422">        }</span>
+
+        private void resetState() {
+<span class="nc" id="L1425">            this.setClosed();</span>
+<span class="nc" id="L1426">            this.readWriteConsumerInternal.set(READ_WRITE_BEHAVIOR.AUTO);</span>
+<span class="nc" id="L1427">            this.closeConsumerInternal.set(CLOSE_BEHAVIOR.ROLLBACK);</span>
+<span class="nc" id="L1428">        }</span>
+
+        private void setOpened() {
+            // The backend tx may be reused, here just set a flag
+<span class="nc bnc" id="L1432" title="All 2 branches missed.">            assert !this.opened.get();</span>
+<span class="nc" id="L1433">            this.opened.set(true);</span>
+<span class="nc" id="L1434">            this.transactions.get().openedTime(DateUtil.now().getTime());</span>
+<span class="nc" id="L1435">            this.refs.incrementAndGet();</span>
+<span class="nc" id="L1436">        }</span>
+
+        private void setClosed() {
+            // Just set flag opened=false to reuse the backend tx
+<span class="nc bnc" id="L1440" title="All 2 branches missed.">            if (this.opened.get()) {</span>
+<span class="nc" id="L1441">                this.opened.set(false);</span>
+<span class="nc" id="L1442">                this.refs.decrementAndGet();</span>
+            }
+<span class="nc" id="L1444">        }</span>
+
+        private SchemaTransaction schemaTransaction() {
+<span class="nc" id="L1447">            return this.getOrNewTransaction().schemaTx;</span>
+        }
+
+        private SysTransaction systemTransaction() {
+<span class="nc" id="L1451">            return this.getOrNewTransaction().systemTx;</span>
+        }
+
+        private GraphTransaction graphTransaction() {
+<span class="nc" id="L1455">            return this.getOrNewTransaction().graphTx;</span>
+        }
+
+        private Txs getOrNewTransaction() {
+            /*
+             * NOTE: this method may be called even tx is not opened,
+             * the reason is for reusing backend tx.
+             * so we don't call this.verifyOpened() here.
+             */
+
+<span class="nc" id="L1465">            Txs txs = this.transactions.get();</span>
+<span class="nc bnc" id="L1466" title="All 2 branches missed.">            if (txs == null) {</span>
+<span class="nc" id="L1467">                SchemaTransaction schemaTransaction = null;</span>
+<span class="nc" id="L1468">                SysTransaction sysTransaction = null;</span>
+<span class="nc" id="L1469">                GraphTransaction graphTransaction = null;</span>
+                try {
+<span class="nc" id="L1471">                    schemaTransaction = openSchemaTransaction();</span>
+<span class="nc" id="L1472">                    sysTransaction = openSystemTransaction();</span>
+<span class="nc" id="L1473">                    graphTransaction = openGraphTransaction();</span>
+<span class="nc" id="L1474">                    txs = new Txs(schemaTransaction, sysTransaction,</span>
+                                  graphTransaction);
+<span class="nc" id="L1476">                } catch (Throwable e) {</span>
+<span class="nc bnc" id="L1477" title="All 2 branches missed.">                    if (schemaTransaction != null) {</span>
+<span class="nc" id="L1478">                        schemaTransaction.close();</span>
+                    }
+<span class="nc bnc" id="L1480" title="All 2 branches missed.">                    if (sysTransaction != null) {</span>
+<span class="nc" id="L1481">                        sysTransaction.close();</span>
+                    }
+<span class="nc bnc" id="L1483" title="All 2 branches missed.">                    if (graphTransaction != null) {</span>
+<span class="nc" id="L1484">                        graphTransaction.close();</span>
+                    }
+<span class="nc" id="L1486">                    throw e;</span>
+<span class="nc" id="L1487">                }</span>
+<span class="nc" id="L1488">                this.transactions.set(txs);</span>
+            }
+<span class="nc" id="L1490">            return txs;</span>
+        }
+
+        private void destroyTransaction() {
+<span class="nc bnc" id="L1494" title="All 2 branches missed.">            if (this.isOpen()) {</span>
+<span class="nc" id="L1495">                throw new HugeException(</span>
+                          &quot;Transaction should be closed before destroying&quot;);
+            }
+
+            // Do close if needed, then remove the reference
+<span class="nc" id="L1500">            Txs txs = this.transactions.get();</span>
+<span class="nc bnc" id="L1501" title="All 2 branches missed.">            if (txs != null) {</span>
+<span class="nc" id="L1502">                txs.close();</span>
+            }
+<span class="nc" id="L1504">            this.transactions.remove();</span>
+<span class="nc" id="L1505">        }</span>
+    }
+
+<span class="nc" id="L1508">    private static final class Txs {</span>
+
+        private final SchemaTransaction schemaTx;
+        private final SysTransaction systemTx;
+        private final GraphTransaction graphTx;
+        private long openedTime;
+
+        public Txs(SchemaTransaction schemaTx, SysTransaction systemTx,
+<span class="nc" id="L1516">                   GraphTransaction graphTx) {</span>
+<span class="nc bnc" id="L1517" title="All 6 branches missed.">            assert schemaTx != null &amp;&amp; systemTx != null &amp;&amp; graphTx != null;</span>
+<span class="nc" id="L1518">            this.schemaTx = schemaTx;</span>
+<span class="nc" id="L1519">            this.systemTx = systemTx;</span>
+<span class="nc" id="L1520">            this.graphTx = graphTx;</span>
+<span class="nc" id="L1521">            this.openedTime = DateUtil.now().getTime();</span>
+<span class="nc" id="L1522">        }</span>
+
+        public void commit() {
+<span class="nc" id="L1525">            this.graphTx.commit();</span>
+<span class="nc" id="L1526">        }</span>
+
+        public void rollback() {
+<span class="nc" id="L1529">            this.graphTx.rollback();</span>
+<span class="nc" id="L1530">        }</span>
+
+        public void close() {
+            try {
+<span class="nc" id="L1534">                this.graphTx.close();</span>
+<span class="nc" id="L1535">            } catch (Exception e) {</span>
+<span class="nc" id="L1536">                LOG.error(&quot;Failed to close GraphTransaction&quot;, e);</span>
+<span class="nc" id="L1537">            }</span>
+
+            try {
+<span class="nc" id="L1540">                this.systemTx.close();</span>
+<span class="nc" id="L1541">            } catch (Exception e) {</span>
+<span class="nc" id="L1542">                LOG.error(&quot;Failed to close SystemTransaction&quot;, e);</span>
+<span class="nc" id="L1543">            }</span>
+
+            try {
+<span class="nc" id="L1546">                this.schemaTx.close();</span>
+<span class="nc" id="L1547">            } catch (Exception e) {</span>
+<span class="nc" id="L1548">                LOG.error(&quot;Failed to close SchemaTransaction&quot;, e);</span>
+<span class="nc" id="L1549">            }</span>
+<span class="nc" id="L1550">        }</span>
+
+        public void openedTime(long time) {
+<span class="nc" id="L1553">            this.openedTime = time;</span>
+<span class="nc" id="L1554">        }</span>
+
+        public long openedTime() {
+<span class="nc" id="L1557">            return this.openedTime;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L1562">            return String.format(&quot;{schemaTx=%s,systemTx=%s,graphTx=%s}&quot;,</span>
+                                 this.schemaTx, this.systemTx, this.graphTx);
+        }
+    }
+
+    private static class SysTransaction extends GraphTransaction {
+
+        public SysTransaction(HugeGraphParams graph, BackendStore store) {
+<span class="nc" id="L1570">            super(graph, store);</span>
+<span class="nc" id="L1571">            this.autoCommit(true);</span>
+<span class="nc" id="L1572">        }</span>
+    }
+
+    private static class AbstractCacheNotifier implements CacheNotifier {
+
+        private final EventHub hub;
+        private final EventListener cacheEventListener;
+
+<span class="nc" id="L1580">        public AbstractCacheNotifier(EventHub hub, CacheNotifier proxy) {</span>
+<span class="nc" id="L1581">            this.hub = hub;</span>
+<span class="nc" id="L1582">            this.cacheEventListener = event -&gt; {</span>
+<span class="nc" id="L1583">                Object[] args = event.args();</span>
+<span class="nc bnc" id="L1584" title="All 4 branches missed.">                E.checkArgument(args.length &gt; 0 &amp;&amp; args[0] instanceof String,</span>
+                                &quot;Expect event action argument&quot;);
+<span class="nc bnc" id="L1586" title="All 2 branches missed.">                if (Cache.ACTION_INVALIDED.equals(args[0])) {</span>
+<span class="nc" id="L1587">                    event.checkArgs(String.class, HugeType.class, Object.class);</span>
+<span class="nc" id="L1588">                    HugeType type = (HugeType) args[1];</span>
+<span class="nc" id="L1589">                    Object ids = args[2];</span>
+<span class="nc bnc" id="L1590" title="All 2 branches missed.">                    if (ids instanceof Id[]) {</span>
+                        // argument type mismatch: proxy.invalid2(type,Id[]ids)
+<span class="nc" id="L1592">                        proxy.invalid2(type, (Id[]) ids);</span>
+<span class="nc bnc" id="L1593" title="All 2 branches missed.">                    } else if (ids instanceof Id) {</span>
+<span class="nc" id="L1594">                        proxy.invalid(type, (Id) ids);</span>
+                    } else {
+<span class="nc" id="L1596">                        E.checkArgument(false, &quot;Unexpected argument: %s&quot;, ids);</span>
+                    }
+<span class="nc" id="L1598">                    return true;</span>
+<span class="nc bnc" id="L1599" title="All 2 branches missed.">                } else if (Cache.ACTION_CLEARED.equals(args[0])) {</span>
+<span class="nc" id="L1600">                    event.checkArgs(String.class, HugeType.class);</span>
+<span class="nc" id="L1601">                    HugeType type = (HugeType) args[1];</span>
+<span class="nc" id="L1602">                    proxy.clear(type);</span>
+<span class="nc" id="L1603">                    return true;</span>
+                }
+<span class="nc" id="L1605">                return false;</span>
+            };
+<span class="nc" id="L1607">            this.hub.listen(Events.CACHE, this.cacheEventListener);</span>
+<span class="nc" id="L1608">        }</span>
+
+        @Override
+        public void close() {
+<span class="nc" id="L1612">            this.hub.unlisten(Events.CACHE, this.cacheEventListener);</span>
+<span class="nc" id="L1613">        }</span>
+
+        @Override
+        public void invalid(HugeType type, Id id) {
+<span class="nc" id="L1617">            this.hub.notify(Events.CACHE, Cache.ACTION_INVALID, type, id);</span>
+<span class="nc" id="L1618">        }</span>
+
+        @Override
+        public void invalid2(HugeType type, Object[] ids) {
+<span class="nc" id="L1622">            this.hub.notify(Events.CACHE, Cache.ACTION_INVALID, type, ids);</span>
+<span class="nc" id="L1623">        }</span>
+
+        @Override
+        public void clear(HugeType type) {
+<span class="nc" id="L1627">            this.hub.notify(Events.CACHE, Cache.ACTION_CLEAR, type);</span>
+<span class="nc" id="L1628">        }</span>
+
+        @Override
+        public void reload() {
+            // pass
+<span class="nc" id="L1633">        }</span>
+    }
+
+    private static class HugeSchemaCacheNotifier
+                   extends AbstractCacheNotifier
+                   implements SchemaCacheNotifier {
+
+        public HugeSchemaCacheNotifier(EventHub hub, CacheNotifier proxy) {
+<span class="nc" id="L1641">            super(hub, proxy);</span>
+<span class="nc" id="L1642">        }</span>
+    }
+
+    private static class HugeGraphCacheNotifier
+                   extends AbstractCacheNotifier
+                   implements GraphCacheNotifier {
+
+        public HugeGraphCacheNotifier(EventHub hub, CacheNotifier proxy) {
+<span class="nc" id="L1650">            super(hub, proxy);</span>
+<span class="nc" id="L1651">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

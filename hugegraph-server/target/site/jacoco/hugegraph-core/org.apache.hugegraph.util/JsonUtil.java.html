@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>JsonUtil.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util</a> &gt; <span class="el_source">JsonUtil.java</span></div><h1>JsonUtil.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util;
+
+import java.io.IOException;
+import java.util.Date;
+
+import org.apache.tinkerpop.shaded.jackson.core.JsonGenerator;
+import org.apache.tinkerpop.shaded.jackson.core.JsonProcessingException;
+import org.apache.tinkerpop.shaded.jackson.core.type.TypeReference;
+import org.apache.tinkerpop.shaded.jackson.databind.Module;
+import org.apache.tinkerpop.shaded.jackson.databind.ObjectMapper;
+import org.apache.tinkerpop.shaded.jackson.databind.ObjectReader;
+import org.apache.tinkerpop.shaded.jackson.databind.SerializerProvider;
+import org.apache.tinkerpop.shaded.jackson.databind.module.SimpleModule;
+import org.apache.tinkerpop.shaded.jackson.databind.ser.std.StdSerializer;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.io.HugeGraphSONModule;
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L37">public final class JsonUtil {</span>
+
+<span class="nc" id="L39">    private static final ObjectMapper MAPPER = new ObjectMapper();</span>
+    private static final ImmutableSet&lt;String&gt; SPECIAL_FLOATS;
+
+    static {
+<span class="nc" id="L43">        SimpleModule module = new SimpleModule();</span>
+<span class="nc" id="L44">        SPECIAL_FLOATS = ImmutableSet.of(&quot;-Infinity&quot;, &quot;Infinity&quot;, &quot;NaN&quot;);</span>
+
+<span class="nc" id="L46">        module.addSerializer(RawJson.class, new RawJsonSerializer());</span>
+
+<span class="nc" id="L48">        HugeGraphSONModule.registerCommonSerializers(module);</span>
+<span class="nc" id="L49">        HugeGraphSONModule.registerIdSerializers(module);</span>
+<span class="nc" id="L50">        HugeGraphSONModule.registerSchemaSerializers(module);</span>
+<span class="nc" id="L51">        HugeGraphSONModule.registerGraphSerializers(module);</span>
+
+<span class="nc" id="L53">        MAPPER.registerModule(module);</span>
+<span class="nc" id="L54">    }</span>
+
+    public static void registerModule(Module module) {
+<span class="nc" id="L57">        MAPPER.registerModule(module);</span>
+<span class="nc" id="L58">    }</span>
+
+    public static String toJson(Object object) {
+        try {
+<span class="nc" id="L62">            return MAPPER.writeValueAsString(object);</span>
+<span class="nc" id="L63">        } catch (JsonProcessingException e) {</span>
+<span class="nc" id="L64">            throw new HugeException(&quot;Can't write json: %s&quot;, e, e.getMessage());</span>
+        }
+    }
+
+    public static &lt;T&gt; T fromJson(String json, Class&lt;T&gt; clazz) {
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        E.checkState(json != null,</span>
+                     &quot;Json value can't be null for '%s'&quot;,
+<span class="nc" id="L71">                     clazz.getSimpleName());</span>
+        try {
+<span class="nc" id="L73">            return MAPPER.readValue(json, clazz);</span>
+<span class="nc" id="L74">        } catch (IOException e) {</span>
+<span class="nc" id="L75">            throw new HugeException(&quot;Can't read json: %s&quot;, e, e.getMessage());</span>
+        }
+    }
+
+    public static &lt;T&gt; T fromJson(String json, TypeReference&lt;?&gt; typeRef) {
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        E.checkState(json != null,</span>
+                     &quot;Json value can't be null for '%s'&quot;,
+<span class="nc" id="L82">                     typeRef.getType());</span>
+        try {
+<span class="nc" id="L84">            ObjectReader reader = MAPPER.readerFor(typeRef);</span>
+<span class="nc" id="L85">            return reader.readValue(json);</span>
+<span class="nc" id="L86">        } catch (IOException e) {</span>
+<span class="nc" id="L87">            throw new HugeException(&quot;Can't read json: %s&quot;, e, e.getMessage());</span>
+        }
+    }
+
+    /**
+     * Number collection will be parsed to Double Collection via fromJson,
+     * this method used to cast element in collection to original number type
+     * @param object    original number
+     * @param clazz     target type
+     * @return          target number
+     */
+    public static Object castNumber(Object object, Class&lt;?&gt; clazz) {
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        if (object instanceof Number) {</span>
+<span class="nc" id="L100">            Number number = (Number) object;</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            if (clazz == Byte.class) {</span>
+<span class="nc" id="L102">                object = number.byteValue();</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">            } else if (clazz == Integer.class) {</span>
+<span class="nc" id="L104">                object = number.intValue();</span>
+<span class="nc bnc" id="L105" title="All 2 branches missed.">            } else if (clazz == Long.class) {</span>
+<span class="nc" id="L106">                object = number.longValue();</span>
+<span class="nc bnc" id="L107" title="All 2 branches missed.">            } else if (clazz == Float.class) {</span>
+<span class="nc" id="L108">                object = number.floatValue();</span>
+<span class="nc bnc" id="L109" title="All 2 branches missed.">            } else if (clazz == Double.class) {</span>
+<span class="nc bnc" id="L110" title="All 2 branches missed.">                assert object instanceof Double : object;</span>
+            } else {
+<span class="nc bnc" id="L112" title="All 2 branches missed.">                assert clazz == Date.class : clazz;</span>
+            }
+        }
+<span class="nc" id="L115">        return object;</span>
+    }
+
+    public static &lt;V&gt; boolean isInfinityOrNaN(V value) {
+<span class="nc bnc" id="L119" title="All 4 branches missed.">        return value instanceof String &amp;&amp; SPECIAL_FLOATS.contains(value);</span>
+    }
+
+    public static Object asJson(Object value) {
+<span class="nc" id="L123">        return new RawJson(toJson(value));</span>
+    }
+
+    public static Object asJson(String value) {
+<span class="nc" id="L127">        return new RawJson(value);</span>
+    }
+
+    private static class RawJson {
+
+        private final String value;
+
+<span class="nc" id="L134">        public RawJson(String value) {</span>
+<span class="nc" id="L135">            this.value = value;</span>
+<span class="nc" id="L136">        }</span>
+
+        public String value() {
+<span class="nc" id="L139">            return this.value;</span>
+        }
+    }
+
+    private static class RawJsonSerializer extends StdSerializer&lt;RawJson&gt; {
+
+        private static final long serialVersionUID = 3240301861031054251L;
+
+        public RawJsonSerializer() {
+<span class="nc" id="L148">            super(RawJson.class);</span>
+<span class="nc" id="L149">        }</span>
+
+        @Override
+        public void serialize(RawJson json, JsonGenerator generator,
+                              SerializerProvider provider) throws IOException {
+<span class="nc" id="L154">            generator.writeRawValue(json.value());</span>
+<span class="nc" id="L155">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

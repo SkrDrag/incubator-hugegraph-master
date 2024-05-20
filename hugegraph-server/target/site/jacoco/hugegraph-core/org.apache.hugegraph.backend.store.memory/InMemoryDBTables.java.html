@@ -1,0 +1,569 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>InMemoryDBTables.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.memory</a> &gt; <span class="el_source">InMemoryDBTables.java</span></div><h1>InMemoryDBTables.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.memory;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.NavigableMap;
+import java.util.SortedMap;
+import java.util.concurrent.ConcurrentSkipListMap;
+
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.serializer.TextBackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntry.BackendColumn;
+import org.apache.hugegraph.backend.store.BackendSession;
+import org.apache.hugegraph.structure.HugeIndex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.Condition.RangeConditions;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.IdQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.iterator.ExtendableIterator;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.NumericUtil;
+import com.google.common.collect.ImmutableList;
+
+<span class="nc" id="L54">public class InMemoryDBTables {</span>
+
+    public static class Vertex extends InMemoryDBTable {
+
+        public Vertex() {
+<span class="nc" id="L59">            super(HugeType.VERTEX);</span>
+<span class="nc" id="L60">        }</span>
+    }
+
+<span class="nc" id="L63">    public static class Edge extends InMemoryDBTable {</span>
+
+        public Edge(HugeType type) {
+<span class="nc" id="L66">            super(type);</span>
+<span class="nc" id="L67">        }</span>
+
+        @Override
+        public void insert(BackendSession session, TextBackendEntry entry) {
+<span class="nc" id="L71">            Id id = vertexIdOfEdge(entry);</span>
+
+<span class="nc bnc" id="L73" title="All 2 branches missed.">            if (!this.store().containsKey(id)) {</span>
+<span class="nc" id="L74">                BackendEntry vertex = new TextBackendEntry(HugeType.VERTEX, id);</span>
+<span class="nc" id="L75">                vertex.merge(entry);</span>
+<span class="nc" id="L76">                this.store().put(id, vertex);</span>
+<span class="nc" id="L77">            } else {</span>
+                // Merge columns if the entry exists
+<span class="nc" id="L79">                BackendEntry vertex = this.store().get(id);</span>
+<span class="nc" id="L80">                vertex.merge(entry);</span>
+            }
+<span class="nc" id="L82">        }</span>
+
+        @Override
+        public void delete(BackendSession session, TextBackendEntry entry) {
+<span class="nc" id="L86">            Id id = vertexIdOfEdge(entry);</span>
+
+<span class="nc" id="L88">            BackendEntry vertex = this.store().get(id);</span>
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            if (vertex != null) {</span>
+<span class="nc" id="L90">                ((TextBackendEntry) vertex).eliminate(entry);</span>
+            }
+<span class="nc" id="L92">        }</span>
+
+        @Override
+        public void append(BackendSession session, TextBackendEntry entry) {
+<span class="nc" id="L96">            throw new UnsupportedOperationException(&quot;Edge append&quot;);</span>
+        }
+
+        @Override
+        public void eliminate(BackendSession session, TextBackendEntry entry) {
+<span class="nc" id="L101">            throw new UnsupportedOperationException(&quot;Edge eliminate&quot;);</span>
+        }
+
+        @Override
+        protected Map&lt;Id, BackendEntry&gt; queryById(
+                                        Collection&lt;Id&gt; ids,
+                                        Map&lt;Id, BackendEntry&gt; entries) {
+            // Query edge(in a vertex) by id
+<span class="nc" id="L109">            return this.queryEdgeById(ids, false, entries);</span>
+        }
+
+        @Override
+        protected Map&lt;Id, BackendEntry&gt; queryByIdPrefix(
+                                        Id start,
+                                        boolean inclusiveStart,
+                                        Id prefix,
+                                        Map&lt;Id, BackendEntry&gt; entries) {
+            // Query edge(in a vertex) by v-id + column-name-prefix
+<span class="nc" id="L119">            BackendEntry value = this.getEntryById(start, entries);</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">            if (value == null) {</span>
+<span class="nc" id="L121">                return Collections.emptyMap();</span>
+            }
+
+<span class="nc" id="L124">            Map&lt;Id, BackendEntry&gt; rs = InsertionOrderUtil.newMap();</span>
+
+            // TODO: Compatible with BackendEntry
+<span class="nc" id="L127">            TextBackendEntry entry = (TextBackendEntry) value;</span>
+            // Prefix edges in the vertex
+<span class="nc" id="L129">            String startColumn = columnOfEdge(start);</span>
+<span class="nc" id="L130">            String prefixColumn = columnOfEdge(prefix);</span>
+<span class="nc" id="L131">            BackendEntry edges = new TextBackendEntry(HugeType.VERTEX,</span>
+<span class="nc" id="L132">                                                      entry.id());</span>
+<span class="nc" id="L133">            edges.columns(entry.columnsWithPrefix(startColumn, inclusiveStart,</span>
+                                                  prefixColumn));
+
+<span class="nc" id="L136">            BackendEntry result = rs.get(entry.id());</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            if (result == null) {</span>
+<span class="nc" id="L138">                rs.put(entry.id(), edges);</span>
+            } else {
+<span class="nc" id="L140">                result.merge(edges);</span>
+            }
+
+<span class="nc" id="L143">            return rs;</span>
+        }
+
+        @Override
+        protected Map&lt;Id, BackendEntry&gt; queryByIdRange(
+                                        Id start,
+                                        boolean inclusiveStart,
+                                        Id end,
+                                        boolean inclusiveEnd,
+                                        Map&lt;Id, BackendEntry&gt; entries) {
+<span class="nc" id="L153">            BackendEntry value = this.getEntryById(start, entries);</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            if (value == null) {</span>
+<span class="nc" id="L155">                return Collections.emptyMap();</span>
+            }
+
+<span class="nc" id="L158">            Map&lt;Id, BackendEntry&gt; rs = InsertionOrderUtil.newMap();</span>
+
+            // TODO: Compatible with BackendEntry
+<span class="nc" id="L161">            TextBackendEntry entry = (TextBackendEntry) value;</span>
+            // Range edges in the vertex
+<span class="nc" id="L163">            String startColumn = columnOfEdge(start);</span>
+<span class="nc" id="L164">            String endColumn = columnOfEdge(end);</span>
+<span class="nc" id="L165">            BackendEntry edges = new TextBackendEntry(HugeType.VERTEX,</span>
+<span class="nc" id="L166">                                                      entry.id());</span>
+<span class="nc" id="L167">            edges.columns(entry.columnsWithRange(startColumn, inclusiveStart,</span>
+                                                 endColumn, inclusiveEnd));
+
+<span class="nc" id="L170">            BackendEntry result = rs.get(entry.id());</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">            if (result == null) {</span>
+<span class="nc" id="L172">                rs.put(entry.id(), edges);</span>
+            } else {
+<span class="nc" id="L174">                result.merge(edges);</span>
+            }
+
+<span class="nc" id="L177">            return rs;</span>
+        }
+
+        private Map&lt;Id, BackendEntry&gt; queryEdgeById(
+                                      Collection&lt;Id&gt; ids, boolean prefix,
+                                      Map&lt;Id, BackendEntry&gt; entries) {
+<span class="nc bnc" id="L183" title="All 2 branches missed.">            assert ids.size() &gt; 0;</span>
+<span class="nc" id="L184">            Map&lt;Id, BackendEntry&gt; rs = InsertionOrderUtil.newMap();</span>
+
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            for (Id id : ids) {</span>
+<span class="nc" id="L187">                BackendEntry value = this.getEntryById(id, entries);</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">                if (value != null) {</span>
+                    // TODO: Compatible with BackendEntry
+<span class="nc" id="L190">                    TextBackendEntry entry = (TextBackendEntry) value;</span>
+<span class="nc" id="L191">                    String column = columnOfEdge(id);</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">                    if (column == null) {</span>
+                        // All edges in the vertex
+<span class="nc" id="L194">                        rs.put(entry.id(), entry);</span>
+<span class="nc bnc" id="L195" title="All 6 branches missed.">                    } else if ((!prefix &amp;&amp; entry.contains(column)) ||</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">                               (prefix &amp;&amp; entry.containsPrefix(column))) {</span>
+<span class="nc" id="L197">                        BackendEntry edges = new TextBackendEntry(</span>
+<span class="nc" id="L198">                                                 HugeType.VERTEX, entry.id());</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">                        if (prefix) {</span>
+                            // Some edges with specified prefix in the vertex
+<span class="nc" id="L201">                            edges.columns(entry.columnsWithPrefix(column));</span>
+                        } else {
+                            // An edge with specified id in the vertex
+<span class="nc" id="L204">                            BackendColumn col = entry.columns(column);</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">                            if (col != null) {</span>
+<span class="nc" id="L206">                                edges.columns(col);</span>
+                            }
+                        }
+
+<span class="nc" id="L210">                        BackendEntry result = rs.get(entry.id());</span>
+<span class="nc bnc" id="L211" title="All 2 branches missed.">                        if (result == null) {</span>
+<span class="nc" id="L212">                            rs.put(entry.id(), edges);</span>
+                        } else {
+<span class="nc" id="L214">                            result.merge(edges);</span>
+                        }
+                    }
+                }
+<span class="nc" id="L218">            }</span>
+
+<span class="nc" id="L220">            return rs;</span>
+        }
+
+        private BackendEntry getEntryById(Id id,
+                                          Map&lt;Id, BackendEntry&gt; entries) {
+            // TODO: improve id split
+<span class="nc" id="L226">            Id entryId = IdGenerator.of(EdgeId.split(id)[0]);</span>
+<span class="nc" id="L227">            return entries.get(entryId);</span>
+        }
+
+        @Override
+        protected Map&lt;Id, BackendEntry&gt; queryByFilter(
+                                        Collection&lt;Condition&gt; conditions,
+                                        Map&lt;Id, BackendEntry&gt; entries) {
+<span class="nc bnc" id="L234" title="All 2 branches missed.">            if (conditions.isEmpty()) {</span>
+<span class="nc" id="L235">                return entries;</span>
+            }
+
+            // Only support querying edge by label
+<span class="nc bnc" id="L239" title="All 2 branches missed.">            E.checkState(conditions.size() == 1,</span>
+                         &quot;Not support querying edge by %s&quot;, conditions);
+<span class="nc" id="L241">            Condition cond = conditions.iterator().next();</span>
+<span class="nc" id="L242">            E.checkState(cond.isRelation(),</span>
+                         &quot;Not support querying edge by %s&quot;, conditions);
+<span class="nc" id="L244">            Condition.Relation relation = (Condition.Relation) cond;</span>
+<span class="nc" id="L245">            E.checkState(relation.key().equals(HugeKeys.LABEL),</span>
+                         &quot;Not support querying edge by %s&quot;, conditions);
+<span class="nc" id="L247">            String label = (String) relation.serialValue();</span>
+
+<span class="nc" id="L249">            Map&lt;Id, BackendEntry&gt; rs = InsertionOrderUtil.newMap();</span>
+
+<span class="nc bnc" id="L251" title="All 2 branches missed.">            for (BackendEntry value : entries.values()) {</span>
+                // TODO: Compatible with BackendEntry
+<span class="nc" id="L253">                TextBackendEntry entry = (TextBackendEntry) value;</span>
+<span class="nc" id="L254">                String out = EdgeId.concat(HugeType.EDGE_OUT.string(), label);</span>
+<span class="nc" id="L255">                String in = EdgeId.concat(HugeType.EDGE_IN.string(), label);</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">                if (entry.containsPrefix(out)) {</span>
+<span class="nc" id="L257">                    BackendEntry edges = new TextBackendEntry(HugeType.VERTEX,</span>
+<span class="nc" id="L258">                                                              entry.id());</span>
+<span class="nc" id="L259">                    edges.columns(entry.columnsWithPrefix(out));</span>
+<span class="nc" id="L260">                    rs.put(edges.id(), edges);</span>
+                }
+<span class="nc bnc" id="L262" title="All 2 branches missed.">                if (entry.containsPrefix(in)) {</span>
+<span class="nc" id="L263">                    BackendEntry edges = new TextBackendEntry(HugeType.VERTEX,</span>
+<span class="nc" id="L264">                                                              entry.id());</span>
+<span class="nc" id="L265">                    edges.columns(entry.columnsWithPrefix(in));</span>
+<span class="nc" id="L266">                    BackendEntry result = rs.get(edges.id());</span>
+<span class="nc bnc" id="L267" title="All 2 branches missed.">                    if (result == null) {</span>
+<span class="nc" id="L268">                        rs.put(edges.id(), edges);</span>
+                    } else {
+<span class="nc" id="L270">                        result.merge(edges);</span>
+                    }
+                }
+<span class="nc" id="L273">            }</span>
+
+<span class="nc" id="L275">            return rs;</span>
+        }
+
+        @Override
+        protected Iterator&lt;BackendEntry&gt; skipOffset(Iterator&lt;BackendEntry&gt; iter,
+                                                    long offset) {
+<span class="nc" id="L281">            long count = 0;</span>
+<span class="nc" id="L282">            BackendEntry last = null;</span>
+<span class="nc bnc" id="L283" title="All 4 branches missed.">            while (count &lt; offset &amp;&amp; iter.hasNext()) {</span>
+<span class="nc" id="L284">                last = iter.next();</span>
+<span class="nc" id="L285">                count += last.columnsSize();</span>
+            }
+<span class="nc bnc" id="L287" title="All 2 branches missed.">            if (count == offset) {</span>
+<span class="nc" id="L288">                return iter;</span>
+<span class="nc bnc" id="L289" title="All 2 branches missed.">            } else if (count &lt; offset) {</span>
+<span class="nc" id="L290">                return QueryResults.emptyIterator();</span>
+            }
+
+            // Collect edges that are over-skipped
+<span class="nc bnc" id="L294" title="All 2 branches missed.">            assert count &gt; offset;</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">            assert last != null;</span>
+<span class="nc" id="L296">            int remaining = (int) (count - offset);</span>
+<span class="nc" id="L297">            last = ((TextBackendEntry) last).copyLast(remaining);</span>
+
+<span class="nc" id="L299">            ExtendableIterator&lt;BackendEntry&gt; all = new ExtendableIterator&lt;&gt;();</span>
+<span class="nc" id="L300">            all.extend(ImmutableList.of(last).iterator());</span>
+<span class="nc" id="L301">            all.extend(iter);</span>
+<span class="nc" id="L302">            return all;</span>
+        }
+
+        @Override
+        protected Iterator&lt;BackendEntry&gt; dropTails(Iterator&lt;BackendEntry&gt; iter,
+                                                   long limit) {
+<span class="nc" id="L308">            long count = 0;</span>
+<span class="nc" id="L309">            BackendEntry last = null;</span>
+<span class="nc" id="L310">            List&lt;BackendEntry&gt; entries = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L311" title="All 4 branches missed.">            while (count &lt; limit &amp;&amp; iter.hasNext()) {</span>
+<span class="nc" id="L312">                last = iter.next();</span>
+<span class="nc" id="L313">                count += last.columnsSize();</span>
+<span class="nc" id="L314">                entries.add(last);</span>
+            }
+<span class="nc bnc" id="L316" title="All 2 branches missed.">            if (count &lt;= limit) {</span>
+<span class="nc" id="L317">                return entries.iterator();</span>
+            }
+
+            // Drop edges that are over-fetched
+<span class="nc bnc" id="L321" title="All 2 branches missed.">            assert count &gt; limit;</span>
+<span class="nc bnc" id="L322" title="All 2 branches missed.">            assert last != null;</span>
+<span class="nc" id="L323">            int head = (int) (limit + last.columnsSize() - count);</span>
+<span class="nc" id="L324">            last = ((TextBackendEntry) last).copyHead(head);</span>
+<span class="nc" id="L325">            entries.remove(entries.size() - 1);</span>
+<span class="nc" id="L326">            entries.add(last);</span>
+<span class="nc" id="L327">            return entries.iterator();</span>
+        }
+
+        @Override
+        protected long sizeOfBackendEntry(BackendEntry entry) {
+<span class="nc" id="L332">            return entry.columnsSize();</span>
+        }
+
+        private static Id vertexIdOfEdge(TextBackendEntry entry) {
+<span class="nc bnc" id="L336" title="All 2 branches missed.">            assert entry.type().isEdge();</span>
+            // Assume the first part is owner vertex id
+<span class="nc" id="L338">            String vertexId = EdgeId.split(entry.id())[0];</span>
+<span class="nc" id="L339">            return IdGenerator.of(vertexId);</span>
+        }
+
+        private static String columnOfEdge(Id id) {
+            // TODO: improve id split
+<span class="nc" id="L344">            String[] parts = EdgeId.split(id);</span>
+<span class="nc bnc" id="L345" title="All 2 branches missed.">            if (parts.length &gt; 1) {</span>
+<span class="nc" id="L346">                parts = Arrays.copyOfRange(parts, 1, parts.length);</span>
+<span class="nc" id="L347">                return EdgeId.concat(parts);</span>
+            } else {
+                // All edges
+<span class="nc bnc" id="L350" title="All 2 branches missed.">                assert parts.length == 1;</span>
+            }
+<span class="nc" id="L352">            return null;</span>
+        }
+    }
+
+<span class="nc" id="L356">    public static class SecondaryIndex extends InMemoryDBTable {</span>
+
+        public SecondaryIndex() {
+<span class="nc" id="L359">            super(HugeType.SECONDARY_INDEX);</span>
+<span class="nc" id="L360">        }</span>
+
+        protected SecondaryIndex(HugeType type) {
+<span class="nc" id="L363">            super(type);</span>
+<span class="nc" id="L364">        }</span>
+
+        @Override
+        public Iterator&lt;BackendEntry&gt; query(BackendSession session,
+                                            Query query) {
+<span class="nc" id="L369">            Collection&lt;Condition&gt; conditions = query.conditions();</span>
+<span class="nc bnc" id="L370" title="All 2 branches missed.">            E.checkState(query instanceof ConditionQuery &amp;&amp;</span>
+<span class="nc bnc" id="L371" title="All 2 branches missed.">                         conditions.size() == 2,</span>
+                         &quot;Secondary index query must be condition query &quot; +
+                         &quot;and have two conditions, but got: %s&quot;, query);
+<span class="nc" id="L374">            String fieldValue = null;</span>
+<span class="nc" id="L375">            Id indexLabelId = null;</span>
+<span class="nc bnc" id="L376" title="All 2 branches missed.">            for (Condition c : conditions) {</span>
+<span class="nc bnc" id="L377" title="All 2 branches missed.">                assert c instanceof Condition.Relation;</span>
+<span class="nc" id="L378">                Condition.Relation r = (Condition.Relation) c;</span>
+<span class="nc bnc" id="L379" title="All 2 branches missed.">                if (r.key() == HugeKeys.FIELD_VALUES) {</span>
+<span class="nc" id="L380">                    fieldValue = r.value().toString();</span>
+<span class="nc bnc" id="L381" title="All 2 branches missed.">                } else if (r.key() == HugeKeys.INDEX_LABEL_ID) {</span>
+<span class="nc" id="L382">                    indexLabelId = (Id) r.value();</span>
+                } else {
+<span class="nc" id="L384">                    E.checkState(false,</span>
+                                 &quot;Secondary index query conditions must be&quot; +
+                                 &quot;FIELD_VALUES or INDEX_LABEL_ID, but got: %s&quot;,
+<span class="nc" id="L387">                                 r.key());</span>
+                }
+<span class="nc" id="L389">            }</span>
+<span class="nc bnc" id="L390" title="All 4 branches missed.">            assert fieldValue != null &amp;&amp; indexLabelId != null;</span>
+
+<span class="nc" id="L392">            Id id = HugeIndex.formatIndexId(query.resultType(),</span>
+                                            indexLabelId, fieldValue);
+<span class="nc" id="L394">            IdQuery q = new IdQuery(query, id);</span>
+<span class="nc" id="L395">            q.offset(query.offset());</span>
+<span class="nc" id="L396">            q.limit(query.limit());</span>
+<span class="nc" id="L397">            return super.query(session, q);</span>
+        }
+
+        @Override
+        public void delete(BackendSession session, TextBackendEntry entry) {
+            // Delete by index label
+<span class="nc bnc" id="L403" title="All 2 branches missed.">            assert entry.columnsSize() == 1;</span>
+<span class="nc" id="L404">            String indexLabel = entry.column(HugeKeys.INDEX_LABEL_ID);</span>
+<span class="nc bnc" id="L405" title="All 2 branches missed.">            E.checkState(indexLabel != null, &quot;Expect index label&quot;);</span>
+
+            Iterator&lt;Entry&lt;Id, BackendEntry&gt;&gt; iter;
+<span class="nc bnc" id="L408" title="All 2 branches missed.">            for (iter = this.store().entrySet().iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L409">                Entry&lt;Id, BackendEntry&gt; e = iter.next();</span>
+                // Delete if prefix with index label
+<span class="nc bnc" id="L411" title="All 2 branches missed.">                if (e.getKey().asString().startsWith(indexLabel)) {</span>
+<span class="nc" id="L412">                    iter.remove();</span>
+                }
+<span class="nc" id="L414">            }</span>
+<span class="nc" id="L415">        }</span>
+    }
+
+    public static class SearchIndex extends SecondaryIndex {
+
+        public SearchIndex() {
+<span class="nc" id="L421">            super(HugeType.SEARCH_INDEX);</span>
+<span class="nc" id="L422">        }</span>
+    }
+
+    public static class UniqueIndex extends SecondaryIndex {
+
+        public UniqueIndex() {
+<span class="nc" id="L428">            super(HugeType.UNIQUE_INDEX);</span>
+<span class="nc" id="L429">        }</span>
+    }
+
+<span class="nc" id="L432">    public static class RangeIndex extends InMemoryDBTable {</span>
+
+        protected RangeIndex(HugeType type) {
+<span class="nc" id="L435">            super(type, new ConcurrentSkipListMap&lt;&gt;());</span>
+<span class="nc" id="L436">        }</span>
+
+        @Override
+        protected NavigableMap&lt;Id, BackendEntry&gt; store() {
+<span class="nc" id="L440">            return (NavigableMap&lt;Id, BackendEntry&gt;) super.store();</span>
+        }
+
+        @Override
+        public Iterator&lt;BackendEntry&gt; query(BackendSession session,
+                                            Query query) {
+<span class="nc" id="L446">            Collection&lt;Condition&gt; conditions = query.conditions();</span>
+<span class="nc bnc" id="L447" title="All 2 branches missed.">            E.checkState(query instanceof ConditionQuery &amp;&amp;</span>
+<span class="nc bnc" id="L448" title="All 4 branches missed.">                         (conditions.size() == 3 || conditions.size() == 2),</span>
+                         &quot;Range index query must be condition query&quot; +
+                         &quot; and have 2 or 3 conditions, but got: %s&quot;, query);
+
+<span class="nc" id="L452">            List&lt;Condition.Relation&gt; relations = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L453">            Id indexLabelId = null;</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">            for (Condition.Relation r : ((ConditionQuery) query).relations()) {</span>
+<span class="nc bnc" id="L455" title="All 2 branches missed.">                if (r.key().equals(HugeKeys.INDEX_LABEL_ID)) {</span>
+<span class="nc" id="L456">                    indexLabelId = (Id) r.value();</span>
+<span class="nc" id="L457">                    continue;</span>
+                }
+<span class="nc" id="L459">                relations.add(r);</span>
+<span class="nc" id="L460">            }</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">            assert indexLabelId != null;</span>
+
+<span class="nc" id="L463">            RangeConditions range = new RangeConditions(relations);</span>
+<span class="nc bnc" id="L464" title="All 2 branches missed.">            if (range.keyEq() != null) {</span>
+<span class="nc" id="L465">                Id id = HugeIndex.formatIndexId(query.resultType(),</span>
+<span class="nc" id="L466">                                                indexLabelId, range.keyEq());</span>
+<span class="nc" id="L467">                IdQuery q = new IdQuery(query, id);</span>
+<span class="nc" id="L468">                q.offset(query.offset());</span>
+<span class="nc" id="L469">                q.limit(query.limit());</span>
+<span class="nc" id="L470">                return super.query(session, q);</span>
+            }
+            // keyMin &lt;(=) field value &lt;(=) keyMax
+<span class="nc" id="L473">            return this.betweenQuery(indexLabelId, range.keyMax(),</span>
+<span class="nc" id="L474">                                     range.keyMaxEq(), range.keyMin(),</span>
+<span class="nc" id="L475">                                     range.keyMinEq(), query.resultType());</span>
+        }
+
+        private Iterator&lt;BackendEntry&gt; betweenQuery(Id indexLabelId,
+                                                    Object keyMax,
+                                                    boolean keyMaxEq,
+                                                    Object keyMin,
+                                                    boolean keyMinEq,
+                                                    HugeType type) {
+<span class="nc" id="L484">            NavigableMap&lt;Id, BackendEntry&gt; rs = this.store();</span>
+
+<span class="nc bnc" id="L486" title="All 4 branches missed.">            E.checkArgument(keyMin != null || keyMax != null,</span>
+                            &quot;Please specify at least one condition&quot;);
+<span class="nc bnc" id="L488" title="All 2 branches missed.">            if (keyMin == null) {</span>
+                // Field value &lt; keyMax
+<span class="nc" id="L490">                keyMin = NumericUtil.minValueOf(keyMax.getClass());</span>
+            }
+<span class="nc" id="L492">            Id min = HugeIndex.formatIndexId(type, indexLabelId, keyMin);</span>
+
+<span class="nc bnc" id="L494" title="All 2 branches missed.">            if (keyMax == null) {</span>
+                // Field value &gt; keyMin
+<span class="nc" id="L496">                keyMaxEq = false;</span>
+<span class="nc" id="L497">                indexLabelId = IdGenerator.of(indexLabelId.asLong() + 1L);</span>
+<span class="nc" id="L498">                keyMax = NumericUtil.minValueOf(keyMin.getClass());</span>
+            }
+<span class="nc" id="L500">            Id max = HugeIndex.formatIndexId(type, indexLabelId, keyMax);</span>
+
+<span class="nc bnc" id="L502" title="All 2 branches missed.">            max = keyMaxEq ? rs.floorKey(max) : rs.lowerKey(max);</span>
+<span class="nc bnc" id="L503" title="All 2 branches missed.">            if (max == null) {</span>
+<span class="nc" id="L504">                return QueryResults.emptyIterator();</span>
+            }
+
+<span class="nc" id="L507">            Map&lt;Id, BackendEntry&gt; results = InsertionOrderUtil.newMap();</span>
+<span class="nc bnc" id="L508" title="All 2 branches missed.">            Map.Entry&lt;Id, BackendEntry&gt; entry = keyMinEq ?</span>
+<span class="nc" id="L509">                                                rs.ceilingEntry(min) :</span>
+<span class="nc" id="L510">                                                rs.higherEntry(min);</span>
+<span class="nc bnc" id="L511" title="All 2 branches missed.">            while (entry != null) {</span>
+<span class="nc bnc" id="L512" title="All 2 branches missed.">                if (entry.getKey().compareTo(max) &gt; 0) {</span>
+<span class="nc" id="L513">                    break;</span>
+                }
+<span class="nc" id="L515">                results.put(entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L516">                entry = rs.higherEntry(entry.getKey());</span>
+            }
+<span class="nc" id="L518">            return results.values().iterator();</span>
+        }
+
+        @Override
+        public void delete(BackendSession session, TextBackendEntry entry) {
+            // Delete by index label
+<span class="nc bnc" id="L524" title="All 2 branches missed.">            assert entry.columnsSize() == 1;</span>
+<span class="nc" id="L525">            String indexLabel = entry.column(HugeKeys.INDEX_LABEL_ID);</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">            E.checkState(indexLabel != null, &quot;Expect index label&quot;);</span>
+
+<span class="nc bnc" id="L528" title="All 2 branches missed.">            if (this.store().isEmpty()) {</span>
+<span class="nc" id="L529">                return;</span>
+            }
+<span class="nc" id="L531">            Id indexLabelId = IdGenerator.of(Long.parseLong(indexLabel));</span>
+<span class="nc" id="L532">            Id min = HugeIndex.formatIndexId(entry.type(), indexLabelId, 0L);</span>
+<span class="nc" id="L533">            indexLabelId = IdGenerator.of(indexLabelId.asLong() + 1L);</span>
+<span class="nc" id="L534">            Id max = HugeIndex.formatIndexId(entry.type(), indexLabelId, 0L);</span>
+            SortedMap&lt;Id, BackendEntry&gt; subStore;
+<span class="nc" id="L536">            subStore = this.store().subMap(min, max);</span>
+            Iterator&lt;Entry&lt;Id, BackendEntry&gt;&gt; iter;
+<span class="nc bnc" id="L538" title="All 2 branches missed.">            for (iter = subStore.entrySet().iterator(); iter.hasNext();) {</span>
+<span class="nc" id="L539">                iter.next();</span>
+                // Delete if prefix with index label
+<span class="nc" id="L541">                iter.remove();</span>
+            }
+<span class="nc" id="L543">        }</span>
+
+        public static RangeIndex rangeInt() {
+<span class="nc" id="L546">            return new RangeIndex(HugeType.RANGE_INT_INDEX);</span>
+        }
+
+        public static RangeIndex rangeFloat() {
+<span class="nc" id="L550">            return new RangeIndex(HugeType.RANGE_FLOAT_INDEX);</span>
+        }
+
+        public static RangeIndex rangeLong() {
+<span class="nc" id="L554">            return new RangeIndex(HugeType.RANGE_LONG_INDEX);</span>
+        }
+
+        public static RangeIndex rangeDouble() {
+<span class="nc" id="L558">            return new RangeIndex(HugeType.RANGE_DOUBLE_INDEX);</span>
+        }
+    }
+
+    public static class ShardIndex extends RangeIndex {
+
+        public ShardIndex() {
+<span class="nc" id="L565">            super(HugeType.SHARD_INDEX);</span>
+<span class="nc" id="L566">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

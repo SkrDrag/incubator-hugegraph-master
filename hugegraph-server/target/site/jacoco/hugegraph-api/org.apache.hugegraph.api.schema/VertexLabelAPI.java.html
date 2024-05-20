@@ -1,0 +1,270 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>VertexLabelAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.schema</a> &gt; <span class="el_source">VertexLabelAPI.java</span></div><h1>VertexLabelAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.schema;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.RedirectFilter;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.apache.hugegraph.schema.Userdata;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.type.define.IdStrategy;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.ImmutableMap;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/schema/vertexlabels&quot;)
+@Singleton
+@Tag(name = &quot;VertexLabelAPI&quot;)
+<span class="nc" id="L63">public class VertexLabelAPI extends API {</span>
+
+<span class="nc" id="L65">    private static final Logger LOG = Log.logger(VertexLabelAPI.class);</span>
+
+    @POST
+    @Timed
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_label_write&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonVertexLabel jsonVertexLabel) {
+<span class="nc" id="L77">        LOG.debug(&quot;Graph [{}] create vertex label: {}&quot;,</span>
+                  graph, jsonVertexLabel);
+<span class="nc" id="L79">        checkCreatingBody(jsonVertexLabel);</span>
+
+<span class="nc" id="L81">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L82">        VertexLabel.Builder builder = jsonVertexLabel.convert2Builder(g);</span>
+<span class="nc" id="L83">        VertexLabel vertexLabel = builder.create();</span>
+<span class="nc" id="L84">        return manager.serializer(g).writeVertexLabel(vertexLabel);</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_label_write&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;name&quot;) String name,
+                         @QueryParam(&quot;action&quot;) String action,
+                         JsonVertexLabel jsonVertexLabel) {
+<span class="nc" id="L99">        LOG.debug(&quot;Graph [{}] {} vertex label: {}&quot;,</span>
+                  graph, action, jsonVertexLabel);
+
+<span class="nc" id="L102">        checkUpdatingBody(jsonVertexLabel);</span>
+<span class="nc" id="L103">        E.checkArgument(name.equals(jsonVertexLabel.name),</span>
+                        &quot;The name in url(%s) and body(%s) are different&quot;,
+                        name, jsonVertexLabel.name);
+        // Parse action parameter
+<span class="nc" id="L107">        boolean append = checkAndParseAction(action);</span>
+
+<span class="nc" id="L109">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L110">        VertexLabel.Builder builder = jsonVertexLabel.convert2Builder(g);</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        VertexLabel vertexLabel = append ?</span>
+<span class="nc" id="L112">                                  builder.append() :</span>
+<span class="nc" id="L113">                                  builder.eliminate();</span>
+<span class="nc" id="L114">        return manager.serializer(g).writeVertexLabel(vertexLabel);</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_label_read&quot;})
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;names&quot;) List&lt;String&gt; names) {
+<span class="nc" id="L124">        boolean listAll = CollectionUtils.isEmpty(names);</span>
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        if (listAll) {</span>
+<span class="nc" id="L126">            LOG.debug(&quot;Graph [{}] list vertex labels&quot;, graph);</span>
+        } else {
+<span class="nc" id="L128">            LOG.debug(&quot;Graph [{}] get vertex labels by names {}&quot;, graph, names);</span>
+        }
+
+<span class="nc" id="L131">        HugeGraph g = graph(manager, graph);</span>
+        List&lt;VertexLabel&gt; labels;
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (listAll) {</span>
+<span class="nc" id="L134">            labels = g.schema().getVertexLabels();</span>
+        } else {
+<span class="nc" id="L136">            labels = new ArrayList&lt;&gt;(names.size());</span>
+<span class="nc bnc" id="L137" title="All 2 branches missed.">            for (String name : names) {</span>
+<span class="nc" id="L138">                labels.add(g.schema().getVertexLabel(name));</span>
+<span class="nc" id="L139">            }</span>
+        }
+<span class="nc" id="L141">        return manager.serializer(g).writeVertexLabels(labels);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_label_read&quot;})
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L152">        LOG.debug(&quot;Graph [{}] get vertex label by name '{}'&quot;, graph, name);</span>
+
+<span class="nc" id="L154">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L155">        VertexLabel vertexLabel = g.schema().getVertexLabel(name);</span>
+<span class="nc" id="L156">        return manager.serializer(g).writeVertexLabel(vertexLabel);</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{name}&quot;)
+    @Status(Status.ACCEPTED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=vertex_label_delete&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public Map&lt;String, Id&gt; delete(@Context GraphManager manager,
+                                  @PathParam(&quot;graph&quot;) String graph,
+                                  @PathParam(&quot;name&quot;) String name) {
+<span class="nc" id="L170">        LOG.debug(&quot;Graph [{}] remove vertex label by name '{}'&quot;, graph, name);</span>
+
+<span class="nc" id="L172">        HugeGraph g = graph(manager, graph);</span>
+        // Throw 404 if not exists
+<span class="nc" id="L174">        g.schema().getVertexLabel(name);</span>
+<span class="nc" id="L175">        return ImmutableMap.of(&quot;task_id&quot;,</span>
+<span class="nc" id="L176">                               g.schema().vertexLabel(name).remove());</span>
+    }
+
+    /**
+     * JsonVertexLabel is only used to receive create and append requests
+     */
+    @JsonIgnoreProperties(value = {&quot;index_labels&quot;, &quot;status&quot;})
+    private static class JsonVertexLabel implements Checkable {
+
+        @JsonProperty(&quot;id&quot;)
+        public long id;
+        @JsonProperty(&quot;name&quot;)
+        public String name;
+        @JsonProperty(&quot;id_strategy&quot;)
+        public IdStrategy idStrategy;
+        @JsonProperty(&quot;properties&quot;)
+        public String[] properties;
+        @JsonProperty(&quot;primary_keys&quot;)
+        public String[] primaryKeys;
+        @JsonProperty(&quot;nullable_keys&quot;)
+        public String[] nullableKeys;
+        @JsonProperty(&quot;ttl&quot;)
+        public long ttl;
+        @JsonProperty(&quot;ttl_start_time&quot;)
+        public String ttlStartTime;
+        @JsonProperty(&quot;enable_label_index&quot;)
+        public Boolean enableLabelIndex;
+        @JsonProperty(&quot;user_data&quot;)
+        public Userdata userdata;
+        @JsonProperty(&quot;check_exist&quot;)
+        public Boolean checkExist;
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L210">            E.checkArgumentNotNull(this.name,</span>
+                                   &quot;The name of vertex label can't be null&quot;);
+<span class="nc" id="L212">        }</span>
+
+        private VertexLabel.Builder convert2Builder(HugeGraph g) {
+<span class="nc" id="L215">            VertexLabel.Builder builder = g.schema().vertexLabel(this.name);</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            if (this.id != 0) {</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">                E.checkArgument(this.id &gt; 0,</span>
+                                &quot;Only positive number can be assign as &quot; +
+                                &quot;vertex label id&quot;);
+<span class="nc bnc" id="L220" title="All 2 branches missed.">                E.checkArgument(g.mode() == GraphMode.RESTORING,</span>
+                                &quot;Only accept vertex label id when graph in &quot; +
+                                &quot;RESTORING mode, but '%s' is in mode '%s'&quot;,
+<span class="nc" id="L223">                                g, g.mode());</span>
+<span class="nc" id="L224">                builder.id(this.id);</span>
+            }
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            if (this.idStrategy != null) {</span>
+<span class="nc" id="L227">                builder.idStrategy(this.idStrategy);</span>
+            }
+<span class="nc bnc" id="L229" title="All 2 branches missed.">            if (this.properties != null) {</span>
+<span class="nc" id="L230">                builder.properties(this.properties);</span>
+            }
+<span class="nc bnc" id="L232" title="All 2 branches missed.">            if (this.primaryKeys != null) {</span>
+<span class="nc" id="L233">                builder.primaryKeys(this.primaryKeys);</span>
+            }
+<span class="nc bnc" id="L235" title="All 2 branches missed.">            if (this.nullableKeys != null) {</span>
+<span class="nc" id="L236">                builder.nullableKeys(this.nullableKeys);</span>
+            }
+<span class="nc bnc" id="L238" title="All 2 branches missed.">            if (this.enableLabelIndex != null) {</span>
+<span class="nc" id="L239">                builder.enableLabelIndex(this.enableLabelIndex);</span>
+            }
+<span class="nc bnc" id="L241" title="All 2 branches missed.">            if (this.userdata != null) {</span>
+<span class="nc" id="L242">                builder.userdata(this.userdata);</span>
+            }
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            if (this.checkExist != null) {</span>
+<span class="nc" id="L245">                builder.checkExist(this.checkExist);</span>
+            }
+<span class="nc bnc" id="L247" title="All 2 branches missed.">            if (this.ttl != 0) {</span>
+<span class="nc" id="L248">                builder.ttl(this.ttl);</span>
+            }
+<span class="nc bnc" id="L250" title="All 2 branches missed.">            if (this.ttlStartTime != null) {</span>
+<span class="nc bnc" id="L251" title="All 2 branches missed.">                E.checkArgument(this.ttl &gt; 0,</span>
+                                &quot;Only set ttlStartTime when ttl is &quot; +
+<span class="nc" id="L253">                                &quot;positive,  but got ttl: %s&quot;, this.ttl);</span>
+<span class="nc" id="L254">                builder.ttlStartTime(this.ttlStartTime);</span>
+            }
+<span class="nc" id="L256">            return builder;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L261">            return String.format(&quot;JsonVertexLabel{&quot; +</span>
+                                 &quot;name=%s, idStrategy=%s, primaryKeys=%s, nullableKeys=%s, &quot; +
+                                 &quot;properties=%s, ttl=%s, ttlStartTime=%s}&quot;,
+<span class="nc" id="L264">                                 this.name, this.idStrategy, Arrays.toString(this.primaryKeys),</span>
+<span class="nc" id="L265">                                 Arrays.toString(this.nullableKeys),</span>
+<span class="nc" id="L266">                                 Arrays.toString(this.properties), this.ttl, this.ttlStartTime);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SplicingIdGenerator.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.id</a> &gt; <span class="el_source">SplicingIdGenerator.java</span></div><h1>SplicingIdGenerator.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.id;
+
+import java.util.Arrays;
+import java.util.List;
+
+import org.apache.hugegraph.structure.HugeVertex;
+
+<span class="nc" id="L25">public class SplicingIdGenerator extends IdGenerator {</span>
+
+    private static volatile SplicingIdGenerator instance;
+
+    public static SplicingIdGenerator instance() {
+<span class="nc bnc" id="L30" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L31">            synchronized (SplicingIdGenerator.class) {</span>
+<span class="nc bnc" id="L32" title="All 2 branches missed.">                if (instance == null) {</span>
+<span class="nc" id="L33">                    instance = new SplicingIdGenerator();</span>
+                }
+<span class="nc" id="L35">            }</span>
+        }
+<span class="nc" id="L37">        return instance;</span>
+    }
+
+    /*
+     * The following defines can't be java regex special characters:
+     * &quot;\^$.|?*+()[{&quot;
+     * See: http://www.regular-expressions.info/characters.html
+     */
+    private static final char ESCAPE = '`';
+    private static final char IDS_SPLITOR = '&gt;';
+    private static final char ID_SPLITOR = ':';
+    private static final char NAME_SPLITOR = '!';
+
+<span class="nc" id="L50">    public static final String ESCAPE_STR = String.valueOf(ESCAPE);</span>
+<span class="nc" id="L51">    public static final String IDS_SPLITOR_STR = String.valueOf(IDS_SPLITOR);</span>
+<span class="nc" id="L52">    public static final String ID_SPLITOR_STR = String.valueOf(ID_SPLITOR);</span>
+
+    /****************************** id generate ******************************/
+
+    /**
+     * Generate a string id of HugeVertex from Vertex name
+     */
+    @Override
+    public Id generate(HugeVertex vertex) {
+        /*
+         * Hash for row-key which will be evenly distributed.
+         * We can also use LongEncoding.encode() to encode the int/long hash
+         * if needed.
+         * id = String.format(&quot;%s%s%s&quot;, HashUtil.hash(id), ID_SPLITOR, id);
+         */
+        // TODO: use binary Id with binary fields instead of string id
+<span class="nc" id="L68">        return splicing(vertex.schemaLabel().id().asString(), vertex.name());</span>
+    }
+
+    /**
+     * Concat multiple ids into one composite id with IDS_SPLITOR
+     * @param ids the string id values to be concatted
+     * @return    concatted string value
+     */
+    public static String concat(String... ids) {
+        // NOTE: must support string id when using this method
+<span class="nc" id="L78">        return IdUtil.escape(IDS_SPLITOR, ESCAPE, ids);</span>
+    }
+
+    /**
+     * Split a composite id into multiple ids with IDS_SPLITOR
+     * @param ids the string id value to be splitted
+     * @return    splitted string values
+     */
+    public static String[] split(String ids) {
+<span class="nc" id="L87">        return IdUtil.unescape(ids, IDS_SPLITOR_STR, ESCAPE_STR);</span>
+    }
+
+    /**
+     * Concat property values with NAME_SPLITOR
+     * @param values the property values to be concatted
+     * @return       concatted string value
+     */
+    public static String concatValues(List&lt;?&gt; values) {
+        // Convert the object list to string array
+<span class="nc" id="L97">        int valuesSize = values.size();</span>
+<span class="nc" id="L98">        String[] parts = new String[valuesSize];</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        for (int i = 0; i &lt; valuesSize; i++) {</span>
+<span class="nc" id="L100">            parts[i] = values.get(i).toString();</span>
+        }
+<span class="nc" id="L102">        return IdUtil.escape(NAME_SPLITOR, ESCAPE, parts);</span>
+    }
+
+    /**
+     * Concat property values with NAME_SPLITOR
+     * @param values the property values to be concatted
+     * @return       concatted string value
+     */
+    public static String concatValues(Object... values) {
+<span class="nc" id="L111">        return concatValues(Arrays.asList(values));</span>
+    }
+
+    /**
+     * Concat multiple parts into a single id with ID_SPLITOR
+     * @param parts the string id values to be spliced
+     * @return      spliced id object
+     */
+    public static Id splicing(String... parts) {
+<span class="nc" id="L120">        String escaped = IdUtil.escape(ID_SPLITOR, ESCAPE, parts);</span>
+<span class="nc" id="L121">        return IdGenerator.of(escaped);</span>
+    }
+
+    /**
+     * Parse a single id into multiple parts with ID_SPLITOR
+     * @param id the id object to be parsed
+     * @return   parsed string id parts
+     */
+    public static String[] parse(Id id) {
+<span class="nc" id="L130">        return IdUtil.unescape(id.asString(), ID_SPLITOR_STR, ESCAPE_STR);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

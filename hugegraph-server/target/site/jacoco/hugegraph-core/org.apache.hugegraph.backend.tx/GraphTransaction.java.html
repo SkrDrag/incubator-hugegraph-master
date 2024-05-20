@@ -1,0 +1,2160 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GraphTransaction.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.tx</a> &gt; <span class="el_source">GraphTransaction.java</span></div><h1>GraphTransaction.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.tx;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.SplicingIdGenerator;
+import org.apache.hugegraph.backend.page.IdHolderList;
+import org.apache.hugegraph.backend.page.PageInfo;
+import org.apache.hugegraph.backend.page.QueryList;
+import org.apache.hugegraph.backend.query.Aggregate;
+import org.apache.hugegraph.backend.query.Aggregate.AggregateFunc;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.ConditionQuery.OptimizedType;
+import org.apache.hugegraph.backend.query.ConditionQueryFlatten;
+import org.apache.hugegraph.backend.query.IdQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.LimitExceedException;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.iterator.BatchMapperIterator;
+import org.apache.hugegraph.iterator.ExtendableIterator;
+import org.apache.hugegraph.iterator.FilterIterator;
+import org.apache.hugegraph.iterator.FlatMapperIterator;
+import org.apache.hugegraph.iterator.LimitIterator;
+import org.apache.hugegraph.iterator.ListIterator;
+import org.apache.hugegraph.iterator.MapperIterator;
+import org.apache.hugegraph.job.system.DeleteExpiredJob;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeEdgeProperty;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeFeatures.HugeVertexFeatures;
+import org.apache.hugegraph.structure.HugeIndex;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.structure.HugeVertexProperty;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Action;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.type.define.IdStrategy;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.LockUtil;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Element;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+import org.apache.tinkerpop.gremlin.structure.util.ElementHelper;
+import org.apache.tinkerpop.gremlin.util.iterator.IteratorUtils;
+
+import com.google.common.collect.ImmutableList;
+
+import jakarta.ws.rs.ForbiddenException;
+
+<span class="nc" id="L102">public class GraphTransaction extends IndexableTransaction {</span>
+
+    public static final int COMMIT_BATCH = (int) Query.COMMIT_BATCH;
+
+    private final GraphIndexTransaction indexTx;
+
+    private Map&lt;Id, HugeVertex&gt; addedVertices;
+    private Map&lt;Id, HugeVertex&gt; removedVertices;
+
+    private Map&lt;Id, HugeEdge&gt; addedEdges;
+    private Map&lt;Id, HugeEdge&gt; removedEdges;
+
+    private Set&lt;HugeProperty&lt;?&gt;&gt; addedProps;
+    private Set&lt;HugeProperty&lt;?&gt;&gt; removedProps;
+
+    // These are used to rollback state
+    private Map&lt;Id, HugeVertex&gt; updatedVertices;
+    private Map&lt;Id, HugeEdge&gt; updatedEdges;
+    private Set&lt;HugeProperty&lt;?&gt;&gt; updatedOldestProps; // Oldest props
+
+    private final LockUtil.LocksTable locksTable;
+
+    private final boolean checkCustomVertexExist;
+    private final boolean checkAdjacentVertexExist;
+    private final boolean lazyLoadAdjacentVertex;
+    private final boolean removeLeftIndexOnOverwrite;
+    private final boolean ignoreInvalidEntry;
+    private final boolean optimizeAggrByIndex;
+    private final int commitPartOfAdjacentEdges;
+    private final int batchSize;
+    private final int pageSize;
+
+    private final int verticesCapacity;
+    private final int edgesCapacity;
+
+    public GraphTransaction(HugeGraphParams graph, BackendStore store) {
+<span class="nc" id="L138">        super(graph, store);</span>
+
+<span class="nc" id="L140">        this.indexTx = new GraphIndexTransaction(graph, store);</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        assert !this.indexTx.autoCommit();</span>
+
+<span class="nc" id="L143">        this.locksTable = new LockUtil.LocksTable(graph.name());</span>
+
+<span class="nc" id="L145">        final HugeConfig conf = graph.configuration();</span>
+<span class="nc" id="L146">        this.checkCustomVertexExist =</span>
+<span class="nc" id="L147">             conf.get(CoreOptions.VERTEX_CHECK_CUSTOMIZED_ID_EXIST);</span>
+<span class="nc" id="L148">        this.checkAdjacentVertexExist =</span>
+<span class="nc" id="L149">             conf.get(CoreOptions.VERTEX_ADJACENT_VERTEX_EXIST);</span>
+<span class="nc" id="L150">        this.lazyLoadAdjacentVertex =</span>
+<span class="nc" id="L151">             conf.get(CoreOptions.VERTEX_ADJACENT_VERTEX_LAZY);</span>
+<span class="nc" id="L152">        this.removeLeftIndexOnOverwrite =</span>
+<span class="nc" id="L153">             conf.get(CoreOptions.VERTEX_REMOVE_LEFT_INDEX);</span>
+<span class="nc" id="L154">        this.commitPartOfAdjacentEdges =</span>
+<span class="nc" id="L155">             conf.get(CoreOptions.VERTEX_PART_EDGE_COMMIT_SIZE);</span>
+<span class="nc" id="L156">        this.ignoreInvalidEntry =</span>
+<span class="nc" id="L157">             conf.get(CoreOptions.QUERY_IGNORE_INVALID_DATA);</span>
+<span class="nc" id="L158">        this.optimizeAggrByIndex =</span>
+<span class="nc" id="L159">             conf.get(CoreOptions.QUERY_OPTIMIZE_AGGR_BY_INDEX);</span>
+<span class="nc" id="L160">        this.batchSize = conf.get(CoreOptions.QUERY_BATCH_SIZE);</span>
+<span class="nc" id="L161">        this.pageSize = conf.get(CoreOptions.QUERY_PAGE_SIZE);</span>
+
+<span class="nc" id="L163">        this.verticesCapacity = conf.get(CoreOptions.VERTEX_TX_CAPACITY);</span>
+<span class="nc" id="L164">        this.edgesCapacity = conf.get(CoreOptions.EDGE_TX_CAPACITY);</span>
+
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        E.checkArgument(this.commitPartOfAdjacentEdges &lt; this.edgesCapacity,</span>
+                        &quot;Option value of %s(%s) must be &lt; %s(%s)&quot;,
+<span class="nc" id="L168">                        CoreOptions.VERTEX_PART_EDGE_COMMIT_SIZE.name(),</span>
+<span class="nc" id="L169">                        this.commitPartOfAdjacentEdges,</span>
+<span class="nc" id="L170">                        CoreOptions.EDGE_TX_CAPACITY.name(),</span>
+<span class="nc" id="L171">                        this.edgesCapacity);</span>
+<span class="nc" id="L172">    }</span>
+
+    @Override
+    public boolean hasUpdate() {
+<span class="nc bnc" id="L176" title="All 4 branches missed.">        return this.mutationSize() &gt; 0 || super.hasUpdate();</span>
+    }
+
+    @Override
+    public boolean hasUpdate(HugeType type, Action action) {
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        if (type.isVertex()) {</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">            if (action == Action.DELETE) {</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">                if (this.removedVertices.size() &gt; 0) {</span>
+<span class="nc" id="L184">                    return true;</span>
+                }
+            } else {
+<span class="nc bnc" id="L187" title="All 2 branches missed.">                if (this.addedVertices.size() &gt; 0 ||</span>
+<span class="nc bnc" id="L188" title="All 2 branches missed.">                    this.updatedVertices.size() &gt; 0) {</span>
+<span class="nc" id="L189">                    return true;</span>
+                }
+            }
+<span class="nc bnc" id="L192" title="All 2 branches missed.">        } else if (type.isEdge()) {</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">            if (action == Action.DELETE) {</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">                if (this.removedEdges.size() &gt; 0) {</span>
+<span class="nc" id="L195">                    return true;</span>
+                }
+            } else {
+<span class="nc bnc" id="L198" title="All 2 branches missed.">                if (this.addedEdges.size() &gt; 0 ||</span>
+<span class="nc bnc" id="L199" title="All 2 branches missed.">                    this.updatedEdges.size() &gt; 0) {</span>
+<span class="nc" id="L200">                    return true;</span>
+                }
+            }
+        }
+<span class="nc" id="L204">        return super.hasUpdate(type, action);</span>
+    }
+
+    @Override
+    public int mutationSize() {
+<span class="nc" id="L209">        return this.verticesInTxSize() + this.edgesInTxSize();</span>
+    }
+
+    public boolean checkAdjacentVertexExist() {
+<span class="nc" id="L213">        return this.checkAdjacentVertexExist;</span>
+    }
+
+    @Override
+    protected void reset() {
+<span class="nc" id="L218">        super.reset();</span>
+
+        // Clear mutation
+<span class="nc bnc" id="L221" title="All 4 branches missed.">        if (this.addedVertices == null || !this.addedVertices.isEmpty()) {</span>
+<span class="nc" id="L222">            this.addedVertices = InsertionOrderUtil.newMap();</span>
+        }
+<span class="nc bnc" id="L224" title="All 4 branches missed.">        if (this.removedVertices == null || !this.removedVertices.isEmpty()) {</span>
+<span class="nc" id="L225">            this.removedVertices = InsertionOrderUtil.newMap();</span>
+        }
+<span class="nc bnc" id="L227" title="All 4 branches missed.">        if (this.updatedVertices == null || !this.updatedVertices.isEmpty()) {</span>
+<span class="nc" id="L228">            this.updatedVertices = InsertionOrderUtil.newMap();</span>
+        }
+
+<span class="nc bnc" id="L231" title="All 4 branches missed.">        if (this.addedEdges == null || !this.addedEdges.isEmpty()) {</span>
+<span class="nc" id="L232">            this.addedEdges = InsertionOrderUtil.newMap();</span>
+        }
+<span class="nc bnc" id="L234" title="All 4 branches missed.">        if (this.removedEdges == null || !this.removedEdges.isEmpty()) {</span>
+<span class="nc" id="L235">            this.removedEdges = InsertionOrderUtil.newMap();</span>
+        }
+<span class="nc bnc" id="L237" title="All 4 branches missed.">        if (this.updatedEdges == null || !this.updatedEdges.isEmpty()) {</span>
+<span class="nc" id="L238">            this.updatedEdges = InsertionOrderUtil.newMap();</span>
+        }
+
+<span class="nc bnc" id="L241" title="All 4 branches missed.">        if (this.addedProps == null || !this.addedProps.isEmpty()) {</span>
+<span class="nc" id="L242">            this.addedProps = InsertionOrderUtil.newSet();</span>
+        }
+<span class="nc bnc" id="L244" title="All 4 branches missed.">        if (this.removedProps == null || !this.removedProps.isEmpty()) {</span>
+<span class="nc" id="L245">            this.removedProps = InsertionOrderUtil.newSet();</span>
+        }
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        if (this.updatedOldestProps == null ||</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">            !this.updatedOldestProps.isEmpty()) {</span>
+<span class="nc" id="L249">            this.updatedOldestProps = InsertionOrderUtil.newSet();</span>
+        }
+<span class="nc" id="L251">    }</span>
+
+    @Override
+    protected GraphIndexTransaction indexTransaction() {
+<span class="nc" id="L255">        return this.indexTx;</span>
+    }
+
+    @Override
+    protected void beforeWrite() {
+<span class="nc" id="L260">        this.checkTxVerticesCapacity();</span>
+<span class="nc" id="L261">        this.checkTxEdgesCapacity();</span>
+
+<span class="nc" id="L263">        super.beforeWrite();</span>
+<span class="nc" id="L264">    }</span>
+
+    protected final int verticesInTxSize() {
+<span class="nc" id="L267">        return this.addedVertices.size() +</span>
+<span class="nc" id="L268">               this.removedVertices.size() +</span>
+<span class="nc" id="L269">               this.updatedVertices.size();</span>
+    }
+
+    protected final int edgesInTxSize() {
+<span class="nc" id="L273">        return this.addedEdges.size() +</span>
+<span class="nc" id="L274">               this.removedEdges.size() +</span>
+<span class="nc" id="L275">               this.updatedEdges.size();</span>
+    }
+
+    protected final Collection&lt;HugeVertex&gt; verticesInTxUpdated() {
+<span class="nc" id="L279">        int size = this.addedVertices.size() + this.updatedVertices.size();</span>
+<span class="nc" id="L280">        List&lt;HugeVertex&gt; vertices = new ArrayList&lt;&gt;(size);</span>
+<span class="nc" id="L281">        vertices.addAll(this.addedVertices.values());</span>
+<span class="nc" id="L282">        vertices.addAll(this.updatedVertices.values());</span>
+<span class="nc" id="L283">        return vertices;</span>
+    }
+
+    protected final Collection&lt;HugeVertex&gt; verticesInTxRemoved() {
+<span class="nc" id="L287">        return new ArrayList&lt;&gt;(this.removedVertices.values());</span>
+    }
+
+    protected final boolean removingEdgeOwner(HugeEdge edge) {
+<span class="nc bnc" id="L291" title="All 2 branches missed.">        for (HugeVertex vertex : this.removedVertices.values()) {</span>
+<span class="nc bnc" id="L292" title="All 2 branches missed.">            if (edge.belongToVertex(vertex)) {</span>
+<span class="nc" id="L293">                return true;</span>
+            }
+<span class="nc" id="L295">        }</span>
+<span class="nc" id="L296">        return false;</span>
+    }
+
+    @Watched(prefix = &quot;tx&quot;)
+    @Override
+    protected BackendMutation prepareCommit() {
+        // Serialize and add updates into super.deletions
+<span class="nc bnc" id="L303" title="All 4 branches missed.">        if (this.removedVertices.size() &gt; 0 || this.removedEdges.size() &gt; 0) {</span>
+<span class="nc" id="L304">            this.prepareDeletions(this.removedVertices, this.removedEdges);</span>
+        }
+
+<span class="nc bnc" id="L307" title="All 4 branches missed.">        if (this.addedProps.size() &gt; 0 || this.removedProps.size() &gt; 0) {</span>
+<span class="nc" id="L308">            this.prepareUpdates(this.addedProps, this.removedProps);</span>
+        }
+
+        // Serialize and add updates into super.additions
+<span class="nc bnc" id="L312" title="All 4 branches missed.">        if (this.addedVertices.size() &gt; 0 || this.addedEdges.size() &gt; 0) {</span>
+<span class="nc" id="L313">            this.prepareAdditions(this.addedVertices, this.addedEdges);</span>
+        }
+
+<span class="nc" id="L316">        return this.mutation();</span>
+    }
+
+    protected void prepareAdditions(Map&lt;Id, HugeVertex&gt; addedVertices,
+                                    Map&lt;Id, HugeEdge&gt; addedEdges) {
+<span class="nc bnc" id="L321" title="All 2 branches missed.">        if (this.checkCustomVertexExist) {</span>
+<span class="nc" id="L322">            this.checkVertexExistIfCustomizedId(addedVertices);</span>
+        }
+
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        if (this.removeLeftIndexOnOverwrite) {</span>
+<span class="nc" id="L326">            this.removeLeftIndexIfNeeded(addedVertices);</span>
+        }
+
+        // Do vertex update
+<span class="nc bnc" id="L330" title="All 2 branches missed.">        for (HugeVertex v : addedVertices.values()) {</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">            assert !v.removed();</span>
+<span class="nc" id="L332">            v.committed();</span>
+<span class="nc" id="L333">            this.checkAggregateProperty(v);</span>
+            // Check whether passed all non-null properties
+<span class="nc bnc" id="L335" title="All 2 branches missed.">            if (!this.graphMode().loading()) {</span>
+<span class="nc" id="L336">                this.checkNonnullProperty(v);</span>
+            }
+
+            // Add vertex entry
+<span class="nc" id="L340">            this.doInsert(this.serializer.writeVertex(v));</span>
+            // Update index of vertex(only include props)
+<span class="nc" id="L342">            this.indexTx.updateVertexIndex(v, false);</span>
+<span class="nc" id="L343">            this.indexTx.updateLabelIndex(v, false);</span>
+<span class="nc" id="L344">        }</span>
+
+        // Do edge update
+<span class="nc bnc" id="L347" title="All 2 branches missed.">        for (HugeEdge e : addedEdges.values()) {</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">            assert !e.removed();</span>
+<span class="nc" id="L349">            e.committed();</span>
+            // Skip edge if its owner has been removed
+<span class="nc bnc" id="L351" title="All 2 branches missed.">            if (this.removingEdgeOwner(e)) {</span>
+<span class="nc" id="L352">                continue;</span>
+            }
+<span class="nc" id="L354">            this.checkAggregateProperty(e);</span>
+            // Add edge entry of OUT and IN
+<span class="nc" id="L356">            this.doInsert(this.serializer.writeEdge(e));</span>
+<span class="nc" id="L357">            this.doInsert(this.serializer.writeEdge(e.switchOwner()));</span>
+            // Update index of edge
+<span class="nc" id="L359">            this.indexTx.updateEdgeIndex(e, false);</span>
+<span class="nc" id="L360">            this.indexTx.updateLabelIndex(e, false);</span>
+<span class="nc" id="L361">        }</span>
+<span class="nc" id="L362">    }</span>
+
+    protected void prepareDeletions(Map&lt;Id, HugeVertex&gt; removedVertices,
+                                    Map&lt;Id, HugeEdge&gt; removedEdges) {
+        // Remove related edges of each vertex
+<span class="nc bnc" id="L367" title="All 2 branches missed.">        for (HugeVertex v : removedVertices.values()) {</span>
+<span class="nc bnc" id="L368" title="All 2 branches missed.">            if (!v.schemaLabel().existsLinkLabel()) {</span>
+<span class="nc" id="L369">                continue;</span>
+            }
+            // Query all edges of the vertex and remove them
+<span class="nc" id="L372">            Query query = constructEdgesQuery(v.id(), Directions.BOTH);</span>
+<span class="nc" id="L373">            Iterator&lt;HugeEdge&gt; vedges = this.queryEdgesFromBackend(query);</span>
+            try {
+<span class="nc bnc" id="L375" title="All 2 branches missed.">                while (vedges.hasNext()) {</span>
+<span class="nc" id="L376">                    this.checkTxEdgesCapacity();</span>
+<span class="nc" id="L377">                    HugeEdge edge = vedges.next();</span>
+                    // NOTE: will change the input parameter
+<span class="nc" id="L379">                    removedEdges.put(edge.id(), edge);</span>
+                    // Commit first if enabled commit-part mode
+<span class="nc bnc" id="L381" title="All 2 branches missed.">                    if (this.commitPartOfAdjacentEdges &gt; 0 &amp;&amp;</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">                        removedEdges.size() &gt;= this.commitPartOfAdjacentEdges) {</span>
+<span class="nc" id="L383">                        this.commitPartOfEdgeDeletions(removedEdges);</span>
+                    }
+<span class="nc" id="L385">                }</span>
+            } finally {
+<span class="nc" id="L387">                CloseableIterator.closeIterator(vedges);</span>
+            }
+<span class="nc" id="L389">        }</span>
+
+        // Remove vertices
+<span class="nc bnc" id="L392" title="All 2 branches missed.">        for (HugeVertex v : removedVertices.values()) {</span>
+<span class="nc" id="L393">            this.checkAggregateProperty(v);</span>
+            /*
+             * If the backend stores vertex together with edges, it's edges
+             * would be removed after removing vertex. Otherwise, if the
+             * backend stores vertex which is separated from edges, it's
+             * edges should be removed manually when removing vertex.
+             */
+<span class="nc" id="L400">            this.doRemove(this.serializer.writeVertex(v.prepareRemoved()));</span>
+<span class="nc" id="L401">            this.indexTx.updateVertexIndex(v, true);</span>
+<span class="nc" id="L402">            this.indexTx.updateLabelIndex(v, true);</span>
+<span class="nc" id="L403">        }</span>
+
+        // Remove edges
+<span class="nc" id="L406">        this.prepareDeletions(removedEdges);</span>
+<span class="nc" id="L407">    }</span>
+
+    protected void prepareDeletions(Map&lt;Id, HugeEdge&gt; removedEdges) {
+        // Remove edges
+<span class="nc bnc" id="L411" title="All 2 branches missed.">        for (HugeEdge e : removedEdges.values()) {</span>
+<span class="nc" id="L412">            this.checkAggregateProperty(e);</span>
+            // Update edge index
+<span class="nc" id="L414">            this.indexTx.updateEdgeIndex(e, true);</span>
+<span class="nc" id="L415">            this.indexTx.updateLabelIndex(e, true);</span>
+            // Remove edge of OUT and IN
+<span class="nc" id="L417">            e = e.prepareRemoved();</span>
+<span class="nc" id="L418">            this.doRemove(this.serializer.writeEdge(e));</span>
+<span class="nc" id="L419">            this.doRemove(this.serializer.writeEdge(e.switchOwner()));</span>
+<span class="nc" id="L420">        }</span>
+<span class="nc" id="L421">    }</span>
+
+    protected void prepareUpdates(Set&lt;HugeProperty&lt;?&gt;&gt; addedProps,
+                                  Set&lt;HugeProperty&lt;?&gt;&gt; removedProps) {
+<span class="nc bnc" id="L425" title="All 2 branches missed.">        for (HugeProperty&lt;?&gt; p : removedProps) {</span>
+<span class="nc" id="L426">            this.checkAggregateProperty(p);</span>
+<span class="nc bnc" id="L427" title="All 2 branches missed.">            if (p.element().type().isVertex()) {</span>
+<span class="nc" id="L428">                HugeVertexProperty&lt;?&gt; prop = (HugeVertexProperty&lt;?&gt;) p;</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">                if (this.store().features().supportsUpdateVertexProperty()) {</span>
+                    // Update vertex index without removed property
+<span class="nc" id="L431">                    this.indexTx.updateVertexIndex(prop.element(), false);</span>
+                    // Eliminate the property(OUT and IN owner edge)
+<span class="nc" id="L433">                    this.doEliminate(this.serializer.writeVertexProperty(prop));</span>
+                } else {
+                    // Override vertex
+<span class="nc" id="L436">                    this.addVertex(prop.element());</span>
+                }
+<span class="nc" id="L438">            } else {</span>
+<span class="nc bnc" id="L439" title="All 2 branches missed.">                assert p.element().type().isEdge();</span>
+<span class="nc" id="L440">                HugeEdgeProperty&lt;?&gt; prop = (HugeEdgeProperty&lt;?&gt;) p;</span>
+<span class="nc bnc" id="L441" title="All 2 branches missed.">                if (this.store().features().supportsUpdateEdgeProperty()) {</span>
+                    // Update edge index without removed property
+<span class="nc" id="L443">                    this.indexTx.updateEdgeIndex(prop.element(), false);</span>
+                    // Eliminate the property(OUT and IN owner edge)
+<span class="nc" id="L445">                    this.doEliminate(this.serializer.writeEdgeProperty(prop));</span>
+<span class="nc" id="L446">                    this.doEliminate(this.serializer.writeEdgeProperty(</span>
+<span class="nc" id="L447">                                     prop.switchEdgeOwner()));</span>
+                } else {
+                    // Override edge(it will be in addedEdges &amp; updatedEdges)
+<span class="nc" id="L450">                    this.addEdge(prop.element());</span>
+                }
+            }
+<span class="nc" id="L453">        }</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">        for (HugeProperty&lt;?&gt; p : addedProps) {</span>
+<span class="nc" id="L455">            this.checkAggregateProperty(p);</span>
+<span class="nc bnc" id="L456" title="All 2 branches missed.">            if (p.element().type().isVertex()) {</span>
+<span class="nc" id="L457">                HugeVertexProperty&lt;?&gt; prop = (HugeVertexProperty&lt;?&gt;) p;</span>
+<span class="nc bnc" id="L458" title="All 2 branches missed.">                if (this.store().features().supportsUpdateVertexProperty()) {</span>
+                    // Update vertex index with new added property
+<span class="nc" id="L460">                    this.indexTx.updateVertexIndex(prop.element(), false);</span>
+                    // Append new property(OUT and IN owner edge)
+<span class="nc" id="L462">                    this.doAppend(this.serializer.writeVertexProperty(prop));</span>
+                } else {
+                    // Override vertex
+<span class="nc" id="L465">                    this.addVertex(prop.element());</span>
+                }
+<span class="nc" id="L467">            } else {</span>
+<span class="nc bnc" id="L468" title="All 2 branches missed.">                assert p.element().type().isEdge();</span>
+<span class="nc" id="L469">                HugeEdgeProperty&lt;?&gt; prop = (HugeEdgeProperty&lt;?&gt;) p;</span>
+<span class="nc bnc" id="L470" title="All 2 branches missed.">                if (this.store().features().supportsUpdateEdgeProperty()) {</span>
+                    // Update edge index with new added property
+<span class="nc" id="L472">                    this.indexTx.updateEdgeIndex(prop.element(), false);</span>
+                    // Append new property(OUT and IN owner edge)
+<span class="nc" id="L474">                    this.doAppend(this.serializer.writeEdgeProperty(prop));</span>
+<span class="nc" id="L475">                    this.doAppend(this.serializer.writeEdgeProperty(</span>
+<span class="nc" id="L476">                                  prop.switchEdgeOwner()));</span>
+                } else {
+                    // Override edge (it will be in addedEdges &amp; updatedEdges)
+<span class="nc" id="L479">                    this.addEdge(prop.element());</span>
+                }
+            }
+<span class="nc" id="L482">        }</span>
+<span class="nc" id="L483">    }</span>
+
+    private void commitPartOfEdgeDeletions(Map&lt;Id, HugeEdge&gt; removedEdges) {
+<span class="nc bnc" id="L486" title="All 2 branches missed.">        assert this.commitPartOfAdjacentEdges &gt; 0;</span>
+
+<span class="nc" id="L488">        this.prepareDeletions(removedEdges);</span>
+
+<span class="nc" id="L490">        BackendMutation mutation = this.mutation();</span>
+<span class="nc" id="L491">        BackendMutation idxMutation = this.indexTransaction().mutation();</span>
+
+        try {
+<span class="nc" id="L494">            this.commitMutation2Backend(mutation, idxMutation);</span>
+<span class="nc" id="L495">        } catch (Throwable e) {</span>
+<span class="nc" id="L496">            this.rollbackBackend();</span>
+        } finally {
+<span class="nc" id="L498">            mutation.clear();</span>
+<span class="nc" id="L499">            idxMutation.clear();</span>
+        }
+
+<span class="nc" id="L502">        removedEdges.clear();</span>
+<span class="nc" id="L503">    }</span>
+
+    @Override
+    public void commit() throws BackendException {
+        try {
+<span class="nc" id="L508">            super.commit();</span>
+        } finally {
+<span class="nc" id="L510">            this.locksTable.unlock();</span>
+        }
+<span class="nc" id="L512">    }</span>
+
+    @Override
+    public void rollback() throws BackendException {
+        // Rollback properties changes
+<span class="nc bnc" id="L517" title="All 2 branches missed.">        for (HugeProperty&lt;?&gt; prop : this.updatedOldestProps) {</span>
+<span class="nc" id="L518">            prop.element().setProperty(prop);</span>
+<span class="nc" id="L519">        }</span>
+        try {
+<span class="nc" id="L521">            super.rollback();</span>
+        } finally {
+<span class="nc" id="L523">            this.locksTable.unlock();</span>
+        }
+<span class="nc" id="L525">    }</span>
+
+    @Override
+    public QueryResults&lt;BackendEntry&gt; query(Query query) {
+<span class="nc bnc" id="L529" title="All 2 branches missed.">        if (!(query instanceof ConditionQuery)) {</span>
+            // It's a sysprop-query, don't need to optimize
+<span class="nc" id="L531">            LOG.debug(&quot;Query{final:{}}&quot;, query);</span>
+<span class="nc" id="L532">            return super.query(query);</span>
+        }
+
+<span class="nc" id="L535">        QueryList&lt;BackendEntry&gt; queries = this.optimizeQueries(query, super::query);</span>
+<span class="nc" id="L536">        LOG.debug(&quot;{}&quot;, queries);</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">        return queries.empty() ? QueryResults.empty() :</span>
+<span class="nc" id="L538">                                 queries.fetch(this.pageSize);</span>
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+<span class="nc" id="L543">        boolean isConditionQuery = query instanceof ConditionQuery;</span>
+<span class="nc" id="L544">        boolean hasUpdate = this.hasUpdate();</span>
+<span class="nc" id="L545">        Aggregate aggregate = query.aggregateNotNull();</span>
+
+        // TODO: we can concat index-query results and tx uncommitted records.
+<span class="nc bnc" id="L548" title="All 2 branches missed.">        if (hasUpdate) {</span>
+<span class="nc bnc" id="L549" title="All 2 branches missed.">            E.checkArgument(!isConditionQuery,</span>
+                            &quot;It's not allowed to query by index when &quot; +
+                            &quot;there are uncommitted records.&quot;);
+        }
+
+<span class="nc" id="L554">        QueryList&lt;Number&gt; queries = this.optimizeQueries(query, q -&gt; {</span>
+<span class="nc" id="L555">            boolean isIndexQuery = q instanceof IdQuery;</span>
+<span class="nc bnc" id="L556" title="All 6 branches missed.">            assert isIndexQuery || isConditionQuery || q == query;</span>
+            // Need to fallback if there are uncommitted records
+<span class="nc" id="L558">            boolean fallback = hasUpdate;</span>
+            Number result;
+
+<span class="nc bnc" id="L561" title="All 2 branches missed.">            if (fallback) {</span>
+                // Here just ignore it, and do fallback later
+<span class="nc" id="L563">                result = null;</span>
+<span class="nc bnc" id="L564" title="All 4 branches missed.">            } else if (!isIndexQuery || !isConditionQuery) {</span>
+                // It's a sysprop-query, let parent tx do it
+<span class="nc bnc" id="L566" title="All 2 branches missed.">                assert !fallback;</span>
+<span class="nc" id="L567">                result = super.queryNumber(q);</span>
+            } else {
+<span class="nc bnc" id="L569" title="All 2 branches missed.">                E.checkArgument(aggregate.func() == AggregateFunc.COUNT,</span>
+                                &quot;The %s operator on index is not supported now&quot;,
+<span class="nc" id="L571">                                aggregate.func().string());</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">                assert query instanceof ConditionQuery;</span>
+<span class="nc" id="L573">                OptimizedType optimized = ((ConditionQuery) query).optimized();</span>
+<span class="nc bnc" id="L574" title="All 4 branches missed.">                if (this.optimizeAggrByIndex &amp;&amp; optimized == OptimizedType.INDEX) {</span>
+                    // The ids size means results count (assume no left index)
+<span class="nc" id="L576">                    result = q.idsSize();</span>
+                } else {
+<span class="nc bnc" id="L578" title="All 2 branches missed.">                    assert !fallback;</span>
+<span class="nc" id="L579">                    fallback = true;</span>
+<span class="nc" id="L580">                    result = null;</span>
+                }
+            }
+
+            // Can't be optimized, then do fallback
+<span class="nc bnc" id="L585" title="All 2 branches missed.">            if (fallback) {</span>
+<span class="nc bnc" id="L586" title="All 2 branches missed.">                assert result == null;</span>
+<span class="nc bnc" id="L587" title="All 4 branches missed.">                assert q.resultType().isVertex() || q.resultType().isEdge();</span>
+                // Reset aggregate to fallback and scan
+<span class="nc" id="L589">                q.aggregate(null);</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">                result = IteratorUtils.count(q.resultType().isVertex() ?</span>
+<span class="nc" id="L591">                                             this.queryVertices(q) :</span>
+<span class="nc" id="L592">                                             this.queryEdges(q));</span>
+            }
+
+<span class="nc" id="L595">            return new QueryResults&lt;&gt;(IteratorUtils.of(result), q);</span>
+        });
+
+<span class="nc bnc" id="L598" title="All 2 branches missed.">        QueryResults&lt;Number&gt; results = queries.empty() ?</span>
+<span class="nc" id="L599">                                       QueryResults.empty() :</span>
+<span class="nc" id="L600">                                       queries.fetch(this.pageSize);</span>
+<span class="nc" id="L601">        return aggregate.reduce(results.iterator());</span>
+    }
+
+    @Watched(prefix = &quot;graph&quot;)
+    public HugeVertex addVertex(Object... keyValues) {
+<span class="nc" id="L606">        return this.addVertex(this.constructVertex(true, keyValues));</span>
+    }
+
+    @Watched(&quot;graph.addVertex-instance&quot;)
+    public HugeVertex addVertex(HugeVertex vertex) {
+<span class="nc" id="L611">        this.checkOwnerThread();</span>
+<span class="nc bnc" id="L612" title="All 2 branches missed.">        assert !vertex.removed();</span>
+
+        // Override vertices in local `removedVertices`
+<span class="nc" id="L615">        this.removedVertices.remove(vertex.id());</span>
+        try {
+<span class="nc" id="L617">            this.locksTable.lockReads(LockUtil.VERTEX_LABEL_DELETE,</span>
+<span class="nc" id="L618">                                      vertex.schemaLabel().id());</span>
+<span class="nc" id="L619">            this.locksTable.lockReads(LockUtil.INDEX_LABEL_DELETE,</span>
+<span class="nc" id="L620">                                      vertex.schemaLabel().indexLabels());</span>
+            // Ensure vertex label still exists from vertex-construct to lock
+<span class="nc" id="L622">            this.graph().vertexLabel(vertex.schemaLabel().id());</span>
+            /*
+             * No need to lock VERTEX_LABEL_ADD_UPDATE, because vertex label
+             * update only can add nullable properties and user data, which is
+             * unconcerned with add vertex
+             */
+<span class="nc" id="L628">            this.beforeWrite();</span>
+<span class="nc" id="L629">            this.addedVertices.put(vertex.id(), vertex);</span>
+<span class="nc" id="L630">            this.afterWrite();</span>
+<span class="nc" id="L631">        } catch (Throwable e) {</span>
+<span class="nc" id="L632">            this.locksTable.unlock();</span>
+<span class="nc" id="L633">            throw e;</span>
+<span class="nc" id="L634">        }</span>
+<span class="nc" id="L635">        return vertex;</span>
+    }
+
+    @Watched(prefix = &quot;graph&quot;)
+    public HugeVertex constructVertex(boolean verifyVL, Object... keyValues) {
+<span class="nc" id="L640">        HugeElement.ElementKeys elemKeys = HugeElement.classifyKeys(keyValues);</span>
+<span class="nc bnc" id="L641" title="All 2 branches missed.">        if (possibleOlapVertex(elemKeys)) {</span>
+<span class="nc" id="L642">            Id id = HugeVertex.getIdValue(elemKeys.id());</span>
+<span class="nc" id="L643">            HugeVertex vertex = HugeVertex.create(this, id,</span>
+                                                  VertexLabel.OLAP_VL);
+<span class="nc" id="L645">            ElementHelper.attachProperties(vertex, keyValues);</span>
+<span class="nc" id="L646">            Iterator&lt;HugeProperty&lt;?&gt;&gt; iterator = vertex.getProperties()</span>
+<span class="nc" id="L647">                                                       .iterator();</span>
+<span class="nc bnc" id="L648" title="All 2 branches missed.">            assert iterator.hasNext();</span>
+<span class="nc bnc" id="L649" title="All 2 branches missed.">            if (iterator.next().propertyKey().olap()) {</span>
+<span class="nc" id="L650">                return vertex;</span>
+            }
+        }
+<span class="nc" id="L653">        VertexLabel vertexLabel = this.checkVertexLabel(elemKeys.label(),</span>
+                                                        verifyVL);
+<span class="nc" id="L655">        Id id = HugeVertex.getIdValue(elemKeys.id());</span>
+<span class="nc" id="L656">        List&lt;Id&gt; keys = this.graph().mapPkName2Id(elemKeys.keys());</span>
+
+        // Check whether id match with id strategy
+<span class="nc" id="L659">        this.checkId(id, keys, vertexLabel);</span>
+
+        // Create HugeVertex
+<span class="nc" id="L662">        HugeVertex vertex = HugeVertex.create(this, null, vertexLabel);</span>
+
+        // Set properties
+<span class="nc" id="L665">        ElementHelper.attachProperties(vertex, keyValues);</span>
+
+        // Assign vertex id
+<span class="nc bnc" id="L668" title="All 2 branches missed.">        if (this.params().mode().maintaining() &amp;&amp;</span>
+<span class="nc bnc" id="L669" title="All 2 branches missed.">            vertexLabel.idStrategy() == IdStrategy.AUTOMATIC) {</span>
+            // Resume id for AUTOMATIC id strategy in restoring mode
+<span class="nc" id="L671">            vertex.assignId(id, true);</span>
+        } else {
+<span class="nc" id="L673">            vertex.assignId(id);</span>
+        }
+
+<span class="nc" id="L676">        return vertex;</span>
+    }
+
+    private boolean possibleOlapVertex(HugeElement.ElementKeys elemKeys) {
+<span class="nc bnc" id="L680" title="All 4 branches missed.">        return elemKeys.id() != null &amp;&amp; elemKeys.label() == null &amp;&amp;</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">               elemKeys.keys().size() == 1;</span>
+    }
+
+    @Watched(prefix = &quot;graph&quot;)
+    public void removeVertex(HugeVertex vertex) {
+<span class="nc" id="L686">        this.checkOwnerThread();</span>
+
+<span class="nc" id="L688">        this.beforeWrite();</span>
+
+        // Override vertices in local `addedVertices`
+<span class="nc" id="L691">        this.addedVertices.remove(vertex.id());</span>
+        // Force load vertex to ensure all properties are loaded (refer to #2181)
+<span class="nc bnc" id="L693" title="All 2 branches missed.">        if (vertex.schemaLabel().indexLabels().size() &gt; 0) {</span>
+<span class="nc" id="L694">            vertex.forceLoad();</span>
+        }
+        // Collect the removed vertex
+<span class="nc" id="L697">        this.removedVertices.put(vertex.id(), vertex);</span>
+<span class="nc" id="L698">        this.afterWrite();</span>
+<span class="nc" id="L699">    }</span>
+
+    public Iterator&lt;Vertex&gt; queryAdjacentVertices(Iterator&lt;Edge&gt; edges) {
+<span class="nc bnc" id="L702" title="All 2 branches missed.">        if (this.lazyLoadAdjacentVertex) {</span>
+<span class="nc" id="L703">            return new MapperIterator&lt;&gt;(edges, edge -&gt; {</span>
+<span class="nc" id="L704">                return ((HugeEdge) edge).otherVertex();</span>
+            });
+        }
+
+<span class="nc" id="L708">        return new BatchMapperIterator&lt;&gt;(this.batchSize, edges, batchEdges -&gt; {</span>
+<span class="nc" id="L709">            List&lt;Id&gt; vertexIds = new ArrayList&lt;&gt;(batchEdges.size());</span>
+<span class="nc bnc" id="L710" title="All 2 branches missed.">            for (Edge edge : batchEdges) {</span>
+<span class="nc" id="L711">                vertexIds.add(((HugeEdge) edge).otherVertex().id());</span>
+<span class="nc" id="L712">            }</span>
+<span class="nc bnc" id="L713" title="All 2 branches missed.">            assert vertexIds.size() &gt; 0;</span>
+<span class="nc" id="L714">            return this.queryAdjacentVertices(vertexIds.toArray());</span>
+        });
+    }
+
+    public Iterator&lt;Vertex&gt; queryAdjacentVertices(Object... vertexIds) {
+<span class="nc" id="L719">        return this.queryVerticesByIds(vertexIds, true,</span>
+                                       this.checkAdjacentVertexExist);
+    }
+
+    public Iterator&lt;Vertex&gt; queryVertices(Object... vertexIds) {
+<span class="nc" id="L724">        return this.queryVerticesByIds(vertexIds, false, false);</span>
+    }
+
+    public Vertex queryVertex(Object vertexId) {
+<span class="nc" id="L728">        Iterator&lt;Vertex&gt; iter = this.queryVerticesByIds(new Object[]{vertexId},</span>
+                                                        false, true);
+<span class="nc" id="L730">        Vertex vertex = QueryResults.one(iter);</span>
+<span class="nc bnc" id="L731" title="All 2 branches missed.">        if (vertex == null) {</span>
+<span class="nc" id="L732">            throw new NotFoundException(&quot;Vertex '%s' does not exist&quot;, vertexId);</span>
+        }
+<span class="nc" id="L734">        return vertex;</span>
+    }
+
+    protected Iterator&lt;Vertex&gt; queryVerticesByIds(Object[] vertexIds,
+                                                  boolean adjacentVertex,
+                                                  boolean checkMustExist) {
+<span class="nc" id="L740">        Query.checkForceCapacity(vertexIds.length);</span>
+
+        // NOTE: allowed duplicated vertices if query by duplicated ids
+<span class="nc" id="L743">        List&lt;Id&gt; ids = InsertionOrderUtil.newList();</span>
+<span class="nc" id="L744">        Map&lt;Id, HugeVertex&gt; vertices = new HashMap&lt;&gt;(vertexIds.length);</span>
+
+<span class="nc" id="L746">        IdQuery query = new IdQuery(HugeType.VERTEX);</span>
+<span class="nc bnc" id="L747" title="All 2 branches missed.">        for (Object vertexId : vertexIds) {</span>
+            HugeVertex vertex;
+<span class="nc" id="L749">            Id id = HugeVertex.getIdValue(vertexId);</span>
+<span class="nc bnc" id="L750" title="All 4 branches missed.">            if (id == null || this.removedVertices.containsKey(id)) {</span>
+                // The record has been deleted
+<span class="nc" id="L752">                continue;</span>
+<span class="nc bnc" id="L753" title="All 2 branches missed.">            } else if ((vertex = this.addedVertices.get(id)) != null ||</span>
+<span class="nc bnc" id="L754" title="All 2 branches missed.">                       (vertex = this.updatedVertices.get(id)) != null) {</span>
+<span class="nc bnc" id="L755" title="All 2 branches missed.">                if (vertex.expired()) {</span>
+<span class="nc" id="L756">                    continue;</span>
+                }
+                // Found from local tx
+<span class="nc" id="L759">                vertices.put(vertex.id(), vertex);</span>
+            } else {
+                // Prepare to query from backend store
+<span class="nc" id="L762">                query.query(id);</span>
+            }
+<span class="nc" id="L764">            ids.add(id);</span>
+        }
+
+<span class="nc bnc" id="L767" title="All 2 branches missed.">        if (!query.empty()) {</span>
+            // Query from backend store
+<span class="nc" id="L769">            query.mustSortByInput(false);</span>
+<span class="nc" id="L770">            Iterator&lt;HugeVertex&gt; it = this.queryVerticesFromBackend(query);</span>
+<span class="nc" id="L771">            QueryResults.fillMap(it, vertices);</span>
+        }
+
+<span class="nc" id="L774">        return new MapperIterator&lt;&gt;(ids.iterator(), id -&gt; {</span>
+<span class="nc" id="L775">            HugeVertex vertex = vertices.get(id);</span>
+<span class="nc bnc" id="L776" title="All 2 branches missed.">            if (vertex == null) {</span>
+<span class="nc bnc" id="L777" title="All 2 branches missed.">                if (checkMustExist) {</span>
+<span class="nc" id="L778">                    throw new NotFoundException(</span>
+                              &quot;Vertex '%s' does not exist&quot;, id);
+<span class="nc bnc" id="L780" title="All 2 branches missed.">                } else if (adjacentVertex) {</span>
+<span class="nc bnc" id="L781" title="All 2 branches missed.">                    assert !checkMustExist;</span>
+                    // Return undefined if adjacentVertex but !checkMustExist
+<span class="nc" id="L783">                    vertex = HugeVertex.undefined(this.graph(), id);</span>
+                } else {
+                    // Return null
+<span class="nc bnc" id="L786" title="All 2 branches missed.">                    assert vertex == null;</span>
+                }
+            }
+<span class="nc" id="L789">            return vertex;</span>
+        });
+    }
+
+    public Iterator&lt;Vertex&gt; queryVertices() {
+<span class="nc" id="L794">        Query q = new Query(HugeType.VERTEX);</span>
+<span class="nc" id="L795">        return this.queryVertices(q);</span>
+    }
+
+    public Iterator&lt;Vertex&gt; queryVertices(Query query) {
+<span class="nc bnc" id="L799" title="All 2 branches missed.">        if (this.hasUpdate()) {</span>
+<span class="nc" id="L800">            E.checkArgument(query.noLimitAndOffset(),</span>
+                            &quot;It's not allowed to query with offser/limit &quot; +
+                            &quot;when there are uncommitted records.&quot;);
+            // TODO: also add check: no SCAN, no OLAP
+<span class="nc bnc" id="L804" title="All 2 branches missed.">            E.checkArgument(!query.paging(),</span>
+                            &quot;It's not allowed to query by paging when &quot; +
+                            &quot;there are uncommitted records.&quot;);
+        }
+
+<span class="nc" id="L809">        query.resetActualOffset();</span>
+
+<span class="nc" id="L811">        Iterator&lt;HugeVertex&gt; results = this.queryVerticesFromBackend(query);</span>
+<span class="nc" id="L812">        results = this.filterUnmatchedRecords(results, query);</span>
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L815">        Iterator&lt;Vertex&gt; r = (Iterator&lt;Vertex&gt;) joinTxVertices(query, results);</span>
+<span class="nc" id="L816">        return this.skipOffsetOrStopLimit(r, query);</span>
+    }
+
+    protected Iterator&lt;HugeVertex&gt; queryVerticesFromBackend(Query query) {
+<span class="nc bnc" id="L820" title="All 2 branches missed.">        assert query.resultType().isVertex();</span>
+
+<span class="nc" id="L822">        QueryResults&lt;BackendEntry&gt; results = this.query(query);</span>
+<span class="nc" id="L823">        Iterator&lt;BackendEntry&gt; entries = results.iterator();</span>
+
+<span class="nc" id="L825">        Iterator&lt;HugeVertex&gt; vertices = new MapperIterator&lt;&gt;(entries,</span>
+                                                             this::parseEntry);
+<span class="nc" id="L827">        vertices = this.filterExpiredResultFromBackend(query, vertices);</span>
+
+<span class="nc bnc" id="L829" title="All 2 branches missed.">        if (!this.store().features().supportsQuerySortByInputIds()) {</span>
+            // There is no id in BackendEntry, so sort after deserialization
+<span class="nc" id="L831">            vertices = results.keepInputOrderIfNeeded(vertices);</span>
+        }
+<span class="nc" id="L833">        return vertices;</span>
+    }
+
+    @Watched(prefix = &quot;graph&quot;)
+    public HugeEdge addEdge(HugeEdge edge) {
+<span class="nc" id="L838">        this.checkOwnerThread();</span>
+<span class="nc bnc" id="L839" title="All 2 branches missed.">        assert !edge.removed();</span>
+
+        // Override edges in local `removedEdges`
+<span class="nc" id="L842">        this.removedEdges.remove(edge.id());</span>
+        try {
+<span class="nc" id="L844">            this.locksTable.lockReads(LockUtil.EDGE_LABEL_DELETE,</span>
+<span class="nc" id="L845">                                      edge.schemaLabel().id());</span>
+<span class="nc" id="L846">            this.locksTable.lockReads(LockUtil.INDEX_LABEL_DELETE,</span>
+<span class="nc" id="L847">                                      edge.schemaLabel().indexLabels());</span>
+            // Ensure edge label still exists from edge-construct to lock
+<span class="nc" id="L849">            this.graph().edgeLabel(edge.schemaLabel().id());</span>
+            /*
+             * No need to lock EDGE_LABEL_ADD_UPDATE, because edge label
+             * update only can add nullable properties and user data, which is
+             * unconcerned with add edge
+             */
+<span class="nc" id="L855">            this.beforeWrite();</span>
+<span class="nc" id="L856">            this.addedEdges.put(edge.id(), edge);</span>
+<span class="nc" id="L857">            this.afterWrite();</span>
+<span class="nc" id="L858">        } catch (Throwable e) {</span>
+<span class="nc" id="L859">            this.locksTable.unlock();</span>
+<span class="nc" id="L860">            throw e;</span>
+<span class="nc" id="L861">        }</span>
+<span class="nc" id="L862">        return edge;</span>
+    }
+
+    @Watched(prefix = &quot;graph&quot;)
+    public void removeEdge(HugeEdge edge) {
+<span class="nc" id="L867">        this.checkOwnerThread();</span>
+
+<span class="nc" id="L869">        this.beforeWrite();</span>
+
+        // Override edges in local `addedEdges`
+<span class="nc" id="L872">        this.addedEdges.remove(edge.id());</span>
+
+        // Collect the removed edge
+<span class="nc" id="L875">        this.removedEdges.put(edge.id(), edge);</span>
+
+<span class="nc" id="L877">        this.afterWrite();</span>
+<span class="nc" id="L878">    }</span>
+
+    public Iterator&lt;Edge&gt; queryEdgesByVertex(Id id) {
+<span class="nc" id="L881">        return this.queryEdges(constructEdgesQuery(id, Directions.BOTH));</span>
+    }
+
+    public Iterator&lt;Edge&gt; queryEdges(Object... edgeIds) {
+<span class="nc" id="L885">        return this.queryEdgesByIds(edgeIds, false);</span>
+    }
+
+    public Edge queryEdge(Object edgeId) {
+<span class="nc" id="L889">        Iterator&lt;Edge&gt; iter = this.queryEdgesByIds(new Object[]{edgeId}, true);</span>
+<span class="nc" id="L890">        Edge edge = QueryResults.one(iter);</span>
+<span class="nc bnc" id="L891" title="All 2 branches missed.">        if (edge == null) {</span>
+<span class="nc" id="L892">            throw new NotFoundException(&quot;Edge '%s' does not exist&quot;, edgeId);</span>
+        }
+<span class="nc" id="L894">        return edge;</span>
+    }
+
+    protected Iterator&lt;Edge&gt; queryEdgesByIds(Object[] edgeIds,
+                                             boolean verifyId) {
+<span class="nc" id="L899">        Query.checkForceCapacity(edgeIds.length);</span>
+
+        // NOTE: allowed duplicated edges if query by duplicated ids
+<span class="nc" id="L902">        List&lt;Id&gt; ids = InsertionOrderUtil.newList();</span>
+<span class="nc" id="L903">        Map&lt;Id, HugeEdge&gt; edges = new HashMap&lt;&gt;(edgeIds.length);</span>
+
+<span class="nc" id="L905">        IdQuery query = new IdQuery(HugeType.EDGE);</span>
+<span class="nc bnc" id="L906" title="All 2 branches missed.">        for (Object edgeId : edgeIds) {</span>
+            HugeEdge edge;
+<span class="nc bnc" id="L908" title="All 2 branches missed.">            EdgeId id = HugeEdge.getIdValue(edgeId, !verifyId);</span>
+<span class="nc bnc" id="L909" title="All 2 branches missed.">            if (id == null) {</span>
+<span class="nc" id="L910">                continue;</span>
+            }
+<span class="nc bnc" id="L912" title="All 2 branches missed.">            if (id.direction() == Directions.IN) {</span>
+<span class="nc" id="L913">                id = id.switchDirection();</span>
+            }
+<span class="nc bnc" id="L915" title="All 2 branches missed.">            if (this.removedEdges.containsKey(id)) {</span>
+                // The record has been deleted
+<span class="nc" id="L917">                continue;</span>
+<span class="nc bnc" id="L918" title="All 2 branches missed.">            } else if ((edge = this.addedEdges.get(id)) != null ||</span>
+<span class="nc bnc" id="L919" title="All 2 branches missed.">                       (edge = this.updatedEdges.get(id)) != null) {</span>
+<span class="nc bnc" id="L920" title="All 2 branches missed.">                if (edge.expired()) {</span>
+<span class="nc" id="L921">                    continue;</span>
+                }
+                // Found from local tx
+<span class="nc" id="L924">                edges.put(edge.id(), edge);</span>
+            } else {
+                // Prepare to query from backend store
+<span class="nc" id="L927">                query.query(id);</span>
+            }
+<span class="nc" id="L929">            ids.add(id);</span>
+        }
+
+<span class="nc bnc" id="L932" title="All 2 branches missed.">        if (!query.empty()) {</span>
+            // Query from backend store
+<span class="nc bnc" id="L934" title="All 4 branches missed.">            if (edges.isEmpty() &amp;&amp; query.idsSize() == ids.size()) {</span>
+                /*
+                 * Sort at the lower layer and return directly if there is no
+                 * local vertex and duplicated id.
+                 */
+<span class="nc" id="L939">                Iterator&lt;HugeEdge&gt; it = this.queryEdgesFromBackend(query);</span>
+                @SuppressWarnings({&quot;unchecked&quot;, &quot;rawtypes&quot;})
+<span class="nc" id="L941">                Iterator&lt;Edge&gt; r = (Iterator) it;</span>
+<span class="nc" id="L942">                return r;</span>
+            }
+
+<span class="nc" id="L945">            query.mustSortByInput(false);</span>
+<span class="nc" id="L946">            Iterator&lt;HugeEdge&gt; it = this.queryEdgesFromBackend(query);</span>
+<span class="nc" id="L947">            QueryResults.fillMap(it, edges);</span>
+        }
+
+<span class="nc" id="L950">        return new MapperIterator&lt;&gt;(ids.iterator(), id -&gt; {</span>
+<span class="nc" id="L951">            Edge edge = edges.get(id);</span>
+<span class="nc" id="L952">            return edge;</span>
+        });
+    }
+
+    public Iterator&lt;Edge&gt; queryEdges() {
+<span class="nc" id="L957">        Query q = new Query(HugeType.EDGE);</span>
+<span class="nc" id="L958">        return this.queryEdges(q);</span>
+    }
+
+    @Watched
+    public Iterator&lt;Edge&gt; queryEdges(Query query) {
+<span class="nc bnc" id="L963" title="All 2 branches missed.">        if (this.hasUpdate()) {</span>
+<span class="nc" id="L964">            E.checkArgument(query.noLimitAndOffset(),</span>
+                            &quot;It's not allowed to query with offser/limit &quot; +
+                            &quot;when there are uncommitted records.&quot;);
+            // TODO: also add check: no SCAN, no OLAP
+<span class="nc bnc" id="L968" title="All 2 branches missed.">            E.checkArgument(!query.paging(),</span>
+                            &quot;It's not allowed to query by paging when &quot; +
+                            &quot;there are uncommitted records.&quot;);
+        }
+
+<span class="nc" id="L973">        query.resetActualOffset();</span>
+
+<span class="nc" id="L975">        Iterator&lt;HugeEdge&gt; results = this.queryEdgesFromBackend(query);</span>
+<span class="nc" id="L976">        results = this.filterUnmatchedRecords(results, query);</span>
+
+        /*
+         * Without repeated edges if not querying by BOTH all edges
+         * TODO: any unconsidered case, maybe the query with OR condition?
+         */
+<span class="nc" id="L982">        boolean dedupEdge = false;</span>
+<span class="nc bnc" id="L983" title="All 2 branches missed.">        if (dedupEdge) {</span>
+<span class="nc" id="L984">            Set&lt;Id&gt; returnedEdges = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L985">            results = new FilterIterator&lt;&gt;(results, edge -&gt; {</span>
+                // Filter duplicated edges (edge may be repeated query both)
+<span class="nc bnc" id="L987" title="All 2 branches missed.">                if (!returnedEdges.contains(edge.id())) {</span>
+                    /*
+                     * NOTE: Maybe some edges are IN and others are OUT
+                     * if querying edges both directions, perhaps it would look
+                     * better if we convert all edges in results to OUT, but
+                     * that would break the logic when querying IN edges.
+                     */
+<span class="nc" id="L994">                    returnedEdges.add(edge.id());</span>
+<span class="nc" id="L995">                    return true;</span>
+                } else {
+<span class="nc" id="L997">                    LOG.debug(&quot;Result contains duplicated edge: {}&quot;, edge);</span>
+<span class="nc" id="L998">                    return false;</span>
+                }
+            });
+        }
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L1004">        Iterator&lt;Edge&gt; r = (Iterator&lt;Edge&gt;) joinTxEdges(query, results,</span>
+                                                        this.removedVertices);
+<span class="nc" id="L1006">        return this.skipOffsetOrStopLimit(r, query);</span>
+    }
+
+    protected Iterator&lt;HugeEdge&gt; queryEdgesFromBackend(Query query) {
+<span class="nc bnc" id="L1010" title="All 2 branches missed.">        assert query.resultType().isEdge();</span>
+
+<span class="nc" id="L1012">        QueryResults&lt;BackendEntry&gt; results = this.query(query);</span>
+<span class="nc" id="L1013">        Iterator&lt;BackendEntry&gt; entries = results.iterator();</span>
+
+<span class="nc" id="L1015">        Iterator&lt;HugeEdge&gt; edges = new FlatMapperIterator&lt;&gt;(entries, entry -&gt; {</span>
+            // Edges are in a vertex
+<span class="nc" id="L1017">            HugeVertex vertex = this.parseEntry(entry);</span>
+<span class="nc bnc" id="L1018" title="All 2 branches missed.">            if (vertex == null) {</span>
+<span class="nc" id="L1019">                return null;</span>
+            }
+<span class="nc bnc" id="L1021" title="All 2 branches missed.">            if (query.idsSize() == 1) {</span>
+<span class="nc bnc" id="L1022" title="All 2 branches missed.">                assert vertex.getEdges().size() == 1;</span>
+            }
+            /*
+             * Copy to avoid ConcurrentModificationException when removing edge
+             * because HugeEdge.remove() will update edges in owner vertex
+             */
+<span class="nc" id="L1028">            return new ListIterator&lt;&gt;(ImmutableList.copyOf(vertex.getEdges()));</span>
+        });
+
+<span class="nc" id="L1031">        edges = this.filterExpiredResultFromBackend(query, edges);</span>
+
+<span class="nc bnc" id="L1033" title="All 2 branches missed.">        if (!this.store().features().supportsQuerySortByInputIds()) {</span>
+            // There is no id in BackendEntry, so sort after deserialization
+<span class="nc" id="L1035">            edges = results.keepInputOrderIfNeeded(edges);</span>
+        }
+<span class="nc" id="L1037">        return edges;</span>
+    }
+
+    @Watched(prefix = &quot;graph&quot;)
+    public &lt;V&gt; void addVertexProperty(HugeVertexProperty&lt;V&gt; prop) {
+        // NOTE: this method can also be used to update property
+
+<span class="nc" id="L1044">        HugeVertex vertex = prop.element();</span>
+<span class="nc bnc" id="L1045" title="All 2 branches missed.">        E.checkState(vertex != null,</span>
+<span class="nc" id="L1046">                     &quot;No owner for updating property '%s'&quot;, prop.key());</span>
+
+        // Add property in memory for new created vertex
+<span class="nc bnc" id="L1049" title="All 2 branches missed.">        if (vertex.fresh()) {</span>
+            // The owner will do property update
+<span class="nc" id="L1051">            vertex.setProperty(prop);</span>
+<span class="nc" id="L1052">            return;</span>
+        }
+        // Check is updating property of added/removed vertex
+<span class="nc bnc" id="L1055" title="All 2 branches missed.">        E.checkArgument(!this.addedVertices.containsKey(vertex.id()) ||</span>
+<span class="nc bnc" id="L1056" title="All 2 branches missed.">                        this.updatedVertices.containsKey(vertex.id()),</span>
+                        &quot;Can't update property '%s' for adding-state vertex&quot;,
+<span class="nc" id="L1058">                        prop.key());</span>
+<span class="nc bnc" id="L1059" title="All 2 branches missed.">        E.checkArgument(!vertex.removed() &amp;&amp;</span>
+<span class="nc bnc" id="L1060" title="All 2 branches missed.">                        !this.removedVertices.containsKey(vertex.id()),</span>
+                        &quot;Can't update property '%s' for removing-state vertex&quot;,
+<span class="nc" id="L1062">                        prop.key());</span>
+        // Check is updating primary key
+<span class="nc" id="L1064">        List&lt;Id&gt; primaryKeyIds = vertex.schemaLabel().primaryKeys();</span>
+<span class="nc bnc" id="L1065" title="All 2 branches missed.">        E.checkArgument(!primaryKeyIds.contains(prop.propertyKey().id()),</span>
+<span class="nc" id="L1066">                        &quot;Can't update primary key: '%s'&quot;, prop.key());</span>
+
+        // Do property update
+<span class="nc" id="L1069">        this.lockForUpdateProperty(vertex.schemaLabel(), prop, () -&gt; {</span>
+            // Update old vertex to remove index (without new property)
+<span class="nc" id="L1071">            this.indexTx.updateVertexIndex(vertex, true);</span>
+            // Update(add) vertex property
+<span class="nc" id="L1073">            this.propertyUpdated(vertex, prop, vertex.setProperty(prop));</span>
+<span class="nc" id="L1074">        });</span>
+<span class="nc" id="L1075">    }</span>
+
+    @Watched(prefix = &quot;graph&quot;)
+    public &lt;V&gt; void removeVertexProperty(HugeVertexProperty&lt;V&gt; prop) {
+<span class="nc" id="L1079">        HugeVertex vertex = prop.element();</span>
+<span class="nc" id="L1080">        PropertyKey propKey = prop.propertyKey();</span>
+<span class="nc bnc" id="L1081" title="All 2 branches missed.">        E.checkState(vertex != null,</span>
+<span class="nc" id="L1082">                     &quot;No owner for removing property '%s'&quot;, prop.key());</span>
+
+        // Maybe have ever been removed (compatible with tinkerpop)
+<span class="nc bnc" id="L1085" title="All 2 branches missed.">        if (!vertex.hasProperty(propKey.id())) {</span>
+            // PropertyTest shouldAllowRemovalFromVertexWhenAlreadyRemoved()
+<span class="nc" id="L1087">            return;</span>
+        }
+        // Check is removing primary key
+<span class="nc" id="L1090">        List&lt;Id&gt; primaryKeyIds = vertex.schemaLabel().primaryKeys();</span>
+<span class="nc bnc" id="L1091" title="All 2 branches missed.">        E.checkArgument(!primaryKeyIds.contains(propKey.id()),</span>
+<span class="nc" id="L1092">                        &quot;Can't remove primary key '%s'&quot;, prop.key());</span>
+        // Remove property in memory for new created vertex
+<span class="nc bnc" id="L1094" title="All 2 branches missed.">        if (vertex.fresh()) {</span>
+            // The owner will do property update
+<span class="nc" id="L1096">            vertex.removeProperty(propKey.id());</span>
+<span class="nc" id="L1097">            return;</span>
+        }
+        // Check is updating property of added/removed vertex
+<span class="nc bnc" id="L1100" title="All 2 branches missed.">        E.checkArgument(!this.addedVertices.containsKey(vertex.id()) ||</span>
+<span class="nc bnc" id="L1101" title="All 2 branches missed.">                        this.updatedVertices.containsKey(vertex.id()),</span>
+                        &quot;Can't remove property '%s' for adding-state vertex&quot;,
+<span class="nc" id="L1103">                        prop.key());</span>
+<span class="nc bnc" id="L1104" title="All 2 branches missed.">        E.checkArgument(!this.removedVertices.containsKey(vertex.id()),</span>
+                        &quot;Can't remove property '%s' for removing-state vertex&quot;,
+<span class="nc" id="L1106">                        prop.key());</span>
+
+        // Do property update
+<span class="nc" id="L1109">        this.lockForUpdateProperty(vertex.schemaLabel(), prop, () -&gt; {</span>
+            // Update old vertex to remove index (with the property)
+<span class="nc" id="L1111">            this.indexTx.updateVertexIndex(vertex, true);</span>
+            // Update(remove) vertex property
+<span class="nc" id="L1113">            HugeProperty&lt;?&gt; removed = vertex.removeProperty(propKey.id());</span>
+<span class="nc" id="L1114">            this.propertyUpdated(vertex, null, removed);</span>
+<span class="nc" id="L1115">        });</span>
+<span class="nc" id="L1116">    }</span>
+
+    @Watched(prefix = &quot;graph&quot;)
+    public &lt;V&gt; void addEdgeProperty(HugeEdgeProperty&lt;V&gt; prop) {
+        // NOTE: this method can also be used to update property
+
+<span class="nc" id="L1122">        HugeEdge edge = prop.element();</span>
+<span class="nc bnc" id="L1123" title="All 2 branches missed.">        E.checkState(edge != null,</span>
+<span class="nc" id="L1124">                     &quot;No owner for updating property '%s'&quot;, prop.key());</span>
+
+        // Add property in memory for new created edge
+<span class="nc bnc" id="L1127" title="All 2 branches missed.">        if (edge.fresh()) {</span>
+            // The owner will do property update
+<span class="nc" id="L1129">            edge.setProperty(prop);</span>
+<span class="nc" id="L1130">            return;</span>
+        }
+        // Check is updating property of added/removed edge
+<span class="nc bnc" id="L1133" title="All 2 branches missed.">        E.checkArgument(!this.addedEdges.containsKey(edge.id()) ||</span>
+<span class="nc bnc" id="L1134" title="All 2 branches missed.">                        this.updatedEdges.containsKey(edge.id()),</span>
+                        &quot;Can't update property '%s' for adding-state edge&quot;,
+<span class="nc" id="L1136">                        prop.key());</span>
+<span class="nc bnc" id="L1137" title="All 2 branches missed.">        E.checkArgument(!edge.removed() &amp;&amp;</span>
+<span class="nc bnc" id="L1138" title="All 2 branches missed.">                        !this.removedEdges.containsKey(edge.id()),</span>
+                        &quot;Can't update property '%s' for removing-state edge&quot;,
+<span class="nc" id="L1140">                        prop.key());</span>
+        // Check is updating sort key
+<span class="nc" id="L1142">        List&lt;Id&gt; sortKeys = edge.schemaLabel().sortKeys();</span>
+<span class="nc bnc" id="L1143" title="All 2 branches missed.">        E.checkArgument(!sortKeys.contains(prop.propertyKey().id()),</span>
+<span class="nc" id="L1144">                        &quot;Can't update sort key '%s'&quot;, prop.key());</span>
+
+        // Do property update
+<span class="nc" id="L1147">        this.lockForUpdateProperty(edge.schemaLabel(), prop, () -&gt; {</span>
+            // Update old edge to remove index (without new property)
+<span class="nc" id="L1149">            this.indexTx.updateEdgeIndex(edge, true);</span>
+            // Update(add) edge property
+<span class="nc" id="L1151">            this.propertyUpdated(edge, prop, edge.setProperty(prop));</span>
+<span class="nc" id="L1152">        });</span>
+<span class="nc" id="L1153">    }</span>
+
+    @Watched(prefix = &quot;graph&quot;)
+    public &lt;V&gt; void removeEdgeProperty(HugeEdgeProperty&lt;V&gt; prop) {
+<span class="nc" id="L1157">        HugeEdge edge = prop.element();</span>
+<span class="nc" id="L1158">        PropertyKey propKey = prop.propertyKey();</span>
+<span class="nc bnc" id="L1159" title="All 2 branches missed.">        E.checkState(edge != null,</span>
+<span class="nc" id="L1160">                     &quot;No owner for removing property '%s'&quot;, prop.key());</span>
+
+        // Maybe have ever been removed
+<span class="nc bnc" id="L1163" title="All 2 branches missed.">        if (!edge.hasProperty(propKey.id())) {</span>
+<span class="nc" id="L1164">            return;</span>
+        }
+        // Check is removing sort key
+<span class="nc" id="L1167">        List&lt;Id&gt; sortKeyIds = edge.schemaLabel().sortKeys();</span>
+<span class="nc bnc" id="L1168" title="All 2 branches missed.">        E.checkArgument(!sortKeyIds.contains(prop.propertyKey().id()),</span>
+<span class="nc" id="L1169">                        &quot;Can't remove sort key '%s'&quot;, prop.key());</span>
+        // Remove property in memory for new created edge
+<span class="nc bnc" id="L1171" title="All 2 branches missed.">        if (edge.fresh()) {</span>
+            // The owner will do property update
+<span class="nc" id="L1173">            edge.removeProperty(propKey.id());</span>
+<span class="nc" id="L1174">            return;</span>
+        }
+        // Check is updating property of added/removed edge
+<span class="nc bnc" id="L1177" title="All 2 branches missed.">        E.checkArgument(!this.addedEdges.containsKey(edge.id()) ||</span>
+<span class="nc bnc" id="L1178" title="All 2 branches missed.">                        this.updatedEdges.containsKey(edge.id()),</span>
+                        &quot;Can't remove property '%s' for adding-state edge&quot;,
+<span class="nc" id="L1180">                        prop.key());</span>
+<span class="nc bnc" id="L1181" title="All 2 branches missed.">        E.checkArgument(!this.removedEdges.containsKey(edge.id()),</span>
+                        &quot;Can't remove property '%s' for removing-state edge&quot;,
+<span class="nc" id="L1183">                        prop.key());</span>
+
+        // Do property update
+<span class="nc" id="L1186">        this.lockForUpdateProperty(edge.schemaLabel(), prop, () -&gt; {</span>
+            // Update old edge to remove index (with the property)
+<span class="nc" id="L1188">            this.indexTx.updateEdgeIndex(edge, true);</span>
+            // Update(remove) edge property
+<span class="nc" id="L1190">            this.propertyUpdated(edge, null,</span>
+<span class="nc" id="L1191">                                 edge.removeProperty(propKey.id()));</span>
+<span class="nc" id="L1192">        });</span>
+<span class="nc" id="L1193">    }</span>
+
+    /**
+     * Construct one edge condition query based on source vertex, direction and
+     * edge labels
+     *
+     * @param sourceVertex source vertex of edge
+     * @param direction    only be &quot;IN&quot;, &quot;OUT&quot; or &quot;BOTH&quot;
+     * @param edgeLabels   edge labels of queried edges
+     * @return constructed condition query
+     */
+    @Watched
+    public static ConditionQuery constructEdgesQuery(Id sourceVertex,
+                                                     Directions direction,
+                                                     Id... edgeLabels) {
+<span class="nc bnc" id="L1208" title="All 2 branches missed.">        E.checkState(sourceVertex != null,</span>
+                     &quot;The edge query must contain source vertex&quot;);
+<span class="nc bnc" id="L1210" title="All 2 branches missed.">        E.checkState(direction != null,</span>
+                     &quot;The edge query must contain direction&quot;);
+
+<span class="nc" id="L1213">        ConditionQuery query = new ConditionQuery(HugeType.EDGE);</span>
+
+        // Edge source vertex
+<span class="nc" id="L1216">        query.eq(HugeKeys.OWNER_VERTEX, sourceVertex);</span>
+
+        // Edge direction
+<span class="nc bnc" id="L1219" title="All 2 branches missed.">        if (direction == Directions.BOTH) {</span>
+<span class="nc" id="L1220">            query.query(Condition.or(</span>
+<span class="nc" id="L1221">                        Condition.eq(HugeKeys.DIRECTION, Directions.OUT),</span>
+<span class="nc" id="L1222">                        Condition.eq(HugeKeys.DIRECTION, Directions.IN)));</span>
+        } else {
+<span class="nc bnc" id="L1224" title="All 4 branches missed.">            assert direction == Directions.OUT || direction == Directions.IN;</span>
+<span class="nc" id="L1225">            query.eq(HugeKeys.DIRECTION, direction);</span>
+        }
+
+        // Edge labels
+<span class="nc bnc" id="L1229" title="All 2 branches missed.">        if (edgeLabels.length == 1) {</span>
+<span class="nc" id="L1230">            query.eq(HugeKeys.LABEL, edgeLabels[0]);</span>
+<span class="nc bnc" id="L1231" title="All 2 branches missed.">        } else if (edgeLabels.length &gt; 1) {</span>
+<span class="nc" id="L1232">            query.query(Condition.in(HugeKeys.LABEL,</span>
+<span class="nc" id="L1233">                                     Arrays.asList(edgeLabels)));</span>
+        }
+
+<span class="nc" id="L1236">        return query;</span>
+    }
+
+    public static ConditionQuery constructEdgesQuery(Id sourceVertex,
+                                                     Directions direction,
+                                                     List&lt;Id&gt; edgeLabels) {
+<span class="nc bnc" id="L1242" title="All 2 branches missed.">        E.checkState(sourceVertex != null,</span>
+                     &quot;The edge query must contain source vertex&quot;);
+<span class="nc bnc" id="L1244" title="All 2 branches missed.">        E.checkState(direction != null,</span>
+                     &quot;The edge query must contain direction&quot;);
+
+<span class="nc" id="L1247">        ConditionQuery query = new ConditionQuery(HugeType.EDGE);</span>
+
+        // Edge source vertex
+<span class="nc" id="L1250">        query.eq(HugeKeys.OWNER_VERTEX, sourceVertex);</span>
+
+        // Edge direction
+<span class="nc bnc" id="L1253" title="All 2 branches missed.">        if (direction == Directions.BOTH) {</span>
+<span class="nc" id="L1254">            query.query(Condition.or(</span>
+<span class="nc" id="L1255">                    Condition.eq(HugeKeys.DIRECTION, Directions.OUT),</span>
+<span class="nc" id="L1256">                    Condition.eq(HugeKeys.DIRECTION, Directions.IN)));</span>
+        } else {
+<span class="nc bnc" id="L1258" title="All 4 branches missed.">            assert direction == Directions.OUT || direction == Directions.IN;</span>
+<span class="nc" id="L1259">            query.eq(HugeKeys.DIRECTION, direction);</span>
+        }
+
+        // Edge labels
+<span class="nc bnc" id="L1263" title="All 2 branches missed.">        if (edgeLabels.size() == 1) {</span>
+<span class="nc" id="L1264">            query.eq(HugeKeys.LABEL, edgeLabels.get(0));</span>
+<span class="nc bnc" id="L1265" title="All 2 branches missed.">        } else if (edgeLabels.size() &gt; 1) {</span>
+<span class="nc" id="L1266">            query.query(Condition.in(HugeKeys.LABEL, edgeLabels));</span>
+        }
+
+<span class="nc" id="L1269">        return query;</span>
+    }
+
+    public static boolean matchFullEdgeSortKeys(ConditionQuery query,
+                                                HugeGraph graph) {
+        // All queryKeys in sortKeys
+<span class="nc" id="L1275">        return matchEdgeSortKeys(query, true, graph);</span>
+    }
+
+    public static boolean matchPartialEdgeSortKeys(ConditionQuery query,
+                                                   HugeGraph graph) {
+        // Partial queryKeys in sortKeys
+<span class="nc" id="L1281">        return matchEdgeSortKeys(query, false, graph);</span>
+    }
+
+    private static boolean matchEdgeSortKeys(ConditionQuery query,
+                                             boolean matchAll,
+                                             HugeGraph graph) {
+<span class="nc bnc" id="L1287" title="All 2 branches missed.">        assert query.resultType().isEdge();</span>
+<span class="nc" id="L1288">        Id label = query.condition(HugeKeys.LABEL);</span>
+<span class="nc bnc" id="L1289" title="All 2 branches missed.">        if (label == null) {</span>
+<span class="nc" id="L1290">            return false;</span>
+        }
+<span class="nc" id="L1292">        List&lt;Id&gt; sortKeys = graph.edgeLabel(label).sortKeys();</span>
+<span class="nc bnc" id="L1293" title="All 2 branches missed.">        if (sortKeys.isEmpty()) {</span>
+<span class="nc" id="L1294">            return false;</span>
+        }
+<span class="nc" id="L1296">        Set&lt;Id&gt; queryKeys = query.userpropKeys();</span>
+<span class="nc bnc" id="L1297" title="All 2 branches missed.">        for (int i = sortKeys.size(); i &gt; 0; i--) {</span>
+<span class="nc" id="L1298">            List&lt;Id&gt; subFields = sortKeys.subList(0, i);</span>
+<span class="nc bnc" id="L1299" title="All 2 branches missed.">            if (queryKeys.containsAll(subFields)) {</span>
+<span class="nc bnc" id="L1300" title="All 4 branches missed.">                if (queryKeys.size() == subFields.size() || !matchAll) {</span>
+                    /*
+                     * Return true if:
+                     * matchAll=true and all queryKeys are in sortKeys
+                     *  or
+                     * partial queryKeys are in sortKeys
+                     */
+<span class="nc" id="L1307">                    return true;</span>
+                }
+            }
+        }
+<span class="nc" id="L1311">        return false;</span>
+    }
+
+    private static void verifyVerticesConditionQuery(ConditionQuery query) {
+<span class="nc bnc" id="L1315" title="All 2 branches missed.">        assert query.resultType().isVertex();</span>
+
+<span class="nc" id="L1317">        int total = query.conditionsSize();</span>
+<span class="nc bnc" id="L1318" title="All 2 branches missed.">        if (total == 1) {</span>
+            /*
+             * Supported query:
+             *  1.query just by vertex label
+             *  2.query just by PROPERTIES (like containsKey,containsValue)
+             *  3.query with scan
+             */
+<span class="nc bnc" id="L1325" title="All 2 branches missed.">            if (query.containsCondition(HugeKeys.LABEL) ||</span>
+<span class="nc bnc" id="L1326" title="All 2 branches missed.">                query.containsCondition(HugeKeys.PROPERTIES) ||</span>
+<span class="nc bnc" id="L1327" title="All 2 branches missed.">                query.containsScanRelation()) {</span>
+<span class="nc" id="L1328">                return;</span>
+            }
+        }
+
+<span class="nc" id="L1332">        int matched = 0;</span>
+<span class="nc bnc" id="L1333" title="All 2 branches missed.">        if (query.containsCondition(HugeKeys.PROPERTIES)) {</span>
+<span class="nc" id="L1334">            matched++;</span>
+<span class="nc bnc" id="L1335" title="All 2 branches missed.">            if (query.containsCondition(HugeKeys.LABEL)) {</span>
+<span class="nc" id="L1336">                matched++;</span>
+            }
+        }
+
+<span class="nc bnc" id="L1340" title="All 2 branches missed.">        if (matched != total) {</span>
+<span class="nc" id="L1341">            throw new HugeException(&quot;Not supported querying vertices by %s&quot;,</span>
+<span class="nc" id="L1342">                                    query.conditions());</span>
+        }
+<span class="nc" id="L1344">    }</span>
+
+    private static void verifyEdgesConditionQuery(ConditionQuery query) {
+<span class="nc bnc" id="L1347" title="All 2 branches missed.">        assert query.resultType().isEdge();</span>
+
+<span class="nc" id="L1349">        int total = query.conditionsSize();</span>
+<span class="nc bnc" id="L1350" title="All 2 branches missed.">        if (total == 1) {</span>
+            /*
+             * Supported query:
+             *  1.query just by edge label
+             *  2.query just by PROPERTIES (like containsKey,containsValue)
+             *  3.query with scan
+             */
+<span class="nc bnc" id="L1357" title="All 2 branches missed.">            if (query.containsCondition(HugeKeys.LABEL) ||</span>
+<span class="nc bnc" id="L1358" title="All 2 branches missed.">                query.containsCondition(HugeKeys.PROPERTIES) ||</span>
+<span class="nc bnc" id="L1359" title="All 2 branches missed.">                query.containsScanRelation()) {</span>
+<span class="nc" id="L1360">                return;</span>
+            }
+        }
+
+<span class="nc" id="L1364">        int matched = 0;</span>
+<span class="nc bnc" id="L1365" title="All 2 branches missed.">        for (HugeKeys key : EdgeId.KEYS) {</span>
+<span class="nc" id="L1366">            Object value = query.condition(key);</span>
+<span class="nc bnc" id="L1367" title="All 2 branches missed.">            if (value == null) {</span>
+<span class="nc" id="L1368">                break;</span>
+            }
+<span class="nc" id="L1370">            matched++;</span>
+        }
+<span class="nc" id="L1372">        int count = matched;</span>
+
+<span class="nc bnc" id="L1374" title="All 2 branches missed.">        if (query.containsCondition(HugeKeys.PROPERTIES)) {</span>
+<span class="nc" id="L1375">            matched++;</span>
+<span class="nc bnc" id="L1376" title="All 4 branches missed.">            if (count &lt; 3 &amp;&amp; query.containsCondition(HugeKeys.LABEL)) {</span>
+<span class="nc" id="L1377">                matched++;</span>
+            }
+        }
+
+<span class="nc bnc" id="L1381" title="All 2 branches missed.">        if (matched != total) {</span>
+<span class="nc" id="L1382">            throw new HugeException(</span>
+                      &quot;Not supported querying edges by %s, expect %s&quot;,
+<span class="nc" id="L1384">                      query.conditions(), EdgeId.KEYS[count]);</span>
+        }
+<span class="nc" id="L1386">    }</span>
+
+    private &lt;R&gt; QueryList&lt;R&gt; optimizeQueries(Query query,
+                                             QueryResults.Fetcher&lt;R&gt; fetcher) {
+<span class="nc" id="L1390">        QueryList&lt;R&gt; queries = new QueryList&lt;&gt;(query, fetcher);</span>
+<span class="nc bnc" id="L1391" title="All 2 branches missed.">        if (!(query instanceof ConditionQuery)) {</span>
+            // It's a sysprop-query, add itself as subquery, don't need to flatten
+<span class="nc" id="L1393">            queries.add(query);</span>
+<span class="nc" id="L1394">            return queries;</span>
+        }
+
+<span class="nc" id="L1397">        boolean supportIn = this.storeFeatures().supportsQueryWithInCondition();</span>
+<span class="nc bnc" id="L1398" title="All 2 branches missed.">        for (ConditionQuery cq : ConditionQueryFlatten.flatten(</span>
+                                 (ConditionQuery) query, supportIn)) {
+            // Optimize by sysprop
+<span class="nc" id="L1401">            Query q = this.optimizeQuery(cq);</span>
+            /*
+             * NOTE: There are two possibilities for the returned q:
+             * 1.sysprop-query, which would not be empty.
+             * 2.index-query result(ids after optimization), which may be empty.
+             */
+<span class="nc bnc" id="L1407" title="All 2 branches missed.">            if (q == null) {</span>
+<span class="nc" id="L1408">                queries.add(this.indexQuery(cq), this.batchSize);</span>
+<span class="nc bnc" id="L1409" title="All 2 branches missed.">            } else if (!q.empty()) {</span>
+<span class="nc" id="L1410">                queries.add(q);</span>
+            }
+<span class="nc" id="L1412">        }</span>
+<span class="nc" id="L1413">        return queries;</span>
+    }
+
+    private Query optimizeQuery(ConditionQuery query) {
+<span class="nc bnc" id="L1417" title="All 2 branches missed.">        if (query.idsSize() &gt; 0) {</span>
+<span class="nc" id="L1418">            throw new HugeException(</span>
+                      &quot;Not supported querying by id and conditions: %s&quot;, query);
+        }
+
+<span class="nc" id="L1422">        Id label = query.condition(HugeKeys.LABEL);</span>
+
+        // Optimize vertex query
+<span class="nc bnc" id="L1425" title="All 4 branches missed.">        if (label != null &amp;&amp; query.resultType().isVertex()) {</span>
+<span class="nc" id="L1426">            VertexLabel vertexLabel = this.graph().vertexLabel(label);</span>
+<span class="nc bnc" id="L1427" title="All 2 branches missed.">            if (vertexLabel.idStrategy() == IdStrategy.PRIMARY_KEY) {</span>
+<span class="nc" id="L1428">                List&lt;Id&gt; keys = vertexLabel.primaryKeys();</span>
+<span class="nc bnc" id="L1429" title="All 2 branches missed.">                E.checkState(!keys.isEmpty(),</span>
+                             &quot;The primary keys can't be empty when using &quot; +
+                             &quot;'%s' id strategy for vertex label '%s'&quot;,
+<span class="nc" id="L1432">                             IdStrategy.PRIMARY_KEY, vertexLabel.name());</span>
+<span class="nc bnc" id="L1433" title="All 2 branches missed.">                if (query.matchUserpropKeys(keys)) {</span>
+                    // Query vertex by label + primary-values
+<span class="nc" id="L1435">                    query.optimized(OptimizedType.PRIMARY_KEY);</span>
+<span class="nc" id="L1436">                    String primaryValues = query.userpropValuesString(keys);</span>
+<span class="nc" id="L1437">                    LOG.debug(&quot;Query vertices by primaryKeys: {}&quot;, query);</span>
+                    // Convert {vertex-label + primary-key} to vertex-id
+<span class="nc" id="L1439">                    Id id = SplicingIdGenerator.splicing(label.asString(),</span>
+                                                         primaryValues);
+                    /*
+                     * Just query by primary-key(id), ignore other userprop(if
+                     * exists) that it will be filtered by queryVertices(Query)
+                     */
+<span class="nc" id="L1445">                    return new IdQuery(query, id);</span>
+                }
+            }
+        }
+
+        // Optimize edge query
+<span class="nc bnc" id="L1451" title="All 4 branches missed.">        if (query.resultType().isEdge() &amp;&amp; label != null &amp;&amp;</span>
+<span class="nc bnc" id="L1452" title="All 2 branches missed.">            query.condition(HugeKeys.OWNER_VERTEX) != null &amp;&amp;</span>
+<span class="nc bnc" id="L1453" title="All 2 branches missed.">            query.condition(HugeKeys.DIRECTION) != null &amp;&amp;</span>
+<span class="nc bnc" id="L1454" title="All 2 branches missed.">            matchEdgeSortKeys(query, false, this.graph())) {</span>
+            // Query edge by sourceVertex + direction + label + sort-values
+<span class="nc" id="L1456">            query.optimized(OptimizedType.SORT_KEYS);</span>
+<span class="nc" id="L1457">            query = query.copy();</span>
+            // Serialize sort-values
+<span class="nc" id="L1459">            List&lt;Id&gt; keys = this.graph().edgeLabel(label).sortKeys();</span>
+<span class="nc" id="L1460">            List&lt;Condition&gt; conditions =</span>
+<span class="nc" id="L1461">                            GraphIndexTransaction.constructShardConditions(</span>
+                            query, keys, HugeKeys.SORT_VALUES);
+<span class="nc" id="L1463">            query.query(conditions);</span>
+            /*
+             * Reset all userprop since transferred to sort-keys, ignore other
+             * userprop(if exists) that it will be filtered by queryEdges(Query)
+             */
+<span class="nc" id="L1468">            query.resetUserpropConditions();</span>
+
+<span class="nc" id="L1470">            LOG.debug(&quot;Query edges by sortKeys: {}&quot;, query);</span>
+<span class="nc" id="L1471">            return query;</span>
+        }
+
+        /*
+         * Query only by sysprops, like: by vertex label, by edge label.
+         * NOTE: we assume sysprops would be indexed by backend store
+         * but we don't support query edges only by direction/target-vertex.
+         */
+<span class="nc bnc" id="L1479" title="All 2 branches missed.">        if (query.allSysprop()) {</span>
+<span class="nc bnc" id="L1480" title="All 2 branches missed.">            if (query.resultType().isVertex()) {</span>
+<span class="nc" id="L1481">                verifyVerticesConditionQuery(query);</span>
+<span class="nc bnc" id="L1482" title="All 2 branches missed.">            } else if (query.resultType().isEdge()) {</span>
+<span class="nc" id="L1483">                verifyEdgesConditionQuery(query);</span>
+            }
+            /*
+             * Just support:
+             *  1.not query by label
+             *  2.or query by label and store supports this feature
+             */
+<span class="nc bnc" id="L1490" title="All 4 branches missed.">            boolean byLabel = (label != null &amp;&amp; query.conditionsSize() == 1);</span>
+<span class="nc bnc" id="L1491" title="All 4 branches missed.">            if (!byLabel || this.store().features().supportsQueryByLabel()) {</span>
+<span class="nc" id="L1492">                return query;</span>
+            }
+        }
+
+<span class="nc" id="L1496">        return null;</span>
+    }
+
+    private IdHolderList indexQuery(ConditionQuery query) {
+        /*
+         * Optimize by index-query
+         * It will return a list of id (maybe empty) if success,
+         * or throw exception if there is no any index for query properties.
+         */
+<span class="nc" id="L1505">        this.beforeRead();</span>
+        try {
+<span class="nc" id="L1507">            return this.indexTx.queryIndex(query);</span>
+        } finally {
+<span class="nc" id="L1509">            this.afterRead();</span>
+        }
+    }
+
+    private VertexLabel checkVertexLabel(Object label, boolean verifyLabel) {
+<span class="nc" id="L1514">        HugeVertexFeatures features = graph().features().vertex();</span>
+
+        // Check Vertex label
+<span class="nc bnc" id="L1517" title="All 4 branches missed.">        if (label == null &amp;&amp; features.supportsDefaultLabel()) {</span>
+<span class="nc" id="L1518">            label = features.defaultLabel();</span>
+        }
+
+<span class="nc bnc" id="L1521" title="All 2 branches missed.">        if (label == null) {</span>
+<span class="nc" id="L1522">            throw Element.Exceptions.labelCanNotBeNull();</span>
+        }
+
+<span class="nc bnc" id="L1525" title="All 4 branches missed.">        E.checkArgument(label instanceof String || label instanceof VertexLabel,</span>
+                        &quot;Expect a string or a VertexLabel object &quot; +
+                        &quot;as the vertex label argument, but got: '%s'&quot;, label);
+        // The label must be an instance of String or VertexLabel
+<span class="nc bnc" id="L1529" title="All 2 branches missed.">        if (label instanceof String) {</span>
+<span class="nc bnc" id="L1530" title="All 2 branches missed.">            if (verifyLabel) {</span>
+<span class="nc" id="L1531">                ElementHelper.validateLabel((String) label);</span>
+            }
+<span class="nc" id="L1533">            label = graph().vertexLabel((String) label);</span>
+        }
+
+<span class="nc bnc" id="L1536" title="All 2 branches missed.">        assert (label instanceof VertexLabel);</span>
+<span class="nc" id="L1537">        return (VertexLabel) label;</span>
+    }
+
+    private void checkId(Id id, List&lt;Id&gt; keys, VertexLabel vertexLabel) {
+        // Check whether id match with id strategy
+<span class="nc" id="L1542">        IdStrategy strategy = vertexLabel.idStrategy();</span>
+<span class="nc bnc" id="L1543" title="All 5 branches missed.">        switch (strategy) {</span>
+            case PRIMARY_KEY:
+<span class="nc bnc" id="L1545" title="All 2 branches missed.">                E.checkArgument(id == null,</span>
+                                &quot;Can't customize vertex id when &quot; +
+                                &quot;id strategy is '%s' for vertex label '%s'&quot;,
+<span class="nc" id="L1548">                                strategy, vertexLabel.name());</span>
+                // Check whether primaryKey exists
+<span class="nc" id="L1550">                List&lt;Id&gt; primaryKeys = vertexLabel.primaryKeys();</span>
+<span class="nc" id="L1551">                E.checkArgument(keys.containsAll(primaryKeys),</span>
+                                &quot;The primary keys: %s of vertex label '%s' &quot; +
+                                &quot;must be set when using '%s' id strategy&quot;,
+<span class="nc" id="L1554">                                this.graph().mapPkId2Name(primaryKeys),</span>
+<span class="nc" id="L1555">                                vertexLabel.name(), strategy);</span>
+<span class="nc" id="L1556">                break;</span>
+            case AUTOMATIC:
+<span class="nc bnc" id="L1558" title="All 2 branches missed.">                if (this.params().mode().maintaining()) {</span>
+<span class="nc bnc" id="L1559" title="All 4 branches missed.">                    E.checkArgument(id != null &amp;&amp; id.number(),</span>
+                                    &quot;Must customize vertex number id when &quot; +
+                                    &quot;id strategy is '%s' for vertex label &quot; +
+                                    &quot;'%s' in restoring mode&quot;,
+<span class="nc" id="L1563">                                    strategy, vertexLabel.name());</span>
+                } else {
+<span class="nc bnc" id="L1565" title="All 2 branches missed.">                    E.checkArgument(id == null,</span>
+                                    &quot;Can't customize vertex id when &quot; +
+                                    &quot;id strategy is '%s' for vertex label '%s'&quot;,
+<span class="nc" id="L1568">                                    strategy, vertexLabel.name());</span>
+                }
+<span class="nc" id="L1570">                break;</span>
+            case CUSTOMIZE_STRING:
+            case CUSTOMIZE_UUID:
+<span class="nc bnc" id="L1573" title="All 4 branches missed.">                E.checkArgument(id != null &amp;&amp; !id.number(),</span>
+                                &quot;Must customize vertex string id when &quot; +
+                                &quot;id strategy is '%s' for vertex label '%s'&quot;,
+<span class="nc" id="L1576">                                strategy, vertexLabel.name());</span>
+<span class="nc" id="L1577">                break;</span>
+            case CUSTOMIZE_NUMBER:
+<span class="nc bnc" id="L1579" title="All 4 branches missed.">                E.checkArgument(id != null &amp;&amp; id.number(),</span>
+                                &quot;Must customize vertex number id when &quot; +
+                                &quot;id strategy is '%s' for vertex label '%s'&quot;,
+<span class="nc" id="L1582">                                strategy, vertexLabel.name());</span>
+<span class="nc" id="L1583">                break;</span>
+            default:
+<span class="nc" id="L1585">                throw new AssertionError(&quot;Unknown id strategy: &quot; + strategy);</span>
+        }
+<span class="nc" id="L1587">    }</span>
+
+    private void checkAggregateProperty(HugeElement element) {
+<span class="nc bnc" id="L1590" title="All 2 branches missed.">        E.checkArgument(element.getAggregateProperties().isEmpty() ||</span>
+<span class="nc bnc" id="L1591" title="All 2 branches missed.">                        this.store().features().supportsAggregateProperty(),</span>
+                        &quot;The %s store does not support aggregate property&quot;,
+<span class="nc" id="L1593">                        this.store().provider().type());</span>
+<span class="nc" id="L1594">    }</span>
+
+    private void checkAggregateProperty(HugeProperty&lt;?&gt; property) {
+<span class="nc bnc" id="L1597" title="All 2 branches missed.">        E.checkArgument(!property.isAggregateType() ||</span>
+<span class="nc bnc" id="L1598" title="All 2 branches missed.">                        this.store().features().supportsAggregateProperty(),</span>
+                        &quot;The %s store does not support aggregate property&quot;,
+<span class="nc" id="L1600">                        this.store().provider().type());</span>
+<span class="nc" id="L1601">    }</span>
+
+    private void checkNonnullProperty(HugeVertex vertex) {
+<span class="nc" id="L1604">        Set&lt;Id&gt; keys = vertex.getPropertyKeys();</span>
+<span class="nc" id="L1605">        VertexLabel vertexLabel = vertex.schemaLabel();</span>
+        // Check whether passed all non-null property
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L1608">        Collection&lt;Id&gt; nonNullKeys = CollectionUtils.subtract(</span>
+<span class="nc" id="L1609">                                     vertexLabel.properties(),</span>
+<span class="nc" id="L1610">                                     vertexLabel.nullableKeys());</span>
+<span class="nc bnc" id="L1611" title="All 2 branches missed.">        if (!keys.containsAll(nonNullKeys)) {</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L1613">            Collection&lt;Id&gt; missed = CollectionUtils.subtract(nonNullKeys, keys);</span>
+<span class="nc" id="L1614">            HugeGraph graph = this.graph();</span>
+
+<span class="nc" id="L1616">            E.checkArgument(false, &quot;All non-null property keys %s of &quot; +</span>
+                            &quot;vertex label '%s' must be set, missed keys %s&quot;,
+<span class="nc" id="L1618">                            graph.mapPkId2Name(nonNullKeys), vertexLabel.name(),</span>
+<span class="nc" id="L1619">                            graph.mapPkId2Name(missed));</span>
+        }
+<span class="nc" id="L1621">    }</span>
+
+    private void checkVertexExistIfCustomizedId(Map&lt;Id, HugeVertex&gt; vertices) {
+<span class="nc" id="L1624">        Set&lt;Id&gt; ids = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L1625" title="All 2 branches missed.">        for (HugeVertex vertex : vertices.values()) {</span>
+<span class="nc" id="L1626">            VertexLabel vl = vertex.schemaLabel();</span>
+<span class="nc bnc" id="L1627" title="All 4 branches missed.">            if (!vl.hidden() &amp;&amp; vl.idStrategy().isCustomized()) {</span>
+<span class="nc" id="L1628">                ids.add(vertex.id());</span>
+            }
+<span class="nc" id="L1630">        }</span>
+<span class="nc bnc" id="L1631" title="All 2 branches missed.">        if (ids.isEmpty()) {</span>
+<span class="nc" id="L1632">            return;</span>
+        }
+<span class="nc" id="L1634">        IdQuery idQuery = new IdQuery(HugeType.VERTEX, ids);</span>
+<span class="nc" id="L1635">        Iterator&lt;HugeVertex&gt; results = this.queryVerticesFromBackend(idQuery);</span>
+        try {
+<span class="nc bnc" id="L1637" title="All 2 branches missed.">            if (!results.hasNext()) {</span>
+<span class="nc" id="L1638">                return;</span>
+            }
+<span class="nc" id="L1640">            HugeVertex existedVertex = results.next();</span>
+<span class="nc" id="L1641">            HugeVertex newVertex = vertices.get(existedVertex.id());</span>
+<span class="nc bnc" id="L1642" title="All 2 branches missed.">            if (!existedVertex.label().equals(newVertex.label())) {</span>
+<span class="nc" id="L1643">                throw new HugeException(</span>
+                          &quot;The newly added vertex with id:'%s' label:'%s' &quot; +
+                          &quot;is not allowed to insert, because already exist &quot; +
+                          &quot;a vertex with same id and different label:'%s'&quot;,
+<span class="nc" id="L1647">                          newVertex.id(), newVertex.label(),</span>
+<span class="nc" id="L1648">                          existedVertex.label());</span>
+            }
+        } finally {
+<span class="nc" id="L1651">            CloseableIterator.closeIterator(results);</span>
+        }
+<span class="nc" id="L1653">    }</span>
+
+    private void lockForUpdateProperty(SchemaLabel schemaLabel,
+                                       HugeProperty&lt;?&gt; prop,
+                                       Runnable callback) {
+<span class="nc" id="L1658">        this.checkOwnerThread();</span>
+
+<span class="nc" id="L1660">        Id pkey = prop.propertyKey().id();</span>
+<span class="nc" id="L1661">        Set&lt;Id&gt; indexIds = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L1662" title="All 2 branches missed.">        for (Id il : schemaLabel.indexLabels()) {</span>
+<span class="nc bnc" id="L1663" title="All 2 branches missed.">            if (graph().indexLabel(il).indexFields().contains(pkey)) {</span>
+<span class="nc" id="L1664">                indexIds.add(il);</span>
+            }
+<span class="nc" id="L1666">        }</span>
+<span class="nc bnc" id="L1667" title="All 2 branches missed.">        String group = schemaLabel.type() == HugeType.VERTEX_LABEL ?</span>
+<span class="nc" id="L1668">                       LockUtil.VERTEX_LABEL_DELETE :</span>
+<span class="nc" id="L1669">                       LockUtil.EDGE_LABEL_DELETE;</span>
+        try {
+<span class="nc" id="L1671">            this.locksTable.lockReads(group, schemaLabel.id());</span>
+<span class="nc" id="L1672">            this.locksTable.lockReads(LockUtil.INDEX_LABEL_DELETE, indexIds);</span>
+            // Ensure schema label still exists
+<span class="nc bnc" id="L1674" title="All 2 branches missed.">            if (schemaLabel.type() == HugeType.VERTEX_LABEL) {</span>
+<span class="nc" id="L1675">                this.graph().vertexLabel(schemaLabel.id());</span>
+            } else {
+<span class="nc bnc" id="L1677" title="All 2 branches missed.">                assert schemaLabel.type() == HugeType.EDGE_LABEL;</span>
+<span class="nc" id="L1678">                this.graph().edgeLabel(schemaLabel.id());</span>
+            }
+            /*
+             * No need to lock INDEX_LABEL_ADD_UPDATE, because index label
+             * update only can add  user data, which is unconcerned with
+             * update property
+             */
+<span class="nc" id="L1685">            this.beforeWrite();</span>
+<span class="nc" id="L1686">            callback.run();</span>
+<span class="nc" id="L1687">            this.afterWrite();</span>
+<span class="nc" id="L1688">        } catch (Throwable e) {</span>
+<span class="nc" id="L1689">            this.locksTable.unlock();</span>
+<span class="nc" id="L1690">            throw e;</span>
+<span class="nc" id="L1691">        }</span>
+<span class="nc" id="L1692">    }</span>
+
+    private void removeLeftIndexIfNeeded(Map&lt;Id, HugeVertex&gt; vertices) {
+<span class="nc" id="L1695">        Set&lt;Id&gt; ids = vertices.keySet();</span>
+<span class="nc bnc" id="L1696" title="All 2 branches missed.">        if (ids.isEmpty()) {</span>
+<span class="nc" id="L1697">            return;</span>
+        }
+<span class="nc" id="L1699">        IdQuery idQuery = new IdQuery(HugeType.VERTEX, ids);</span>
+<span class="nc" id="L1700">        Iterator&lt;HugeVertex&gt; results = this.queryVerticesFromBackend(idQuery);</span>
+        try {
+<span class="nc bnc" id="L1702" title="All 2 branches missed.">            while (results.hasNext()) {</span>
+<span class="nc" id="L1703">                HugeVertex existedVertex = results.next();</span>
+<span class="nc" id="L1704">                this.indexTx.updateVertexIndex(existedVertex, true);</span>
+<span class="nc" id="L1705">            }</span>
+        } finally {
+<span class="nc" id="L1707">            CloseableIterator.closeIterator(results);</span>
+        }
+<span class="nc" id="L1709">    }</span>
+
+    private &lt;T extends HugeElement&gt; Iterator&lt;T&gt; filterUnmatchedRecords(
+                                                Iterator&lt;T&gt; results,
+                                                Query query) {
+        // Filter unused or incorrect records
+<span class="nc" id="L1715">        return new FilterIterator&lt;&gt;(results, elem -&gt; {</span>
+            // TODO: Left vertex/edge should to be auto removed via async task
+<span class="nc bnc" id="L1717" title="All 2 branches missed.">            if (elem.schemaLabel().undefined()) {</span>
+<span class="nc" id="L1718">                LOG.warn(&quot;Left record is found: id={}, label={}, properties={}&quot;,</span>
+<span class="nc" id="L1719">                         elem.id(), elem.schemaLabel().id(),</span>
+<span class="nc" id="L1720">                         elem.getPropertiesMap());</span>
+            }
+            // Filter hidden results
+<span class="nc bnc" id="L1723" title="All 4 branches missed.">            if (!query.showHidden() &amp;&amp; Graph.Hidden.isHidden(elem.label())) {</span>
+<span class="nc" id="L1724">                return false;</span>
+            }
+            // Filter vertices/edges of deleting label
+<span class="nc bnc" id="L1727" title="All 2 branches missed.">            if (elem.schemaLabel().status().deleting() &amp;&amp;</span>
+<span class="nc bnc" id="L1728" title="All 2 branches missed.">                !query.showDeleting()) {</span>
+<span class="nc" id="L1729">                return false;</span>
+            }
+            // Process results that query from left index or primary-key
+<span class="nc bnc" id="L1732" title="All 2 branches missed.">            if (query.resultType().isVertex() == elem.type().isVertex() &amp;&amp;</span>
+<span class="nc bnc" id="L1733" title="All 2 branches missed.">                !rightResultFromIndexQuery(query, elem)) {</span>
+                // Only index query will come here
+<span class="nc" id="L1735">                return false;</span>
+            }
+<span class="nc" id="L1737">            return true;</span>
+        });
+    }
+
+    private boolean rightResultFromIndexQuery(Query query, HugeElement elem) {
+        /*
+         * If query is ConditionQuery or query.originQuery() is ConditionQuery
+         * means it's index query
+         */
+<span class="nc bnc" id="L1746" title="All 2 branches missed.">        if (!(query instanceof ConditionQuery)) {</span>
+<span class="nc bnc" id="L1747" title="All 2 branches missed.">            if (query.originQuery() instanceof ConditionQuery) {</span>
+<span class="nc" id="L1748">                query = query.originQuery();</span>
+            } else {
+<span class="nc" id="L1750">                return true;</span>
+            }
+        }
+
+<span class="nc" id="L1754">        ConditionQuery cq = (ConditionQuery) query;</span>
+<span class="nc bnc" id="L1755" title="All 4 branches missed.">        if (cq.optimized() == OptimizedType.NONE || cq.test(elem)) {</span>
+<span class="nc bnc" id="L1756" title="All 2 branches missed.">            if (cq.existLeftIndex(elem.id())) {</span>
+                /*
+                 * Both have correct and left index, wo should return true
+                 * but also needs to cleaned up left index
+                 */
+                try {
+<span class="nc" id="L1762">                    this.indexTx.asyncRemoveIndexLeft(cq, elem);</span>
+<span class="nc" id="L1763">                } catch (Throwable e) {</span>
+<span class="nc" id="L1764">                    LOG.warn(&quot;Failed to remove left index for query '{}', &quot; +</span>
+                             &quot;element '{}'&quot;, cq, elem, e);
+<span class="nc" id="L1766">                }</span>
+            }
+
+            /* Return true if:
+             * 1.not query by index or by primary-key/sort-key
+             *   (cq.optimized() == 0 means query just by sysprop)
+             * 2.the result match all conditions
+             */
+<span class="nc" id="L1774">            return true;</span>
+        }
+
+<span class="nc bnc" id="L1777" title="All 2 branches missed.">        if (cq.optimized() == OptimizedType.INDEX) {</span>
+            try {
+<span class="nc" id="L1779">                this.indexTx.asyncRemoveIndexLeft(cq, elem);</span>
+<span class="nc" id="L1780">            } catch (Throwable e) {</span>
+<span class="nc" id="L1781">                LOG.warn(&quot;Failed to remove left index for query '{}', &quot; +</span>
+                         &quot;element '{}'&quot;, cq, elem, e);
+<span class="nc" id="L1783">            }</span>
+        }
+<span class="nc" id="L1785">        return false;</span>
+    }
+
+    private &lt;T extends HugeElement&gt; Iterator&lt;T&gt; filterExpiredResultFromBackend(
+                                    Query query, Iterator&lt;T&gt; results) {
+<span class="nc bnc" id="L1790" title="All 4 branches missed.">        if (this.store().features().supportsTtl() || query.showExpired()) {</span>
+<span class="nc" id="L1791">            return results;</span>
+        }
+        // Filter expired vertices/edges with TTL
+<span class="nc" id="L1794">        return new FilterIterator&lt;&gt;(results, elem -&gt; {</span>
+<span class="nc bnc" id="L1795" title="All 2 branches missed.">            if (elem.expired()) {</span>
+<span class="nc" id="L1796">                DeleteExpiredJob.asyncDeleteExpiredObject(this.graph(), elem);</span>
+<span class="nc" id="L1797">                return false;</span>
+            }
+<span class="nc" id="L1799">            return true;</span>
+        });
+    }
+
+    private &lt;T&gt; Iterator&lt;T&gt; skipOffsetOrStopLimit(Iterator&lt;T&gt; results,
+                                                  Query query) {
+<span class="nc bnc" id="L1805" title="All 2 branches missed.">        if (query.noLimitAndOffset()) {</span>
+<span class="nc" id="L1806">            return results;</span>
+        }
+        // Skip offset
+<span class="nc" id="L1809">        long offset = query.offset();</span>
+<span class="nc bnc" id="L1810" title="All 4 branches missed.">        if (offset &gt; 0L &amp;&amp; results.hasNext()) {</span>
+            /*
+             * Must call results.hasNext() before query.actualOffset() due to
+             * some backends will go offset and update query.actualOffset
+             */
+<span class="nc" id="L1815">            long current = query.actualOffset();</span>
+<span class="nc bnc" id="L1816" title="All 4 branches missed.">            for (; current &lt; offset &amp;&amp; results.hasNext(); current++) {</span>
+<span class="nc" id="L1817">                results.next();</span>
+<span class="nc" id="L1818">                query.goOffset(1L);</span>
+            }
+        }
+        // Stop if reach limit
+<span class="nc" id="L1822">        return new LimitIterator&lt;&gt;(results, elem -&gt; {</span>
+<span class="nc" id="L1823">            long count = query.goOffset(1L);</span>
+<span class="nc" id="L1824">            return query.reachLimit(count - 1L);</span>
+        });
+    }
+
+    private Iterator&lt;?&gt; joinTxVertices(Query query,
+                                       Iterator&lt;HugeVertex&gt; vertices) {
+<span class="nc bnc" id="L1830" title="All 2 branches missed.">        assert query.resultType().isVertex();</span>
+<span class="nc" id="L1831">        BiFunction&lt;Query, HugeVertex, HugeVertex&gt; matchTxFunc = (q, v) -&gt; {</span>
+<span class="nc bnc" id="L1832" title="All 4 branches missed.">            if (v.expired() &amp;&amp; !q.showExpired()) {</span>
+                // Filter expired vertices with TTL
+<span class="nc" id="L1834">                return null;</span>
+            }
+            // Filter vertices matched conditions
+<span class="nc bnc" id="L1837" title="All 2 branches missed.">            return q.test(v) ? v : null;</span>
+        };
+<span class="nc" id="L1839">        vertices = this.joinTxRecords(query, vertices, matchTxFunc,</span>
+                                      this.addedVertices, this.removedVertices,
+                                      this.updatedVertices);
+<span class="nc" id="L1842">        return vertices;</span>
+    }
+
+    private Iterator&lt;?&gt; joinTxEdges(Query query, Iterator&lt;HugeEdge&gt; edges,
+                                    Map&lt;Id, HugeVertex&gt; removingVertices) {
+<span class="nc bnc" id="L1847" title="All 2 branches missed.">        assert query.resultType().isEdge();</span>
+<span class="nc" id="L1848">        BiFunction&lt;Query, HugeEdge, HugeEdge&gt; matchTxFunc = (q, e) -&gt; {</span>
+<span class="nc bnc" id="L1849" title="All 2 branches missed.">            assert q.resultType() == HugeType.EDGE;</span>
+<span class="nc bnc" id="L1850" title="All 4 branches missed.">            if (e.expired() &amp;&amp; !q.showExpired()) {</span>
+                // Filter expired edges with TTL
+<span class="nc" id="L1852">                return null;</span>
+            }
+            // Filter edges matched conditions
+<span class="nc bnc" id="L1855" title="All 4 branches missed.">            return q.test(e) ? e : q.test(e = e.switchOwner()) ? e : null;</span>
+        };
+<span class="nc" id="L1857">        edges = this.joinTxRecords(query, edges, matchTxFunc,</span>
+                                   this.addedEdges, this.removedEdges,
+                                   this.updatedEdges);
+<span class="nc bnc" id="L1860" title="All 2 branches missed.">        if (removingVertices.isEmpty()) {</span>
+<span class="nc" id="L1861">            return edges;</span>
+        }
+        // Filter edges that belong to deleted vertex
+<span class="nc" id="L1864">        return new FilterIterator&lt;&gt;(edges, edge -&gt; {</span>
+<span class="nc bnc" id="L1865" title="All 2 branches missed.">            for (HugeVertex v : removingVertices.values()) {</span>
+<span class="nc bnc" id="L1866" title="All 2 branches missed.">                if (edge.belongToVertex(v)) {</span>
+<span class="nc" id="L1867">                    return false;</span>
+                }
+<span class="nc" id="L1869">            }</span>
+<span class="nc" id="L1870">            return true;</span>
+        });
+    }
+
+    private &lt;V extends HugeElement&gt; Iterator&lt;V&gt; joinTxRecords(
+                                    Query query,
+                                    Iterator&lt;V&gt; records,
+                                    BiFunction&lt;Query, V, V&gt; matchFunc,
+                                    Map&lt;Id, V&gt; addedTxRecords,
+                                    Map&lt;Id, V&gt; removedTxRecords,
+                                    Map&lt;Id, V&gt; updatedTxRecords) {
+<span class="nc" id="L1881">        this.checkOwnerThread();</span>
+        // Return the origin results if there is no change in tx
+<span class="nc bnc" id="L1883" title="All 2 branches missed.">        if (addedTxRecords.isEmpty() &amp;&amp;</span>
+<span class="nc bnc" id="L1884" title="All 2 branches missed.">            removedTxRecords.isEmpty() &amp;&amp;</span>
+<span class="nc bnc" id="L1885" title="All 2 branches missed.">            updatedTxRecords.isEmpty()) {</span>
+<span class="nc" id="L1886">            return records;</span>
+        }
+
+<span class="nc" id="L1889">        Set&lt;V&gt; txResults = InsertionOrderUtil.newSet();</span>
+
+        /*
+         * Collect added/updated records
+         * Records in memory have higher priority than query from backend store
+         */
+<span class="nc bnc" id="L1895" title="All 2 branches missed.">        for (V elem : addedTxRecords.values()) {</span>
+<span class="nc bnc" id="L1896" title="All 2 branches missed.">            if (query.reachLimit(txResults.size())) {</span>
+<span class="nc" id="L1897">                break;</span>
+            }
+<span class="nc bnc" id="L1899" title="All 2 branches missed.">            if ((elem = matchFunc.apply(query, elem)) != null) {</span>
+<span class="nc" id="L1900">                txResults.add(elem);</span>
+            }
+<span class="nc" id="L1902">        }</span>
+<span class="nc bnc" id="L1903" title="All 2 branches missed.">        for (V elem : updatedTxRecords.values()) {</span>
+<span class="nc bnc" id="L1904" title="All 2 branches missed.">            if (query.reachLimit(txResults.size())) {</span>
+<span class="nc" id="L1905">                break;</span>
+            }
+<span class="nc bnc" id="L1907" title="All 2 branches missed.">            if ((elem = matchFunc.apply(query, elem)) != null) {</span>
+<span class="nc" id="L1908">                txResults.add(elem);</span>
+            }
+<span class="nc" id="L1910">        }</span>
+
+        // Filter backend record if it's updated in memory
+<span class="nc" id="L1913">        Iterator&lt;V&gt; backendResults = new FilterIterator&lt;&gt;(records, elem -&gt; {</span>
+<span class="nc" id="L1914">            Id id = elem.id();</span>
+<span class="nc bnc" id="L1915" title="All 2 branches missed.">            return !addedTxRecords.containsKey(id) &amp;&amp;</span>
+<span class="nc bnc" id="L1916" title="All 2 branches missed.">                   !updatedTxRecords.containsKey(id) &amp;&amp;</span>
+<span class="nc bnc" id="L1917" title="All 2 branches missed.">                   !removedTxRecords.containsKey(id);</span>
+        });
+
+<span class="nc" id="L1920">        return new ExtendableIterator&lt;&gt;(txResults.iterator(), backendResults);</span>
+    }
+
+    private void checkTxVerticesCapacity() throws LimitExceedException {
+<span class="nc bnc" id="L1924" title="All 2 branches missed.">        if (this.verticesInTxSize() &gt;= this.verticesCapacity) {</span>
+<span class="nc" id="L1925">            throw new LimitExceedException(</span>
+                      &quot;Vertices size has reached tx capacity %d&quot;,
+<span class="nc" id="L1927">                      this.verticesCapacity);</span>
+        }
+<span class="nc" id="L1929">    }</span>
+
+    private void checkTxEdgesCapacity() throws LimitExceedException {
+<span class="nc bnc" id="L1932" title="All 2 branches missed.">        if (this.edgesInTxSize() &gt;= this.edgesCapacity) {</span>
+<span class="nc" id="L1933">            throw new LimitExceedException(</span>
+                      &quot;Edges size has reached tx capacity %d&quot;,
+<span class="nc" id="L1935">                      this.edgesCapacity);</span>
+        }
+<span class="nc" id="L1937">    }</span>
+
+    private void propertyUpdated(HugeElement element, HugeProperty&lt;?&gt; property,
+                                 HugeProperty&lt;?&gt; oldProperty) {
+<span class="nc bnc" id="L1941" title="All 2 branches missed.">        if (element.type().isVertex()) {</span>
+<span class="nc" id="L1942">            this.updatedVertices.put(element.id(), (HugeVertex) element);</span>
+        } else {
+<span class="nc bnc" id="L1944" title="All 2 branches missed.">            assert element.type().isEdge();</span>
+<span class="nc" id="L1945">            this.updatedEdges.put(element.id(), (HugeEdge) element);</span>
+        }
+
+<span class="nc bnc" id="L1948" title="All 2 branches missed.">        if (oldProperty != null) {</span>
+<span class="nc" id="L1949">            this.updatedOldestProps.add(oldProperty);</span>
+        }
+<span class="nc bnc" id="L1951" title="All 2 branches missed.">        if (property == null) {</span>
+<span class="nc" id="L1952">            this.removedProps.add(oldProperty);</span>
+        } else {
+<span class="nc" id="L1954">            this.addedProps.remove(property);</span>
+<span class="nc" id="L1955">            this.addedProps.add(property);</span>
+        }
+<span class="nc" id="L1957">    }</span>
+
+    private HugeVertex parseEntry(BackendEntry entry) {
+        try {
+<span class="nc" id="L1961">            HugeVertex vertex = this.serializer.readVertex(graph(), entry);</span>
+<span class="nc bnc" id="L1962" title="All 2 branches missed.">            assert vertex != null;</span>
+<span class="nc" id="L1963">            return vertex;</span>
+<span class="nc" id="L1964">        } catch (ForbiddenException | SecurityException e) {</span>
+            /*
+             * Can't ignore permission exception here, otherwise users will
+             * be confused to treat as the record does not exist.
+             */
+<span class="nc" id="L1969">            throw e;</span>
+<span class="nc" id="L1970">        } catch (Throwable e) {</span>
+<span class="nc" id="L1971">            LOG.error(&quot;Failed to parse entry: {}&quot;, entry, e);</span>
+<span class="nc bnc" id="L1972" title="All 2 branches missed.">            if (this.ignoreInvalidEntry) {</span>
+<span class="nc" id="L1973">                return null;</span>
+            }
+<span class="nc" id="L1975">            throw e;</span>
+        }
+    }
+
+    /*
+     * TODO: set these methods to protected
+     */
+    public void removeIndex(IndexLabel indexLabel) {
+        // TODO: use event to replace direct call
+<span class="nc" id="L1984">        this.checkOwnerThread();</span>
+
+<span class="nc" id="L1986">        this.beforeWrite();</span>
+<span class="nc" id="L1987">        this.indexTx.removeIndex(indexLabel);</span>
+<span class="nc" id="L1988">        this.afterWrite();</span>
+<span class="nc" id="L1989">    }</span>
+
+    public void updateIndex(Id ilId, HugeElement element, boolean removed) {
+        // TODO: use event to replace direct call
+<span class="nc" id="L1993">        this.checkOwnerThread();</span>
+
+<span class="nc" id="L1995">        this.indexTx.updateIndex(ilId, element, removed);</span>
+<span class="nc" id="L1996">    }</span>
+
+    public void removeIndex(HugeIndex index) {
+        // TODO: use event to replace direct call
+<span class="nc" id="L2000">        this.checkOwnerThread();</span>
+
+<span class="nc" id="L2002">        this.beforeWrite();</span>
+<span class="nc" id="L2003">        this.indexTx.doEliminate(this.serializer.writeIndex(index));</span>
+<span class="nc" id="L2004">        this.afterWrite();</span>
+<span class="nc" id="L2005">    }</span>
+
+    public void removeVertices(VertexLabel vertexLabel) {
+<span class="nc bnc" id="L2008" title="All 2 branches missed.">        if (this.hasUpdate()) {</span>
+<span class="nc" id="L2009">            throw new HugeException(&quot;There are still changes to commit&quot;);</span>
+        }
+
+<span class="nc" id="L2012">        boolean autoCommit = this.autoCommit();</span>
+<span class="nc" id="L2013">        this.autoCommit(false);</span>
+        // Commit data already in tx firstly
+<span class="nc" id="L2015">        this.commit();</span>
+        try {
+<span class="nc" id="L2017">            this.traverseVerticesByLabel(vertexLabel, vertex -&gt; {</span>
+<span class="nc" id="L2018">                this.removeVertex((HugeVertex) vertex);</span>
+<span class="nc" id="L2019">                this.commitIfGtSize(COMMIT_BATCH);</span>
+<span class="nc" id="L2020">            }, true);</span>
+<span class="nc" id="L2021">            this.commit();</span>
+<span class="nc" id="L2022">        } catch (Exception e) {</span>
+<span class="nc" id="L2023">            LOG.error(&quot;Failed to remove vertices&quot;, e);</span>
+<span class="nc" id="L2024">            throw new HugeException(&quot;Failed to remove vertices&quot;, e);</span>
+        } finally {
+<span class="nc" id="L2026">            this.autoCommit(autoCommit);</span>
+        }
+<span class="nc" id="L2028">    }</span>
+
+    public void removeEdges(EdgeLabel edgeLabel) {
+<span class="nc bnc" id="L2031" title="All 2 branches missed.">        if (this.hasUpdate()) {</span>
+<span class="nc" id="L2032">            throw new HugeException(&quot;There are still changes to commit&quot;);</span>
+        }
+
+<span class="nc" id="L2035">        boolean autoCommit = this.autoCommit();</span>
+<span class="nc" id="L2036">        this.autoCommit(false);</span>
+        // Commit data already in tx firstly
+<span class="nc" id="L2038">        this.commit();</span>
+        try {
+<span class="nc bnc" id="L2040" title="All 2 branches missed.">            if (this.store().features().supportsDeleteEdgeByLabel()) {</span>
+                // TODO: Need to change to writeQuery!
+<span class="nc" id="L2042">                this.doRemove(this.serializer.writeId(HugeType.EDGE_OUT,</span>
+<span class="nc" id="L2043">                                                      edgeLabel.id()));</span>
+<span class="nc" id="L2044">                this.doRemove(this.serializer.writeId(HugeType.EDGE_IN,</span>
+<span class="nc" id="L2045">                                                      edgeLabel.id()));</span>
+            } else {
+<span class="nc" id="L2047">                this.traverseEdgesByLabel(edgeLabel, edge -&gt; {</span>
+<span class="nc" id="L2048">                    this.removeEdge((HugeEdge) edge);</span>
+<span class="nc" id="L2049">                    this.commitIfGtSize(COMMIT_BATCH);</span>
+<span class="nc" id="L2050">                }, true);</span>
+            }
+<span class="nc" id="L2052">            this.commit();</span>
+<span class="nc" id="L2053">        } catch (Exception e) {</span>
+<span class="nc" id="L2054">            LOG.error(&quot;Failed to remove edges&quot;, e);</span>
+<span class="nc" id="L2055">            throw new HugeException(&quot;Failed to remove edges&quot;, e);</span>
+        } finally {
+<span class="nc" id="L2057">            this.autoCommit(autoCommit);</span>
+        }
+<span class="nc" id="L2059">    }</span>
+
+    public void traverseVerticesByLabel(VertexLabel label,
+                                        Consumer&lt;Vertex&gt; consumer,
+                                        boolean deleting) {
+<span class="nc" id="L2064">        this.traverseByLabel(label, this::queryVertices, consumer, deleting);</span>
+<span class="nc" id="L2065">    }</span>
+
+    public void traverseEdgesByLabel(EdgeLabel label, Consumer&lt;Edge&gt; consumer,
+                                     boolean deleting) {
+<span class="nc" id="L2069">        this.traverseByLabel(label, this::queryEdges, consumer, deleting);</span>
+<span class="nc" id="L2070">    }</span>
+
+    private &lt;T&gt; void traverseByLabel(SchemaLabel label,
+                                     Function&lt;Query, Iterator&lt;T&gt;&gt; fetcher,
+                                     Consumer&lt;T&gt; consumer, boolean deleting) {
+<span class="nc bnc" id="L2075" title="All 2 branches missed.">        HugeType type = label.type() == HugeType.VERTEX_LABEL ?</span>
+<span class="nc" id="L2076">                        HugeType.VERTEX : HugeType.EDGE;</span>
+<span class="nc bnc" id="L2077" title="All 2 branches missed.">        Query query = label.enableLabelIndex() ? new ConditionQuery(type) :</span>
+<span class="nc" id="L2078">                                                 new Query(type);</span>
+<span class="nc" id="L2079">        query.capacity(Query.NO_CAPACITY);</span>
+<span class="nc" id="L2080">        query.limit(Query.NO_LIMIT);</span>
+<span class="nc bnc" id="L2081" title="All 2 branches missed.">        if (this.store().features().supportsQueryByPage()) {</span>
+<span class="nc" id="L2082">            query.page(PageInfo.PAGE_NONE);</span>
+        }
+<span class="nc bnc" id="L2084" title="All 2 branches missed.">        if (label.hidden()) {</span>
+<span class="nc" id="L2085">            query.showHidden(true);</span>
+        }
+<span class="nc" id="L2087">        query.showDeleting(deleting);</span>
+<span class="nc" id="L2088">        query.showExpired(deleting);</span>
+
+<span class="nc bnc" id="L2090" title="All 2 branches missed.">        if (label.enableLabelIndex()) {</span>
+            // Support label index, query by label index by paging
+<span class="nc bnc" id="L2092" title="All 2 branches missed.">            assert query instanceof ConditionQuery;</span>
+<span class="nc" id="L2093">            ((ConditionQuery) query).eq(HugeKeys.LABEL, label.id());</span>
+<span class="nc" id="L2094">            Iterator&lt;T&gt; iter = fetcher.apply(query);</span>
+            try {
+                // Fetch by paging automatically
+<span class="nc bnc" id="L2097" title="All 2 branches missed.">                while (iter.hasNext()) {</span>
+<span class="nc" id="L2098">                    consumer.accept(iter.next());</span>
+                    /*
+                     * Commit per batch to avoid too much data in single commit,
+                     * especially for Cassandra backend
+                     */
+<span class="nc" id="L2103">                    this.commitIfGtSize(GraphTransaction.COMMIT_BATCH);</span>
+                }
+                // Commit changes if exists
+<span class="nc" id="L2106">                this.commit();</span>
+            } finally {
+<span class="nc" id="L2108">                CloseableIterator.closeIterator(iter);</span>
+            }
+<span class="nc" id="L2110">        } else {</span>
+            // Not support label index, query all and filter by label
+<span class="nc bnc" id="L2112" title="All 2 branches missed.">            if (query.paging()) {</span>
+<span class="nc" id="L2113">                query.limit(this.pageSize);</span>
+            }
+<span class="nc" id="L2115">            String page = null;</span>
+            do {
+<span class="nc" id="L2117">                Iterator&lt;T&gt; iter = fetcher.apply(query);</span>
+                try {
+<span class="nc bnc" id="L2119" title="All 2 branches missed.">                    while (iter.hasNext()) {</span>
+<span class="nc" id="L2120">                        T e = iter.next();</span>
+<span class="nc" id="L2121">                        SchemaLabel elemLabel = ((HugeElement) e).schemaLabel();</span>
+<span class="nc bnc" id="L2122" title="All 2 branches missed.">                        if (label.equals(elemLabel)) {</span>
+<span class="nc" id="L2123">                            consumer.accept(e);</span>
+                            /*
+                             * Commit per batch to avoid too much data in single
+                             * commit, especially for Cassandra backend
+                             */
+<span class="nc" id="L2128">                            this.commitIfGtSize(GraphTransaction.COMMIT_BATCH);</span>
+                        }
+<span class="nc" id="L2130">                    }</span>
+                    // Commit changes of every page before next page query
+<span class="nc" id="L2132">                    this.commit();</span>
+<span class="nc bnc" id="L2133" title="All 2 branches missed.">                    if (query.paging()) {</span>
+<span class="nc" id="L2134">                        page = PageInfo.pageState(iter).toString();</span>
+<span class="nc" id="L2135">                        query.page(page);</span>
+                    }
+                } finally {
+<span class="nc" id="L2138">                    CloseableIterator.closeIterator(iter);</span>
+                }
+<span class="nc bnc" id="L2140" title="All 2 branches missed.">            } while (page != null);</span>
+        }
+<span class="nc" id="L2142">    }</span>
+
+    public void createOlapPk(Id pkId) {
+<span class="nc" id="L2145">        this.store().createOlapTable(pkId);</span>
+<span class="nc" id="L2146">    }</span>
+
+    public void initAndRegisterOlapTable(Id pkId) {
+<span class="nc" id="L2149">        this.store().checkAndRegisterOlapTable(pkId);</span>
+<span class="nc" id="L2150">    }</span>
+
+    public void clearOlapPk(Id pkId) {
+<span class="nc" id="L2153">        this.store().clearOlapTable(pkId);</span>
+<span class="nc" id="L2154">    }</span>
+
+    public void removeOlapPk(Id pkId) {
+<span class="nc" id="L2157">        this.store().removeOlapTable(pkId);</span>
+<span class="nc" id="L2158">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RpcForwarder.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.raft.rpc</a> &gt; <span class="el_source">RpcForwarder.java</span></div><h1>RpcForwarder.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.raft.rpc;
+
+import java.util.concurrent.ExecutionException;
+
+import org.apache.hugegraph.backend.store.raft.RaftStoreClosure;
+import org.apache.hugegraph.backend.store.raft.StoreCommand;
+import org.slf4j.Logger;
+
+import com.alipay.sofa.jraft.Node;
+import com.alipay.sofa.jraft.Status;
+import com.alipay.sofa.jraft.core.NodeImpl;
+import com.alipay.sofa.jraft.entity.PeerId;
+import com.alipay.sofa.jraft.error.RaftError;
+import com.alipay.sofa.jraft.rpc.RaftClientService;
+import com.alipay.sofa.jraft.rpc.RpcResponseClosure;
+import com.alipay.sofa.jraft.util.Endpoint;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.raft.RaftClosure;
+import org.apache.hugegraph.backend.store.raft.RaftContext;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.CommonResponse;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.StoreCommandRequest;
+import org.apache.hugegraph.backend.store.raft.rpc.RaftRequests.StoreCommandResponse;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.google.protobuf.Descriptors.FieldDescriptor;
+import com.google.protobuf.Message;
+import com.google.protobuf.ZeroByteStringHelper;
+
+public class RpcForwarder {
+
+<span class="nc" id="L48">    private static final Logger LOG = Log.logger(RpcForwarder.class);</span>
+
+    private final PeerId nodeId;
+    private final RaftClientService rpcClient;
+
+<span class="nc" id="L53">    public RpcForwarder(Node node) {</span>
+<span class="nc" id="L54">        this.nodeId = node.getNodeId().getPeerId();</span>
+<span class="nc" id="L55">        this.rpcClient = ((NodeImpl) node).getRpcService();</span>
+<span class="nc" id="L56">        E.checkNotNull(this.rpcClient, &quot;rpc client&quot;);</span>
+<span class="nc" id="L57">    }</span>
+
+    public void forwardToLeader(PeerId leaderId, StoreCommand command,
+                                RaftStoreClosure future) {
+<span class="nc" id="L61">        E.checkNotNull(leaderId, &quot;leader id&quot;);</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        E.checkState(!leaderId.equals(this.nodeId),</span>
+                     &quot;Invalid state: current node is the leader, there is &quot; +
+                     &quot;no need to forward the request&quot;);
+<span class="nc" id="L65">        LOG.debug(&quot;The node {} forward request to leader {}&quot;,</span>
+                  this.nodeId, leaderId);
+
+<span class="nc" id="L68">        StoreCommandRequest.Builder builder = StoreCommandRequest.newBuilder();</span>
+<span class="nc" id="L69">        builder.setType(command.type());</span>
+<span class="nc" id="L70">        builder.setAction(command.action());</span>
+<span class="nc" id="L71">        builder.setData(ZeroByteStringHelper.wrap(command.data()));</span>
+<span class="nc" id="L72">        StoreCommandRequest request = builder.build();</span>
+
+        RpcResponseClosure&lt;StoreCommandResponse&gt; responseClosure;
+<span class="nc" id="L75">        responseClosure = new RpcResponseClosure&lt;StoreCommandResponse&gt;() {</span>
+            @Override
+            public void setResponse(StoreCommandResponse response) {
+<span class="nc bnc" id="L78" title="All 2 branches missed.">                if (response.getStatus()) {</span>
+<span class="nc" id="L79">                    LOG.debug(&quot;StoreCommandResponse status ok&quot;);</span>
+                    // This code forwards the request to the Raft leader and considers the operation successful
+                    // if it's forwarded successfully. It returns a RaftClosure because the calling
+                    // logic expects a RaftClosure result. Specifically, if the current instance is the Raft leader,
+                    // it executes the corresponding logic locally and notifies the calling logic asynchronously
+                    // via RaftClosure. Therefore, the result is returned as a RaftClosure here.
+<span class="nc" id="L85">                    RaftClosure&lt;Status&gt; supplierFuture = new RaftClosure&lt;&gt;();</span>
+<span class="nc" id="L86">                    supplierFuture.complete(Status.OK());</span>
+<span class="nc" id="L87">                    future.complete(Status.OK(), () -&gt; supplierFuture);</span>
+<span class="nc" id="L88">                } else {</span>
+<span class="nc" id="L89">                    LOG.debug(&quot;StoreCommandResponse status error&quot;);</span>
+<span class="nc" id="L90">                    Status status = new Status(RaftError.UNKNOWN,</span>
+                                               &quot;fowared request failed&quot;);
+<span class="nc" id="L92">                    BackendException e = new BackendException(</span>
+                                         &quot;Current node isn't leader, leader &quot; +
+                                         &quot;is [%s], failed to forward request &quot; +
+                                         &quot;to leader: %s&quot;,
+<span class="nc" id="L96">                                         leaderId, response.getMessage());</span>
+<span class="nc" id="L97">                    future.failure(status, e);</span>
+                }
+<span class="nc" id="L99">            }</span>
+
+            @Override
+            public void run(Status status) {
+<span class="nc" id="L103">                future.run(status);</span>
+<span class="nc" id="L104">            }</span>
+        };
+<span class="nc" id="L106">        this.waitRpc(leaderId.getEndpoint(), request, responseClosure);</span>
+<span class="nc" id="L107">    }</span>
+
+    public &lt;T extends Message&gt; RaftClosure&lt;T&gt; forwardToLeader(PeerId leaderId,
+                                                              Message request) {
+<span class="nc" id="L111">        E.checkNotNull(leaderId, &quot;leader id&quot;);</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        E.checkState(!leaderId.equals(this.nodeId),</span>
+                     &quot;Invalid state: current node is the leader, there is &quot; +
+                     &quot;no need to forward the request&quot;);
+<span class="nc" id="L115">        LOG.debug(&quot;The node '{}' forward request to leader '{}'&quot;,</span>
+                  this.nodeId, leaderId);
+
+<span class="nc" id="L118">        RaftClosure&lt;T&gt; future = new RaftClosure&lt;&gt;();</span>
+<span class="nc" id="L119">        RpcResponseClosure&lt;T&gt; responseDone = new RpcResponseClosure&lt;T&gt;() {</span>
+            @Override
+            public void setResponse(T response) {
+<span class="nc" id="L122">                FieldDescriptor fd = response.getDescriptorForType()</span>
+<span class="nc" id="L123">                                             .findFieldByName(&quot;common&quot;);</span>
+<span class="nc" id="L124">                Object object = response.getField(fd);</span>
+<span class="nc" id="L125">                E.checkState(object instanceof CommonResponse,</span>
+                             &quot;The common field must be instance of &quot; +
+                             &quot;CommonResponse, actual is '%s'&quot;,
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                             object != null ? object.getClass() : null);</span>
+<span class="nc" id="L129">                CommonResponse commonResponse = (CommonResponse) object;</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">                if (commonResponse.getStatus()) {</span>
+<span class="nc" id="L131">                    future.complete(Status.OK(), () -&gt; response);</span>
+                } else {
+<span class="nc" id="L133">                    Status status = new Status(RaftError.UNKNOWN,</span>
+                                               &quot;fowared request failed&quot;);
+<span class="nc" id="L135">                    BackendException e = new BackendException(</span>
+                                         &quot;Current node isn't leader, leader &quot; +
+                                         &quot;is [%s], failed to forward request &quot; +
+                                         &quot;to leader: %s&quot;,
+<span class="nc" id="L139">                                         leaderId, commonResponse.getMessage());</span>
+<span class="nc" id="L140">                    future.failure(status, e);</span>
+                }
+<span class="nc" id="L142">            }</span>
+
+            @Override
+            public void run(Status status) {
+<span class="nc" id="L146">                future.run(status);</span>
+<span class="nc" id="L147">            }</span>
+        };
+<span class="nc" id="L149">        this.waitRpc(leaderId.getEndpoint(), request, responseDone);</span>
+<span class="nc" id="L150">        return future;</span>
+    }
+
+    private &lt;T extends Message&gt; void waitRpc(Endpoint endpoint, Message request,
+                                             RpcResponseClosure&lt;T&gt; done) {
+<span class="nc" id="L155">        E.checkNotNull(endpoint, &quot;leader endpoint&quot;);</span>
+        try {
+<span class="nc" id="L157">            this.rpcClient.invokeWithDone(endpoint, request, done,</span>
+                                          RaftContext.WAIT_RPC_TIMEOUT)
+<span class="nc" id="L159">                          .get();</span>
+<span class="nc" id="L160">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L161">            throw new BackendException(&quot;Invoke rpc request was interrupted, &quot; +</span>
+                                       &quot;please try again later&quot;, e);
+<span class="nc" id="L163">        } catch (ExecutionException e) {</span>
+<span class="nc" id="L164">            throw new BackendException(&quot;Failed to invoke rpc request&quot;, e);</span>
+<span class="nc" id="L165">        }</span>
+<span class="nc" id="L166">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

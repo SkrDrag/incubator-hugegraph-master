@@ -1,0 +1,545 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MysqlSessions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-mysql</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.mysql</a> &gt; <span class="el_source">MysqlSessions.java</span></div><h1>MysqlSessions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.mysql;
+
+import java.net.SocketTimeoutException;
+import java.net.URISyntaxException;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.stream.IntStream;
+
+import org.apache.http.client.utils.URIBuilder;
+import org.apache.logging.log4j.util.Strings;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.store.BackendSession.AbstractBackendSession;
+import org.apache.hugegraph.backend.store.BackendSessionPool;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+
+public class MysqlSessions extends BackendSessionPool {
+
+<span class="nc" id="L45">    private static final Logger LOG = Log.logger(MysqlSessions.class);</span>
+
+    private static final String JDBC_PREFIX = &quot;jdbc:&quot;;
+
+    private static final int DROP_DB_TIMEOUT = 10000;
+
+    private HugeConfig config;
+    private String database;
+    private volatile boolean opened;
+
+    public MysqlSessions(HugeConfig config, String database, String store) {
+<span class="nc" id="L56">        super(config, database + &quot;/&quot; + store);</span>
+<span class="nc" id="L57">        this.config = config;</span>
+<span class="nc" id="L58">        this.database = database;</span>
+<span class="nc" id="L59">        this.opened = false;</span>
+<span class="nc" id="L60">    }</span>
+
+    @Override
+    public HugeConfig config() {
+<span class="nc" id="L64">        return this.config;</span>
+    }
+
+    public String database() {
+<span class="nc" id="L68">        return this.database;</span>
+    }
+
+    public String escapedDatabase() {
+<span class="nc" id="L72">        return MysqlUtil.escapeString(this.database());</span>
+    }
+
+    /**
+     * Try connect with specified database, will not reconnect if failed
+     * @throws SQLException if a database access error occurs
+     */
+    @Override
+    public synchronized void open() throws Exception {
+<span class="nc" id="L81">        try (Connection conn = this.open(false)) {</span>
+<span class="nc" id="L82">            this.opened = true;</span>
+        }
+<span class="nc" id="L84">    }</span>
+
+    @Override
+    protected boolean opened() {
+<span class="nc" id="L88">        return this.opened;</span>
+    }
+
+    @Override
+    protected void doClose() {
+        // pass
+<span class="nc" id="L94">    }</span>
+
+    @Override
+    public Session session() {
+<span class="nc" id="L98">        return (Session) super.getOrNewSession();</span>
+    }
+
+    @Override
+    protected Session newSession() {
+<span class="nc" id="L103">        return new Session();</span>
+    }
+
+    public void createDatabase() {
+        // Create database with non-database-session
+<span class="nc" id="L108">        LOG.debug(&quot;Create database: {}&quot;, this.database());</span>
+
+<span class="nc" id="L110">        String sql = this.buildCreateDatabase(this.database());</span>
+<span class="nc" id="L111">        try (Connection conn = this.openWithoutDB(0)) {</span>
+<span class="nc" id="L112">            conn.createStatement().execute(sql);</span>
+<span class="nc" id="L113">        } catch (SQLException e) {</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            if (!e.getMessage().endsWith(&quot;already exists&quot;)) {</span>
+<span class="nc" id="L115">                throw new BackendException(&quot;Failed to create database '%s'&quot;, e,</span>
+<span class="nc" id="L116">                                           this.database());</span>
+            }
+            // Ignore exception if database already exists
+<span class="nc" id="L119">        }</span>
+<span class="nc" id="L120">    }</span>
+
+    public void dropDatabase() {
+<span class="nc" id="L123">        LOG.debug(&quot;Drop database: {}&quot;, this.database());</span>
+
+<span class="nc" id="L125">        String sql = this.buildDropDatabase(this.database());</span>
+<span class="nc" id="L126">        try (Connection conn = this.openWithoutDB(DROP_DB_TIMEOUT)) {</span>
+<span class="nc" id="L127">            conn.createStatement().execute(sql);</span>
+<span class="nc" id="L128">        } catch (SQLException e) {</span>
+<span class="nc bnc" id="L129" title="All 2 branches missed.">            if (e.getCause() instanceof SocketTimeoutException) {</span>
+<span class="nc" id="L130">                LOG.warn(&quot;Drop database '{}' timeout&quot;, this.database());</span>
+            } else {
+<span class="nc" id="L132">                throw new BackendException(&quot;Failed to drop database '%s'&quot;, e,</span>
+<span class="nc" id="L133">                                           this.database());</span>
+            }
+<span class="nc" id="L135">        }</span>
+<span class="nc" id="L136">    }</span>
+
+    public boolean existsDatabase() {
+<span class="nc" id="L139">        try (Connection conn = this.openWithoutDB(0);</span>
+<span class="nc" id="L140">             ResultSet result = conn.getMetaData().getCatalogs()) {</span>
+<span class="nc bnc" id="L141" title="All 2 branches missed.">            while (result.next()) {</span>
+<span class="nc" id="L142">                String dbName = result.getString(1);</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">                if (dbName.equals(this.database())) {</span>
+<span class="nc" id="L144">                    return true;</span>
+                }
+<span class="nc" id="L146">            }</span>
+<span class="nc bnc" id="L147" title="All 4 branches missed.">        } catch (Exception e) {</span>
+<span class="nc" id="L148">            throw new BackendException(&quot;Failed to obtain database info&quot;, e);</span>
+<span class="nc" id="L149">        }</span>
+<span class="nc" id="L150">        return false;</span>
+    }
+
+    public boolean existsTable(String table) {
+<span class="nc" id="L154">        String sql = this.buildExistsTable(table);</span>
+<span class="nc" id="L155">        try (Connection conn = this.openWithDB(0);</span>
+<span class="nc" id="L156">             ResultSet result = conn.createStatement().executeQuery(sql)) {</span>
+<span class="nc" id="L157">            return result.next();</span>
+<span class="nc" id="L158">        } catch (Exception e) {</span>
+<span class="nc" id="L159">            throw new BackendException(&quot;Failed to obtain table info&quot;, e);</span>
+        }
+    }
+
+    public void resetConnections() {
+        // Close the under layer connections owned by each thread
+<span class="nc" id="L165">        this.forceResetSessions();</span>
+<span class="nc" id="L166">    }</span>
+
+    protected String buildCreateDatabase(String database) {
+<span class="nc" id="L169">        return String.format(&quot;CREATE DATABASE IF NOT EXISTS %s &quot; +</span>
+                             &quot;DEFAULT CHARSET utf8 COLLATE utf8_bin;&quot;,
+                             database);
+    }
+
+    protected String buildDropDatabase(String database) {
+<span class="nc" id="L175">        return String.format(&quot;DROP DATABASE IF EXISTS %s;&quot;, database);</span>
+    }
+
+    protected String buildExistsTable(String table) {
+<span class="nc" id="L179">        return String.format(&quot;SELECT * FROM information_schema.tables &quot; +</span>
+                             &quot;WHERE table_schema = '%s' &quot; +
+                             &quot;AND table_name = '%s' LIMIT 1;&quot;,
+<span class="nc" id="L182">                             this.escapedDatabase(),</span>
+<span class="nc" id="L183">                             MysqlUtil.escapeString(table));</span>
+    }
+
+    /**
+     * Connect DB without specified database
+     */
+    protected Connection openWithoutDB(int timeout) {
+<span class="nc" id="L190">        String url = this.buildUri(false, false, false, timeout);</span>
+        try {
+<span class="nc" id="L192">            return this.connect(url);</span>
+<span class="nc" id="L193">        } catch (SQLException e) {</span>
+<span class="nc" id="L194">            throw new BackendException(&quot;Failed to access %s&quot;, e, url);</span>
+        }
+    }
+
+    /**
+     * Connect DB with specified database, but won't auto reconnect
+     */
+    protected Connection openWithDB(int timeout) {
+<span class="nc" id="L202">        String url = this.buildUri(false, true, false, timeout);</span>
+        try {
+<span class="nc" id="L204">            return this.connect(url);</span>
+<span class="nc" id="L205">        } catch (SQLException e) {</span>
+<span class="nc" id="L206">            throw new BackendException(&quot;Failed to access %s&quot;, e, url);</span>
+        }
+    }
+
+    /**
+     * Connect DB with specified database
+     */
+    private Connection open(boolean autoReconnect) throws SQLException {
+<span class="nc" id="L214">        String url = this.buildUri(true, true, autoReconnect, null);</span>
+<span class="nc" id="L215">        return this.connect(url);</span>
+    }
+
+    protected String buildUri(boolean withConnParams, boolean withDB,
+                              boolean autoReconnect, Integer timeout) {
+<span class="nc" id="L220">        String url = this.buildUrlPrefix(withDB);</span>
+
+<span class="nc" id="L222">        boolean forcedAutoReconnect = this.config.get(</span>
+                                      MysqlOptions.JDBC_FORCED_AUTO_RECONNECT);
+<span class="nc" id="L224">        int maxTimes = this.config.get(MysqlOptions.JDBC_RECONNECT_MAX_TIMES);</span>
+<span class="nc" id="L225">        int interval = this.config.get(MysqlOptions.JDBC_RECONNECT_INTERVAL);</span>
+<span class="nc" id="L226">        String sslMode = this.config.get(MysqlOptions.JDBC_SSL_MODE);</span>
+
+<span class="nc" id="L228">        E.checkArgument(url.startsWith(JDBC_PREFIX),</span>
+                        &quot;The url must start with '%s': '%s'&quot;,
+                        JDBC_PREFIX, url);
+<span class="nc" id="L231">        String urlWithoutJdbc = url.substring(JDBC_PREFIX.length());</span>
+        URIBuilder builder;
+        try {
+<span class="nc" id="L234">            builder = this.newConnectionURIBuilder(urlWithoutJdbc);</span>
+<span class="nc" id="L235">        } catch (URISyntaxException e) {</span>
+<span class="nc" id="L236">            throw new BackendException(&quot;Invalid url '%s'&quot;, e, url);</span>
+<span class="nc" id="L237">        }</span>
+
+<span class="nc bnc" id="L239" title="All 2 branches missed.">        if (forcedAutoReconnect) {</span>
+<span class="nc" id="L240">            autoReconnect = true;</span>
+        }
+<span class="nc bnc" id="L242" title="All 4 branches missed.">        if (withConnParams || forcedAutoReconnect) {</span>
+<span class="nc" id="L243">            builder.setParameter(&quot;characterEncoding&quot;, &quot;utf-8&quot;)</span>
+<span class="nc" id="L244">                   .setParameter(&quot;rewriteBatchedStatements&quot;, &quot;true&quot;)</span>
+<span class="nc" id="L245">                   .setParameter(&quot;useServerPrepStmts&quot;, &quot;false&quot;)</span>
+<span class="nc" id="L246">                   .setParameter(&quot;autoReconnect&quot;, String.valueOf(autoReconnect))</span>
+<span class="nc" id="L247">                   .setParameter(&quot;maxReconnects&quot;, String.valueOf(maxTimes))</span>
+<span class="nc" id="L248">                   .setParameter(&quot;initialTimeout&quot;, String.valueOf(interval));</span>
+        }
+<span class="nc bnc" id="L250" title="All 2 branches missed.">        if (timeout != null) {</span>
+<span class="nc" id="L251">            builder.setParameter(&quot;socketTimeout&quot;, String.valueOf(timeout));</span>
+        }
+
+<span class="nc" id="L254">        builder.setParameter(&quot;useSSL&quot;, sslMode);</span>
+
+<span class="nc" id="L256">        return JDBC_PREFIX + builder.toString();</span>
+    }
+
+    protected String buildUrlPrefix(boolean withDB) {
+<span class="nc" id="L260">        String url = this.config.get(MysqlOptions.JDBC_URL);</span>
+<span class="nc bnc" id="L261" title="All 2 branches missed.">        if (!url.endsWith(&quot;/&quot;)) {</span>
+<span class="nc" id="L262">            url = String.format(&quot;%s/&quot;, url);</span>
+        }
+<span class="nc bnc" id="L264" title="All 2 branches missed.">        String database = withDB ? this.database() : this.connectDatabase();</span>
+<span class="nc" id="L265">        return String.format(&quot;%s%s&quot;, url, database);</span>
+    }
+
+    protected String connectDatabase() {
+<span class="nc" id="L269">        return Strings.EMPTY;</span>
+    }
+
+    protected URIBuilder newConnectionURIBuilder(String url)
+                                                 throws URISyntaxException {
+<span class="nc" id="L274">        return new URIBuilder(url);</span>
+    }
+
+    private Connection connect(String url) throws SQLException {
+<span class="nc" id="L278">        LOG.info(&quot;Connect to the jdbc url: '{}'&quot;, url);</span>
+<span class="nc" id="L279">        String driverName = this.config.get(MysqlOptions.JDBC_DRIVER);</span>
+<span class="nc" id="L280">        String username = this.config.get(MysqlOptions.JDBC_USERNAME);</span>
+<span class="nc" id="L281">        String password = this.config.get(MysqlOptions.JDBC_PASSWORD);</span>
+        try {
+            // Register JDBC driver
+<span class="nc" id="L284">            Class.forName(driverName);</span>
+<span class="nc" id="L285">        } catch (ClassNotFoundException e) {</span>
+<span class="nc" id="L286">            throw new BackendException(&quot;Failed to register JDBC driver. Class '%s' not found. Please check if the MySQL driver package is available.&quot;,</span>
+                                       driverName);
+<span class="nc" id="L288">        }</span>
+<span class="nc" id="L289">        return DriverManager.getConnection(url, username, password);</span>
+    }
+
+<span class="nc" id="L292">    public class Session extends AbstractBackendSession {</span>
+
+        private Connection conn;
+        private Map&lt;String, PreparedStatement&gt; statements;
+        private int count;
+
+<span class="nc" id="L298">        public Session() {</span>
+<span class="nc" id="L299">            this.conn = null;</span>
+<span class="nc" id="L300">            this.statements = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L301">            this.count = 0;</span>
+<span class="nc" id="L302">        }</span>
+
+        public HugeConfig config() {
+<span class="nc" id="L305">            return MysqlSessions.this.config();</span>
+        }
+
+        @Override
+        public void open() {
+            try {
+<span class="nc" id="L311">                this.doOpen();</span>
+<span class="nc" id="L312">            } catch (SQLException e) {</span>
+<span class="nc" id="L313">                throw new BackendException(&quot;Failed to open connection&quot;, e);</span>
+<span class="nc" id="L314">            }</span>
+<span class="nc" id="L315">        }</span>
+
+        private void tryOpen() {
+            try {
+<span class="nc" id="L319">                this.doOpen();</span>
+<span class="nc" id="L320">            } catch (SQLException ignored) {</span>
+                // Ignore
+<span class="nc" id="L322">            }</span>
+<span class="nc" id="L323">        }</span>
+
+        private void doOpen() throws SQLException {
+<span class="nc" id="L326">            this.opened = true;</span>
+<span class="nc bnc" id="L327" title="All 4 branches missed.">            if (this.conn != null &amp;&amp; !this.conn.isClosed()) {</span>
+<span class="nc" id="L328">                return;</span>
+            }
+<span class="nc" id="L330">            this.conn = MysqlSessions.this.open(true);</span>
+<span class="nc" id="L331">        }</span>
+
+        @Override
+        public void close() {
+<span class="nc bnc" id="L335" title="All 2 branches missed.">            assert this.closeable();</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">            if (this.conn == null) {</span>
+<span class="nc" id="L337">                return;</span>
+            }
+
+<span class="nc" id="L340">            this.opened = false;</span>
+<span class="nc" id="L341">            this.doClose();</span>
+<span class="nc" id="L342">        }</span>
+
+        private void doClose() {
+<span class="nc" id="L345">            SQLException exception = null;</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">            for (PreparedStatement statement : this.statements.values()) {</span>
+                try {
+<span class="nc" id="L348">                    statement.close();</span>
+<span class="nc" id="L349">                } catch (SQLException e) {</span>
+<span class="nc" id="L350">                    exception = e;</span>
+<span class="nc" id="L351">                }</span>
+<span class="nc" id="L352">            }</span>
+<span class="nc" id="L353">            this.statements.clear();</span>
+
+            try {
+<span class="nc" id="L356">                this.conn.close();</span>
+<span class="nc" id="L357">            } catch (SQLException e) {</span>
+<span class="nc" id="L358">                exception = e;</span>
+            } finally {
+<span class="nc" id="L360">                this.conn = null;</span>
+            }
+
+<span class="nc bnc" id="L363" title="All 2 branches missed.">            if (exception != null) {</span>
+<span class="nc" id="L364">                throw new BackendException(&quot;Failed to close connection&quot;,</span>
+                                           exception);
+            }
+<span class="nc" id="L367">        }</span>
+
+        @Override
+        public boolean opened() {
+<span class="nc bnc" id="L371" title="All 4 branches missed.">            if (this.opened &amp;&amp; this.conn == null) {</span>
+                // Reconnect if the connection is reset
+<span class="nc" id="L373">                tryOpen();</span>
+            }
+<span class="nc bnc" id="L375" title="All 4 branches missed.">            return this.opened &amp;&amp; this.conn != null;</span>
+        }
+
+        @Override
+        public boolean closed() {
+<span class="nc bnc" id="L380" title="All 4 branches missed.">            if (!this.opened || this.conn == null) {</span>
+<span class="nc" id="L381">                return true;</span>
+            }
+            try {
+<span class="nc" id="L384">                return this.conn.isClosed();</span>
+<span class="nc" id="L385">            } catch (SQLException ignored) {</span>
+                // Assume closed here
+<span class="nc" id="L387">                return true;</span>
+            }
+        }
+
+        public void clear() {
+<span class="nc" id="L392">            this.count = 0;</span>
+<span class="nc" id="L393">            SQLException exception = null;</span>
+<span class="nc bnc" id="L394" title="All 2 branches missed.">            for (PreparedStatement statement : this.statements.values()) {</span>
+                try {
+<span class="nc" id="L396">                    statement.clearBatch();</span>
+<span class="nc" id="L397">                } catch (SQLException e) {</span>
+<span class="nc" id="L398">                    exception = e;</span>
+<span class="nc" id="L399">                }</span>
+<span class="nc" id="L400">            }</span>
+<span class="nc bnc" id="L401" title="All 2 branches missed.">            if (exception != null) {</span>
+                /*
+                 * Will throw exception when the database connection error,
+                 * we clear statements because clearBatch() failed
+                 */
+<span class="nc" id="L406">                this.statements = new HashMap&lt;&gt;();</span>
+            }
+<span class="nc" id="L408">        }</span>
+
+        public void begin() throws SQLException {
+<span class="nc" id="L411">            this.conn.setAutoCommit(false);</span>
+<span class="nc" id="L412">        }</span>
+
+        public void end() throws SQLException {
+<span class="nc" id="L415">            this.conn.setAutoCommit(true);</span>
+<span class="nc" id="L416">        }</span>
+
+        public void endAndLog() {
+            try {
+<span class="nc" id="L420">                this.conn.setAutoCommit(true);</span>
+<span class="nc" id="L421">            } catch (SQLException e) {</span>
+<span class="nc" id="L422">                LOG.warn(&quot;Failed to set connection to auto-commit status&quot;, e);</span>
+<span class="nc" id="L423">            }</span>
+<span class="nc" id="L424">        }</span>
+
+        @Override
+        public Integer commit() {
+<span class="nc" id="L428">            int updated = 0;</span>
+            try {
+<span class="nc bnc" id="L430" title="All 2 branches missed.">                for (PreparedStatement statement : this.statements.values()) {</span>
+<span class="nc" id="L431">                    updated += IntStream.of(statement.executeBatch()).sum();</span>
+<span class="nc" id="L432">                }</span>
+<span class="nc" id="L433">                this.conn.commit();</span>
+<span class="nc" id="L434">                this.clear();</span>
+<span class="nc" id="L435">            } catch (SQLException e) {</span>
+<span class="nc" id="L436">                throw new BackendException(&quot;Failed to commit&quot;, e);</span>
+<span class="nc" id="L437">            }</span>
+            /*
+             * Can't call endAndLog() in `finally` block here.
+             * Because If commit already failed with an exception,
+             * then rollback() should be called. Besides rollback() can only
+             * be called when autocommit=false and rollback() will always set
+             * autocommit=true. Therefore only commit successfully should set
+             * autocommit=true here
+             */
+<span class="nc" id="L446">            this.endAndLog();</span>
+<span class="nc" id="L447">            return updated;</span>
+        }
+
+        @Override
+        public void rollback() {
+<span class="nc" id="L452">            this.clear();</span>
+            try {
+<span class="nc" id="L454">                this.conn.rollback();</span>
+<span class="nc" id="L455">            } catch (SQLException e) {</span>
+<span class="nc" id="L456">                throw new BackendException(&quot;Failed to rollback&quot;, e);</span>
+            } finally {
+<span class="nc" id="L458">                this.endAndLog();</span>
+            }
+<span class="nc" id="L460">        }</span>
+
+        @Override
+        public boolean hasChanges() {
+<span class="nc bnc" id="L464" title="All 2 branches missed.">            return this.count &gt; 0;</span>
+        }
+
+        @Override
+        public void reconnectIfNeeded() {
+<span class="nc bnc" id="L469" title="All 2 branches missed.">            if (!this.opened) {</span>
+<span class="nc" id="L470">                return;</span>
+            }
+
+<span class="nc bnc" id="L473" title="All 2 branches missed.">            if (this.conn == null) {</span>
+<span class="nc" id="L474">                tryOpen();</span>
+            }
+
+            try {
+<span class="nc" id="L478">                this.execute(&quot;SELECT 1;&quot;);</span>
+<span class="nc" id="L479">            } catch (SQLException ignored) {</span>
+                // pass
+<span class="nc" id="L481">            }</span>
+<span class="nc" id="L482">        }</span>
+
+        @Override
+        public void reset() {
+            // NOTE: this method may be called by other threads
+<span class="nc bnc" id="L487" title="All 2 branches missed.">            if (this.conn == null) {</span>
+<span class="nc" id="L488">                return;</span>
+            }
+            try {
+<span class="nc" id="L491">                this.doClose();</span>
+<span class="nc" id="L492">            } catch (Throwable e) {</span>
+<span class="nc" id="L493">                LOG.warn(&quot;Failed to reset connection&quot;, e);</span>
+<span class="nc" id="L494">            }</span>
+<span class="nc" id="L495">        }</span>
+
+        public ResultSetWrapper select(String sql) throws SQLException {
+<span class="nc bnc" id="L498" title="All 2 branches missed.">            assert this.conn.getAutoCommit();</span>
+<span class="nc" id="L499">            Statement statement = this.conn.createStatement();</span>
+            try {
+<span class="nc" id="L501">                ResultSet rs = statement.executeQuery(sql);</span>
+<span class="nc" id="L502">                return new ResultSetWrapper(rs, statement);</span>
+<span class="nc" id="L503">            } catch (SQLException e) {</span>
+<span class="nc" id="L504">                statement.close();</span>
+<span class="nc" id="L505">                throw e;</span>
+            }
+        }
+
+        public boolean execute(String sql) throws SQLException {
+            /*
+             * commit() or rollback() failed to set connection to auto-commit
+             * status in prior transaction. Manually set to auto-commit here.
+             */
+<span class="nc bnc" id="L514" title="All 2 branches missed.">            if (!this.conn.getAutoCommit()) {</span>
+<span class="nc" id="L515">                this.end();</span>
+            }
+
+<span class="nc" id="L518">            try (Statement statement = this.conn.createStatement()) {</span>
+<span class="nc" id="L519">                return statement.execute(sql);</span>
+            }
+        }
+
+        public void add(PreparedStatement statement) {
+            try {
+                // Add a row to statement
+<span class="nc" id="L526">                statement.addBatch();</span>
+<span class="nc" id="L527">                this.count++;</span>
+<span class="nc" id="L528">            } catch (SQLException e) {</span>
+<span class="nc" id="L529">                throw new BackendException(&quot;Failed to add statement '%s' &quot; +</span>
+                                           &quot;to batch&quot;, e, statement);
+<span class="nc" id="L531">            }</span>
+<span class="nc" id="L532">        }</span>
+
+        public PreparedStatement prepareStatement(String sqlTemplate)
+                                                  throws SQLException {
+<span class="nc" id="L536">            PreparedStatement statement = this.statements.get(sqlTemplate);</span>
+<span class="nc bnc" id="L537" title="All 2 branches missed.">            if (statement == null) {</span>
+<span class="nc" id="L538">                statement = this.conn.prepareStatement(sqlTemplate);</span>
+<span class="nc" id="L539">                this.statements.putIfAbsent(sqlTemplate, statement);</span>
+            }
+<span class="nc" id="L541">            return statement;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,871 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>StandardTaskScheduler.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.task</a> &gt; <span class="el_source">StandardTaskScheduler.java</span></div><h1>StandardTaskScheduler.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.task;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeoutException;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.page.PageInfo;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.exception.ConnectionException;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.iterator.ExtendableIterator;
+import org.apache.hugegraph.iterator.MapperIterator;
+import org.apache.hugegraph.job.EphemeralJob;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.task.HugeTask.P;
+import org.apache.hugegraph.task.TaskCallable.SysTaskCallable;
+import org.apache.hugegraph.task.TaskManager.ContextCallable;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Graph.Hidden;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.slf4j.Logger;
+
+import com.google.common.collect.ImmutableMap;
+
+public class StandardTaskScheduler implements TaskScheduler {
+
+<span class="nc" id="L70">    private static final Logger LOG = Log.logger(StandardTaskScheduler.class);</span>
+
+    private final HugeGraphParams graph;
+    private final ServerInfoManager serverManager;
+
+    private final ExecutorService taskExecutor;
+    private final ExecutorService taskDbExecutor;
+
+    private final Map&lt;Id, HugeTask&lt;?&gt;&gt; tasks;
+
+    private volatile TaskTransaction taskTx;
+
+    private static final long NO_LIMIT = -1L;
+    private static final long PAGE_SIZE = 500L;
+    private static final long QUERY_INTERVAL = 100L;
+    private static final int MAX_PENDING_TASKS = 10000;
+
+    public StandardTaskScheduler(HugeGraphParams graph,
+                                 ExecutorService taskExecutor,
+                                 ExecutorService taskDbExecutor,
+<span class="nc" id="L90">                                 ExecutorService serverInfoDbExecutor) {</span>
+<span class="nc" id="L91">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+<span class="nc" id="L92">        E.checkNotNull(taskExecutor, &quot;taskExecutor&quot;);</span>
+<span class="nc" id="L93">        E.checkNotNull(taskDbExecutor, &quot;dbExecutor&quot;);</span>
+
+<span class="nc" id="L95">        this.graph = graph;</span>
+<span class="nc" id="L96">        this.taskExecutor = taskExecutor;</span>
+<span class="nc" id="L97">        this.taskDbExecutor = taskDbExecutor;</span>
+
+<span class="nc" id="L99">        this.serverManager = new ServerInfoManager(graph, serverInfoDbExecutor);</span>
+<span class="nc" id="L100">        this.tasks = new ConcurrentHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L102">        this.taskTx = null;</span>
+<span class="nc" id="L103">    }</span>
+
+    @Override
+    public HugeGraph graph() {
+<span class="nc" id="L107">        return this.graph.graph();</span>
+    }
+
+    public String graphName() {
+<span class="nc" id="L111">        return this.graph.name();</span>
+    }
+
+    @Override
+    public int pendingTasks() {
+<span class="nc" id="L116">        return this.tasks.size();</span>
+    }
+
+    private TaskTransaction tx() {
+        // NOTE: only the owner thread can access task tx
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        if (this.taskTx == null) {</span>
+            /*
+             * NOTE: don't synchronized(this) due to scheduler thread hold
+             * this lock through scheduleTasks(), then query tasks and wait
+             * for db-worker thread after call(), the tx may not be initialized
+             * but can't catch this lock, then cause deadlock.
+             * We just use this.serverManager as a monitor here
+             */
+<span class="nc" id="L129">            synchronized (this.serverManager) {</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">                if (this.taskTx == null) {</span>
+<span class="nc" id="L131">                    BackendStore store = this.graph.loadSystemStore();</span>
+<span class="nc" id="L132">                    TaskTransaction tx = new TaskTransaction(this.graph, store);</span>
+<span class="nc bnc" id="L133" title="All 2 branches missed.">                    assert this.taskTx == null; // may be reentrant?</span>
+<span class="nc" id="L134">                    this.taskTx = tx;</span>
+                }
+<span class="nc" id="L136">            }</span>
+        }
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        assert this.taskTx != null;</span>
+<span class="nc" id="L139">        return this.taskTx;</span>
+    }
+
+    @Override
+    public &lt;V&gt; void restoreTasks() {
+<span class="nc" id="L144">        Id selfServer = this.serverManager().selfNodeId();</span>
+<span class="nc" id="L145">        List&lt;HugeTask&lt;V&gt;&gt; taskList = new ArrayList&lt;&gt;();</span>
+        // Restore 'RESTORING', 'RUNNING' and 'QUEUED' tasks in order.
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        for (TaskStatus status : TaskStatus.PENDING_STATUSES) {</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">            String page = this.supportsPaging() ? PageInfo.PAGE_NONE : null;</span>
+            do {
+                Iterator&lt;HugeTask&lt;V&gt;&gt; iter;
+<span class="nc" id="L151">                for (iter = this.findTask(status, PAGE_SIZE, page);</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">                     iter.hasNext();) {</span>
+<span class="nc" id="L153">                    HugeTask&lt;V&gt; task = iter.next();</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">                    if (selfServer.equals(task.server())) {</span>
+<span class="nc" id="L155">                        taskList.add(task);</span>
+                    }
+<span class="nc" id="L157">                }</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">                if (page != null) {</span>
+<span class="nc" id="L159">                    page = PageInfo.pageInfo(iter);</span>
+                }
+<span class="nc bnc" id="L161" title="All 2 branches missed.">            } while (page != null);</span>
+<span class="nc" id="L162">        }</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        for (HugeTask&lt;V&gt; task : taskList){</span>
+<span class="nc" id="L164">            LOG.info(&quot;restore task {}&quot;, task);</span>
+<span class="nc" id="L165">            this.restore(task);</span>
+<span class="nc" id="L166">        }</span>
+<span class="nc" id="L167">    }</span>
+
+    private &lt;V&gt; Future&lt;?&gt; restore(HugeTask&lt;V&gt; task) {
+<span class="nc" id="L170">        E.checkArgumentNotNull(task, &quot;Task can't be null&quot;);</span>
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        E.checkArgument(!this.tasks.containsKey(task.id()),</span>
+<span class="nc" id="L172">                        &quot;Task '%s' is already in the queue&quot;, task.id());</span>
+<span class="nc bnc" id="L173" title="All 4 branches missed.">        E.checkArgument(!task.isDone() &amp;&amp; !task.completed(),</span>
+                        &quot;No need to restore completed task '%s' with status %s&quot;,
+<span class="nc" id="L175">                        task.id(), task.status());</span>
+<span class="nc" id="L176">        task.status(TaskStatus.RESTORING);</span>
+<span class="nc" id="L177">        task.retry();</span>
+<span class="nc" id="L178">        return this.submitTask(task);</span>
+    }
+
+    @Override
+    public &lt;V&gt; Future&lt;?&gt; schedule(HugeTask&lt;V&gt; task) {
+<span class="nc" id="L183">        E.checkArgumentNotNull(task, &quot;Task can't be null&quot;);</span>
+
+        /*
+         * Just submit to queue if status=QUEUED (means re-schedule task)
+         * NOTE: schedule() method may be called multi times by
+         * HugeTask.checkDependenciesSuccess() method
+         */
+<span class="nc bnc" id="L190" title="All 2 branches missed.">        if (task.status() == TaskStatus.QUEUED) {</span>
+<span class="nc" id="L191">            return this.resubmitTask(task);</span>
+        }
+
+        /*
+         * Due to EphemeralJob won't be serialized and deserialized through
+         * shared storage, submit EphemeralJob immediately on any node
+         */
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        if (task.callable() instanceof EphemeralJob) {</span>
+            // NOTE: we don't need to save EphemeralJob task
+<span class="nc" id="L200">            task.status(TaskStatus.QUEUED);</span>
+<span class="nc" id="L201">            return this.submitTask(task);</span>
+        }
+
+        // Check this is on master for normal task schedule
+<span class="nc" id="L205">        this.checkOnMasterNode(&quot;schedule&quot;);</span>
+
+<span class="nc bnc" id="L207" title="All 4 branches missed.">        if (this.serverManager().onlySingleNode() &amp;&amp; !task.computer()) {</span>
+            /*
+             * Speed up for single node, submit task immediately,
+             * this code can be removed without affecting code logic
+             */
+<span class="nc" id="L212">            task.status(TaskStatus.QUEUED);</span>
+<span class="nc" id="L213">            task.server(this.serverManager().selfNodeId());</span>
+<span class="nc" id="L214">            this.save(task);</span>
+<span class="nc" id="L215">            return this.submitTask(task);</span>
+        } else {
+            /*
+             * Just set SCHEDULING status and save task,
+             * it will be scheduled by periodic scheduler worker
+             */
+<span class="nc" id="L221">            task.status(TaskStatus.SCHEDULING);</span>
+<span class="nc" id="L222">            this.save(task);</span>
+
+            // Notify master server to schedule and execute immediately
+<span class="nc" id="L225">            TaskManager.instance().notifyNewTask(task);</span>
+
+<span class="nc" id="L227">            return task;</span>
+        }
+    }
+
+    private &lt;V&gt; Future&lt;?&gt; submitTask(HugeTask&lt;V&gt; task) {
+<span class="nc" id="L232">        int size = this.tasks.size() + 1;</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        E.checkArgument(size &lt;= MAX_PENDING_TASKS,</span>
+                        &quot;Pending tasks size %s has exceeded the max limit %s&quot;,
+<span class="nc" id="L235">                        size, MAX_PENDING_TASKS);</span>
+<span class="nc" id="L236">        this.initTaskCallable(task);</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        assert !this.tasks.containsKey(task.id()) : task;</span>
+<span class="nc" id="L238">        this.tasks.put(task.id(), task);</span>
+<span class="nc" id="L239">        return this.taskExecutor.submit(task);</span>
+    }
+
+    private &lt;V&gt; Future&lt;?&gt; resubmitTask(HugeTask&lt;V&gt; task) {
+<span class="nc bnc" id="L243" title="All 2 branches missed.">        E.checkArgument(task.status() == TaskStatus.QUEUED,</span>
+                        &quot;Can't resubmit task '%s' with status %s&quot;,
+<span class="nc" id="L245">                        task.id(), TaskStatus.QUEUED);</span>
+<span class="nc" id="L246">        E.checkArgument(this.tasks.containsKey(task.id()),</span>
+                        &quot;Can't resubmit task '%s' not been submitted before&quot;,
+<span class="nc" id="L248">                        task.id());</span>
+<span class="nc" id="L249">        return this.taskExecutor.submit(task);</span>
+    }
+
+    public &lt;V&gt; void initTaskCallable(HugeTask&lt;V&gt; task) {
+<span class="nc" id="L253">        task.scheduler(this);</span>
+
+<span class="nc" id="L255">        TaskCallable&lt;V&gt; callable = task.callable();</span>
+<span class="nc" id="L256">        callable.task(task);</span>
+<span class="nc" id="L257">        callable.graph(this.graph());</span>
+<span class="nc bnc" id="L258" title="All 2 branches missed.">        if (callable instanceof SysTaskCallable) {</span>
+            // Only authorized to the necessary tasks
+<span class="nc" id="L260">            ((SysTaskCallable&lt;V&gt;) callable).params(this.graph);</span>
+        }
+<span class="nc" id="L262">    }</span>
+
+    @Override
+    public synchronized &lt;V&gt; void cancel(HugeTask&lt;V&gt; task) {
+<span class="nc" id="L266">        E.checkArgumentNotNull(task, &quot;Task can't be null&quot;);</span>
+<span class="nc" id="L267">        this.checkOnMasterNode(&quot;cancel&quot;);</span>
+
+<span class="nc bnc" id="L269" title="All 4 branches missed.">        if (task.completed() || task.cancelling()) {</span>
+<span class="nc" id="L270">            return;</span>
+        }
+
+<span class="nc" id="L273">        LOG.info(&quot;Cancel task '{}' in status {}&quot;, task.id(), task.status());</span>
+
+<span class="nc bnc" id="L275" title="All 2 branches missed.">        if (task.server() == null) {</span>
+            // The task not scheduled to workers, set canceled immediately
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            assert task.status().code() &lt; TaskStatus.QUEUED.code();</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">            if (task.status(TaskStatus.CANCELLED)) {</span>
+<span class="nc" id="L279">                this.save(task);</span>
+<span class="nc" id="L280">                return;</span>
+            }
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        } else if (task.status(TaskStatus.CANCELLING)) {</span>
+            // The task scheduled to workers, let the worker node to cancel
+<span class="nc" id="L284">            this.save(task);</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">            assert task.server() != null : task;</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">            assert this.serverManager().selfIsMaster();</span>
+<span class="nc bnc" id="L287" title="All 2 branches missed.">            if (!task.server().equals(this.serverManager().selfNodeId())) {</span>
+                /*
+                 * Remove task from memory if it's running on worker node,
+                 * but keep task in memory if it's running on master node.
+                 * cancel-scheduling will read task from backend store, if
+                 * removed this instance from memory, there will be two task
+                 * instances with same id, and can't cancel the real task that
+                 * is running but removed from memory.
+                 */
+<span class="nc" id="L296">                this.remove(task);</span>
+            }
+            // Notify master server to schedule and execute immediately
+<span class="nc" id="L299">            TaskManager.instance().notifyNewTask(task);</span>
+<span class="nc" id="L300">            return;</span>
+        }
+
+<span class="nc" id="L303">        throw new HugeException(&quot;Can't cancel task '%s' in status %s&quot;,</span>
+<span class="nc" id="L304">                                task.id(), task.status());</span>
+    }
+
+    protected ServerInfoManager serverManager() {
+<span class="nc" id="L308">        return this.serverManager;</span>
+    }
+
+    protected synchronized void scheduleTasksOnMaster() {
+        // Master server schedule all scheduling tasks to suitable worker nodes
+<span class="nc" id="L313">        Collection&lt;HugeServerInfo&gt; serverInfos = this.serverManager()</span>
+<span class="nc" id="L314">                                                     .allServerInfos();</span>
+<span class="nc bnc" id="L315" title="All 2 branches missed.">        String page = this.supportsPaging() ? PageInfo.PAGE_NONE : null;</span>
+        do {
+<span class="nc" id="L317">            Iterator&lt;HugeTask&lt;Object&gt;&gt; tasks = this.tasks(TaskStatus.SCHEDULING,</span>
+                                                          PAGE_SIZE, page);
+<span class="nc bnc" id="L319" title="All 2 branches missed.">            while (tasks.hasNext()) {</span>
+<span class="nc" id="L320">                HugeTask&lt;?&gt; task = tasks.next();</span>
+<span class="nc bnc" id="L321" title="All 2 branches missed.">                if (task.server() != null) {</span>
+                    // Skip if already scheduled
+<span class="nc" id="L323">                    continue;</span>
+                }
+
+<span class="nc bnc" id="L326" title="All 2 branches missed.">                if (!this.serverManager.selfIsMaster()) {</span>
+<span class="nc" id="L327">                    return;</span>
+                }
+
+<span class="nc" id="L330">                HugeServerInfo server = this.serverManager().pickWorkerNode(</span>
+                                        serverInfos, task);
+<span class="nc bnc" id="L332" title="All 2 branches missed.">                if (server == null) {</span>
+<span class="nc" id="L333">                    LOG.info(&quot;The master can't find suitable servers to &quot; +</span>
+                             &quot;execute task '{}', wait for next schedule&quot;,
+<span class="nc" id="L335">                             task.id());</span>
+<span class="nc" id="L336">                    continue;</span>
+                }
+
+                // Found suitable server, update task status
+<span class="nc bnc" id="L340" title="All 2 branches missed.">                assert server.id() != null;</span>
+<span class="nc" id="L341">                task.server(server.id());</span>
+<span class="nc" id="L342">                task.status(TaskStatus.SCHEDULED);</span>
+<span class="nc" id="L343">                this.save(task);</span>
+
+                // Update server load in memory, it will be saved at the ending
+<span class="nc" id="L346">                server.increaseLoad(task.load());</span>
+
+<span class="nc" id="L348">                LOG.info(&quot;Scheduled task '{}' to server '{}'&quot;,</span>
+<span class="nc" id="L349">                         task.id(), server.id());</span>
+<span class="nc" id="L350">            }</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">            if (page != null) {</span>
+<span class="nc" id="L352">                page = PageInfo.pageInfo(tasks);</span>
+            }
+<span class="nc bnc" id="L354" title="All 2 branches missed.">        } while (page != null);</span>
+
+        // Save to store
+<span class="nc" id="L357">        this.serverManager().updateServerInfos(serverInfos);</span>
+<span class="nc" id="L358">    }</span>
+
+    protected void executeTasksOnWorker(Id server) {
+<span class="nc bnc" id="L361" title="All 2 branches missed.">        String page = this.supportsPaging() ? PageInfo.PAGE_NONE : null;</span>
+        do {
+<span class="nc" id="L363">            Iterator&lt;HugeTask&lt;Object&gt;&gt; tasks = this.tasks(TaskStatus.SCHEDULED,</span>
+                                                          PAGE_SIZE, page);
+<span class="nc bnc" id="L365" title="All 2 branches missed.">            while (tasks.hasNext()) {</span>
+<span class="nc" id="L366">                HugeTask&lt;?&gt; task = tasks.next();</span>
+<span class="nc" id="L367">                this.initTaskCallable(task);</span>
+<span class="nc" id="L368">                Id taskServer = task.server();</span>
+<span class="nc bnc" id="L369" title="All 2 branches missed.">                if (taskServer == null) {</span>
+<span class="nc" id="L370">                    LOG.warn(&quot;Task '{}' may not be scheduled&quot;, task.id());</span>
+<span class="nc" id="L371">                    continue;</span>
+                }
+<span class="nc" id="L373">                HugeTask&lt;?&gt; memTask = this.tasks.get(task.id());</span>
+<span class="nc bnc" id="L374" title="All 2 branches missed.">                if (memTask != null) {</span>
+<span class="nc bnc" id="L375" title="All 2 branches missed.">                    assert memTask.status().code() &gt; task.status().code();</span>
+                    continue;
+                }
+<span class="nc bnc" id="L378" title="All 2 branches missed.">                if (taskServer.equals(server)) {</span>
+<span class="nc" id="L379">                    task.status(TaskStatus.QUEUED);</span>
+<span class="nc" id="L380">                    this.save(task);</span>
+<span class="nc" id="L381">                    this.submitTask(task);</span>
+                }
+<span class="nc" id="L383">            }</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">            if (page != null) {</span>
+<span class="nc" id="L385">                page = PageInfo.pageInfo(tasks);</span>
+            }
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        } while (page != null);</span>
+<span class="nc" id="L388">    }</span>
+
+    protected void cancelTasksOnWorker(Id server) {
+<span class="nc bnc" id="L391" title="All 2 branches missed.">        String page = this.supportsPaging() ? PageInfo.PAGE_NONE : null;</span>
+        do {
+<span class="nc" id="L393">            Iterator&lt;HugeTask&lt;Object&gt;&gt; tasks = this.tasks(TaskStatus.CANCELLING,</span>
+                                                          PAGE_SIZE, page);
+<span class="nc bnc" id="L395" title="All 2 branches missed.">            while (tasks.hasNext()) {</span>
+<span class="nc" id="L396">                HugeTask&lt;?&gt; task = tasks.next();</span>
+<span class="nc" id="L397">                Id taskServer = task.server();</span>
+<span class="nc bnc" id="L398" title="All 2 branches missed.">                if (taskServer == null) {</span>
+<span class="nc" id="L399">                    LOG.warn(&quot;Task '{}' may not be scheduled&quot;, task.id());</span>
+<span class="nc" id="L400">                    continue;</span>
+                }
+<span class="nc bnc" id="L402" title="All 2 branches missed.">                if (!taskServer.equals(server)) {</span>
+<span class="nc" id="L403">                    continue;</span>
+                }
+                /*
+                 * Task may be loaded from backend store and not initialized.
+                 * like: A task is completed but failed to save in the last
+                 * step, resulting in the status of the task not being
+                 * updated to storage, the task is not in memory, so it's not
+                 * initialized when canceled.
+                 */
+<span class="nc" id="L412">                HugeTask&lt;?&gt; memTask = this.tasks.get(task.id());</span>
+<span class="nc bnc" id="L413" title="All 2 branches missed.">                if (memTask != null) {</span>
+<span class="nc" id="L414">                    task = memTask;</span>
+                } else {
+<span class="nc" id="L416">                    this.initTaskCallable(task);</span>
+                }
+<span class="nc" id="L418">                boolean cancelled = task.cancel(true);</span>
+<span class="nc" id="L419">                LOG.info(&quot;Server '{}' cancel task '{}' with cancelled={}&quot;,</span>
+<span class="nc" id="L420">                         server, task.id(), cancelled);</span>
+<span class="nc" id="L421">            }</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">            if (page != null) {</span>
+<span class="nc" id="L423">                page = PageInfo.pageInfo(tasks);</span>
+            }
+<span class="nc bnc" id="L425" title="All 2 branches missed.">        } while (page != null);</span>
+<span class="nc" id="L426">    }</span>
+
+    protected void taskDone(HugeTask&lt;?&gt; task) {
+<span class="nc" id="L429">        this.remove(task);</span>
+
+<span class="nc" id="L431">        Id selfServerId = this.serverManager().selfNodeId();</span>
+        try {
+<span class="nc" id="L433">            this.serverManager().decreaseLoad(task.load());</span>
+<span class="nc" id="L434">        } catch (Throwable e) {</span>
+<span class="nc" id="L435">            LOG.error(&quot;Failed to decrease load for task '{}' on server '{}'&quot;,</span>
+<span class="nc" id="L436">                      task.id(), selfServerId, e);</span>
+<span class="nc" id="L437">        }</span>
+<span class="nc" id="L438">        LOG.debug(&quot;Task '{}' done on server '{}'&quot;, task.id(), selfServerId);</span>
+<span class="nc" id="L439">    }</span>
+
+    protected void remove(HugeTask&lt;?&gt; task) {
+<span class="nc" id="L442">        E.checkNotNull(task, &quot;remove task&quot;);</span>
+<span class="nc" id="L443">        HugeTask&lt;?&gt; delTask = this.tasks.remove(task.id());</span>
+<span class="nc bnc" id="L444" title="All 4 branches missed.">        if (delTask != null &amp;&amp; delTask != task) {</span>
+<span class="nc" id="L445">            LOG.warn(&quot;Task '{}' may be inconsistent status {}(expect {})&quot;,</span>
+<span class="nc" id="L446">                      task.id(), task.status(), delTask.status());</span>
+        }
+<span class="nc bnc" id="L448" title="All 4 branches missed.">        assert delTask == null || delTask.completed() ||</span>
+<span class="nc bnc" id="L449" title="All 4 branches missed.">               delTask.cancelling() || delTask.isCancelled() : delTask;</span>
+<span class="nc" id="L450">    }</span>
+
+    @Override
+    public &lt;V&gt; void save(HugeTask&lt;V&gt; task) {
+<span class="nc" id="L454">        LOG.debug(&quot;Saving task: {}&quot;, task);</span>
+<span class="nc" id="L455">        task.scheduler(this);</span>
+<span class="nc" id="L456">        E.checkArgumentNotNull(task, &quot;Task can't be null&quot;);</span>
+<span class="nc" id="L457">        this.call(() -&gt; {</span>
+            // Construct vertex from task
+<span class="nc" id="L459">            HugeVertex vertex = this.tx().constructVertex(task);</span>
+            // Delete index of old vertex to avoid stale index
+<span class="nc" id="L461">            this.tx().deleteIndex(vertex);</span>
+            // Add or update task info to backend store
+<span class="nc" id="L463">            return this.tx().addVertex(vertex);</span>
+        });
+<span class="nc" id="L465">    }</span>
+
+    @Override
+    public void init() {
+<span class="nc" id="L469">        this.call(() -&gt; this.tx().initSchema());</span>
+<span class="nc" id="L470">    }</span>
+
+    @Override
+    public boolean close() {
+<span class="nc bnc" id="L474" title="All 2 branches missed.">        if (!this.taskDbExecutor.isShutdown()) {</span>
+<span class="nc" id="L475">            this.call(() -&gt; {</span>
+                try {
+<span class="nc" id="L477">                    this.tx().close();</span>
+<span class="nc" id="L478">                } catch (ConnectionException ignored) {</span>
+                    // ConnectionException means no connection established
+<span class="nc" id="L480">                }</span>
+<span class="nc" id="L481">                this.graph.closeTx();</span>
+<span class="nc" id="L482">            });</span>
+        }
+<span class="nc" id="L484">        return this.serverManager.close();</span>
+    }
+
+    @Override
+    public &lt;V&gt; HugeTask&lt;V&gt; task(Id id) {
+<span class="nc" id="L489">        E.checkArgumentNotNull(id, &quot;Parameter task id can't be null&quot;);</span>
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L491">        HugeTask&lt;V&gt; task = (HugeTask&lt;V&gt;) this.tasks.get(id);</span>
+<span class="nc bnc" id="L492" title="All 2 branches missed.">        if (task != null) {</span>
+<span class="nc" id="L493">            return task;</span>
+        }
+<span class="nc" id="L495">        return this.findTask(id);</span>
+    }
+
+    @Override
+    public &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; tasks(List&lt;Id&gt; ids) {
+<span class="nc" id="L500">        List&lt;Id&gt; taskIdsNotInMem = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L501">        List&lt;HugeTask&lt;V&gt;&gt; taskInMem = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L502" title="All 2 branches missed.">        for (Id id : ids) {</span>
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L504">            HugeTask&lt;V&gt; task = (HugeTask&lt;V&gt;) this.tasks.get(id);</span>
+<span class="nc bnc" id="L505" title="All 2 branches missed.">            if (task != null) {</span>
+<span class="nc" id="L506">                taskInMem.add(task);</span>
+            } else {
+<span class="nc" id="L508">                taskIdsNotInMem.add(id);</span>
+            }
+<span class="nc" id="L510">        }</span>
+        ExtendableIterator&lt;HugeTask&lt;V&gt;&gt; iterator;
+<span class="nc bnc" id="L512" title="All 2 branches missed.">        if (taskInMem.isEmpty()) {</span>
+<span class="nc" id="L513">            iterator = new ExtendableIterator&lt;&gt;();</span>
+        } else {
+<span class="nc" id="L515">            iterator = new ExtendableIterator&lt;&gt;(taskInMem.iterator());</span>
+        }
+<span class="nc" id="L517">        iterator.extend(this.findTasks(taskIdsNotInMem));</span>
+<span class="nc" id="L518">        return iterator;</span>
+    }
+
+    @Override
+    public &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; tasks(TaskStatus status,
+                                           long limit, String page) {
+<span class="nc bnc" id="L524" title="All 2 branches missed.">        if (status == null) {</span>
+<span class="nc" id="L525">            return this.findAllTask(limit, page);</span>
+        }
+<span class="nc" id="L527">        return this.findTask(status, limit, page);</span>
+    }
+
+    public &lt;V&gt; HugeTask&lt;V&gt; findTask(Id id) {
+<span class="nc" id="L531">        HugeTask&lt;V&gt; result =  this.call(() -&gt; {</span>
+<span class="nc" id="L532">            Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(id);</span>
+<span class="nc" id="L533">            Vertex vertex = QueryResults.one(vertices);</span>
+<span class="nc bnc" id="L534" title="All 2 branches missed.">            if (vertex == null) {</span>
+<span class="nc" id="L535">                return null;</span>
+            }
+<span class="nc" id="L537">            return HugeTask.fromVertex(vertex);</span>
+        });
+<span class="nc bnc" id="L539" title="All 2 branches missed.">        if (result == null) {</span>
+<span class="nc" id="L540">            throw new NotFoundException(&quot;Can't find task with id '%s'&quot;, id);</span>
+        }
+<span class="nc" id="L542">        return result;</span>
+    }
+
+    public &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; findTasks(List&lt;Id&gt; ids) {
+<span class="nc" id="L546">        return this.queryTask(ids);</span>
+    }
+
+    public &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; findAllTask(long limit, String page) {
+<span class="nc" id="L550">        return this.queryTask(ImmutableMap.of(), limit, page);</span>
+    }
+
+    public &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; findTask(TaskStatus status,
+                                              long limit, String page) {
+<span class="nc" id="L555">        return this.queryTask(P.STATUS, status.code(), limit, page);</span>
+    }
+
+    @Override
+    public &lt;V&gt; HugeTask&lt;V&gt; delete(Id id) {
+<span class="nc" id="L560">        this.checkOnMasterNode(&quot;delete&quot;);</span>
+
+<span class="nc" id="L562">        HugeTask&lt;?&gt; task = this.task(id);</span>
+        /*
+         * The following is out of date when task running on worker node:
+         * HugeTask&lt;?&gt; task = this.tasks.get(id);
+         * Tasks are removed from memory after completed at most time,
+         * but there is a tiny gap between tasks are completed and
+         * removed from memory.
+         * We assume tasks only in memory may be incomplete status,
+         * in fact, it is also possible to appear on the backend tasks
+         * when the database status is inconsistent.
+         */
+<span class="nc bnc" id="L573" title="All 2 branches missed.">        if (task != null) {</span>
+<span class="nc" id="L574">            E.checkArgument(task.completed(),</span>
+                            &quot;Can't delete incomplete task '%s' in status %s&quot; +
+                            &quot;, Please try to cancel the task first&quot;,
+<span class="nc" id="L577">                            id, task.status());</span>
+<span class="nc" id="L578">            this.remove(task);</span>
+        }
+
+<span class="nc" id="L581">        return this.call(() -&gt; {</span>
+<span class="nc" id="L582">            Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(id);</span>
+<span class="nc" id="L583">            HugeVertex vertex = (HugeVertex) QueryResults.one(vertices);</span>
+<span class="nc bnc" id="L584" title="All 2 branches missed.">            if (vertex == null) {</span>
+<span class="nc" id="L585">                return null;</span>
+            }
+<span class="nc" id="L587">            HugeTask&lt;V&gt; result = HugeTask.fromVertex(vertex);</span>
+<span class="nc" id="L588">            E.checkState(result.completed(),</span>
+                         &quot;Can't delete incomplete task '%s' in status %s&quot;,
+<span class="nc" id="L590">                         id, result.status());</span>
+<span class="nc" id="L591">            this.tx().removeVertex(vertex);</span>
+<span class="nc" id="L592">            return result;</span>
+        });
+    }
+
+    @Override
+    public &lt;V&gt; HugeTask&lt;V&gt; waitUntilTaskCompleted(Id id, long seconds)
+                                                  throws TimeoutException {
+<span class="nc" id="L599">        return this.waitUntilTaskCompleted(id, seconds, QUERY_INTERVAL);</span>
+    }
+
+    @Override
+    public &lt;V&gt; HugeTask&lt;V&gt; waitUntilTaskCompleted(Id id)
+                                                  throws TimeoutException {
+        // This method is just used by tests
+<span class="nc" id="L606">        long timeout = this.graph.configuration()</span>
+<span class="nc" id="L607">                                 .get(CoreOptions.TASK_WAIT_TIMEOUT);</span>
+<span class="nc" id="L608">        return this.waitUntilTaskCompleted(id, timeout, 1L);</span>
+    }
+
+    private &lt;V&gt; HugeTask&lt;V&gt; waitUntilTaskCompleted(Id id, long seconds,
+                                                   long intervalMs)
+                                                   throws TimeoutException {
+<span class="nc" id="L614">        long passes = seconds * 1000 / intervalMs;</span>
+<span class="nc" id="L615">        HugeTask&lt;V&gt; task = null;</span>
+<span class="nc" id="L616">        for (long pass = 0;; pass++) {</span>
+            try {
+<span class="nc" id="L618">                task = this.task(id);</span>
+<span class="nc" id="L619">            } catch (NotFoundException e) {</span>
+<span class="nc bnc" id="L620" title="All 4 branches missed.">                if (task != null &amp;&amp; task.completed()) {</span>
+<span class="nc bnc" id="L621" title="All 2 branches missed.">                    assert task.id().asLong() &lt; 0L : task.id();</span>
+<span class="nc" id="L622">                    sleep(intervalMs);</span>
+<span class="nc" id="L623">                    return task;</span>
+                }
+<span class="nc" id="L625">                throw e;</span>
+<span class="nc" id="L626">            }</span>
+<span class="nc bnc" id="L627" title="All 2 branches missed.">            if (task.completed()) {</span>
+                // Wait for task result being set after status is completed
+<span class="nc" id="L629">                sleep(intervalMs);</span>
+<span class="nc" id="L630">                return task;</span>
+            }
+<span class="nc bnc" id="L632" title="All 2 branches missed.">            if (pass &gt;= passes) {</span>
+<span class="nc" id="L633">                break;</span>
+            }
+<span class="nc" id="L635">            sleep(intervalMs);</span>
+        }
+<span class="nc" id="L637">        throw new TimeoutException(String.format(</span>
+<span class="nc" id="L638">                  &quot;Task '%s' was not completed in %s seconds&quot;, id, seconds));</span>
+    }
+
+    @Override
+    public void waitUntilAllTasksCompleted(long seconds)
+                                           throws TimeoutException {
+<span class="nc" id="L644">        long passes = seconds * 1000 / QUERY_INTERVAL;</span>
+        int taskSize;
+<span class="nc" id="L646">        for (long pass = 0;; pass++) {</span>
+<span class="nc" id="L647">            taskSize = this.pendingTasks();</span>
+<span class="nc bnc" id="L648" title="All 2 branches missed.">            if (taskSize == 0) {</span>
+<span class="nc" id="L649">                sleep(QUERY_INTERVAL);</span>
+<span class="nc" id="L650">                return;</span>
+            }
+<span class="nc bnc" id="L652" title="All 2 branches missed.">            if (pass &gt;= passes) {</span>
+<span class="nc" id="L653">                break;</span>
+            }
+<span class="nc" id="L655">            sleep(QUERY_INTERVAL);</span>
+        }
+<span class="nc" id="L657">        throw new TimeoutException(String.format(</span>
+                  &quot;There are still %s incomplete tasks after %s seconds&quot;,
+<span class="nc" id="L659">                  taskSize, seconds));</span>
+    }
+
+    @Override
+    public void checkRequirement(String op) {
+<span class="nc" id="L664">        this.checkOnMasterNode(op);</span>
+<span class="nc" id="L665">    }</span>
+
+    private &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; queryTask(String key, Object value,
+                                                long limit, String page) {
+<span class="nc" id="L669">        return this.queryTask(ImmutableMap.of(key, value), limit, page);</span>
+    }
+
+    private &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; queryTask(Map&lt;String, Object&gt; conditions,
+                                                long limit, String page) {
+<span class="nc" id="L674">        return this.call(() -&gt; {</span>
+<span class="nc" id="L675">            ConditionQuery query = new ConditionQuery(HugeType.VERTEX);</span>
+<span class="nc bnc" id="L676" title="All 2 branches missed.">            if (page != null) {</span>
+<span class="nc" id="L677">                query.page(page);</span>
+            }
+<span class="nc" id="L679">            VertexLabel vl = this.graph().vertexLabel(P.TASK);</span>
+<span class="nc" id="L680">            query.eq(HugeKeys.LABEL, vl.id());</span>
+<span class="nc bnc" id="L681" title="All 2 branches missed.">            for (Map.Entry&lt;String, Object&gt; entry : conditions.entrySet()) {</span>
+<span class="nc" id="L682">                PropertyKey pk = this.graph().propertyKey(entry.getKey());</span>
+<span class="nc" id="L683">                query.query(Condition.eq(pk.id(), entry.getValue()));</span>
+<span class="nc" id="L684">            }</span>
+<span class="nc" id="L685">            query.showHidden(true);</span>
+<span class="nc bnc" id="L686" title="All 2 branches missed.">            if (limit != NO_LIMIT) {</span>
+<span class="nc" id="L687">                query.limit(limit);</span>
+            }
+<span class="nc" id="L689">            Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(query);</span>
+<span class="nc" id="L690">            Iterator&lt;HugeTask&lt;V&gt;&gt; tasks =</span>
+                    new MapperIterator&lt;&gt;(vertices, HugeTask::fromVertex);
+            // Convert iterator to list to avoid across thread tx accessed
+<span class="nc" id="L693">            return QueryResults.toList(tasks);</span>
+        });
+    }
+
+    private &lt;V&gt; Iterator&lt;HugeTask&lt;V&gt;&gt; queryTask(List&lt;Id&gt; ids) {
+<span class="nc" id="L698">        return this.call(() -&gt; {</span>
+<span class="nc" id="L699">            Object[] idArray = ids.toArray(new Id[0]);</span>
+<span class="nc" id="L700">            Iterator&lt;Vertex&gt; vertices = this.tx().queryVertices(idArray);</span>
+<span class="nc" id="L701">            Iterator&lt;HugeTask&lt;V&gt;&gt; tasks =</span>
+                    new MapperIterator&lt;&gt;(vertices, HugeTask::fromVertex);
+            // Convert iterator to list to avoid across thread tx accessed
+<span class="nc" id="L704">            return QueryResults.toList(tasks);</span>
+        });
+    }
+
+    private &lt;V&gt; V call(Runnable runnable) {
+<span class="nc" id="L709">        return this.call(Executors.callable(runnable, null));</span>
+    }
+
+    private &lt;V&gt; V call(Callable&lt;V&gt; callable) {
+<span class="nc bnc" id="L713" title="All 2 branches missed.">        assert !Thread.currentThread().getName().startsWith(</span>
+               &quot;task-db-worker&quot;) : &quot;can't call by itself&quot;;
+        try {
+            // Pass task context for db thread
+<span class="nc" id="L717">            callable = new ContextCallable&lt;&gt;(callable);</span>
+            // Ensure all db operations are executed in dbExecutor thread(s)
+<span class="nc" id="L719">            return this.taskDbExecutor.submit(callable).get();</span>
+<span class="nc" id="L720">        } catch (Throwable e) {</span>
+<span class="nc" id="L721">            throw new HugeException(&quot;Failed to update/query TaskStore: %s&quot;,</span>
+<span class="nc" id="L722">                                    e, e.toString());</span>
+        }
+    }
+
+    private void checkOnMasterNode(String op) {
+<span class="nc bnc" id="L727" title="All 2 branches missed.">        if (!this.serverManager().selfIsMaster()) {</span>
+<span class="nc" id="L728">            throw new HugeException(&quot;Can't %s task on non-master server&quot;, op);</span>
+        }
+<span class="nc" id="L730">    }</span>
+
+    private boolean supportsPaging() {
+<span class="nc" id="L733">        return this.graph.backendStoreFeatures().supportsQueryByPage();</span>
+    }
+
+    private static boolean sleep(long ms) {
+        try {
+<span class="nc" id="L738">            Thread.sleep(ms);</span>
+<span class="nc" id="L739">            return true;</span>
+<span class="nc" id="L740">        } catch (InterruptedException ignored) {</span>
+            // Ignore InterruptedException
+<span class="nc" id="L742">            return false;</span>
+        }
+    }
+
+    private static class TaskTransaction extends GraphTransaction {
+
+<span class="nc" id="L748">        public static final String TASK = P.TASK;</span>
+
+        public TaskTransaction(HugeGraphParams graph, BackendStore store) {
+<span class="nc" id="L751">            super(graph, store);</span>
+<span class="nc" id="L752">            this.autoCommit(true);</span>
+<span class="nc" id="L753">        }</span>
+
+        public HugeVertex constructVertex(HugeTask&lt;?&gt; task) {
+<span class="nc bnc" id="L756" title="All 2 branches missed.">            if (!this.graph().existsVertexLabel(TASK)) {</span>
+<span class="nc" id="L757">                throw new HugeException(&quot;Schema is missing for task(%s) '%s'&quot;,</span>
+<span class="nc" id="L758">                                        task.id(), task.name());</span>
+            }
+<span class="nc" id="L760">            return this.constructVertex(false, task.asArray());</span>
+        }
+
+        public void deleteIndex(HugeVertex vertex) {
+            // Delete the old record if exist
+<span class="nc" id="L765">            Iterator&lt;Vertex&gt; old = this.queryVertices(vertex.id());</span>
+<span class="nc" id="L766">            HugeVertex oldV = (HugeVertex) QueryResults.one(old);</span>
+<span class="nc bnc" id="L767" title="All 2 branches missed.">            if (oldV == null) {</span>
+<span class="nc" id="L768">                return;</span>
+            }
+<span class="nc" id="L770">            this.deleteIndexIfNeeded(oldV, vertex);</span>
+<span class="nc" id="L771">        }</span>
+
+        private boolean deleteIndexIfNeeded(HugeVertex oldV, HugeVertex newV) {
+<span class="nc bnc" id="L774" title="All 2 branches missed.">            if (!oldV.value(P.STATUS).equals(newV.value(P.STATUS))) {</span>
+                // Only delete vertex if index value changed else override it
+<span class="nc" id="L776">                this.updateIndex(this.indexLabel(P.STATUS).id(), oldV, true);</span>
+<span class="nc" id="L777">                return true;</span>
+            }
+<span class="nc" id="L779">            return false;</span>
+        }
+
+        public void initSchema() {
+<span class="nc bnc" id="L783" title="All 2 branches missed.">            if (this.existVertexLabel(TASK)) {</span>
+<span class="nc" id="L784">                return;</span>
+            }
+
+<span class="nc" id="L787">            HugeGraph graph = this.graph();</span>
+<span class="nc" id="L788">            String[] properties = this.initProperties();</span>
+
+            // Create vertex label '~task'
+<span class="nc" id="L791">            VertexLabel label = graph.schema().vertexLabel(TASK)</span>
+<span class="nc" id="L792">                                     .properties(properties)</span>
+<span class="nc" id="L793">                                     .useCustomizeNumberId()</span>
+<span class="nc" id="L794">                                     .nullableKeys(P.DESCRIPTION, P.CONTEXT,</span>
+                                                   P.UPDATE, P.INPUT, P.RESULT,
+                                                   P.DEPENDENCIES, P.SERVER)
+<span class="nc" id="L797">                                     .enableLabelIndex(true)</span>
+<span class="nc" id="L798">                                     .build();</span>
+<span class="nc" id="L799">            this.params().schemaTransaction().addVertexLabel(label);</span>
+
+            // Create index
+<span class="nc" id="L802">            this.createIndexLabel(label, P.STATUS);</span>
+<span class="nc" id="L803">        }</span>
+
+        private boolean existVertexLabel(String label) {
+<span class="nc" id="L806">            return this.params().schemaTransaction()</span>
+<span class="nc bnc" id="L807" title="All 2 branches missed.">                                .getVertexLabel(label) != null;</span>
+        }
+
+        private String[] initProperties() {
+<span class="nc" id="L811">            List&lt;String&gt; props = new ArrayList&lt;&gt;();</span>
+
+<span class="nc" id="L813">            props.add(createPropertyKey(P.TYPE));</span>
+<span class="nc" id="L814">            props.add(createPropertyKey(P.NAME));</span>
+<span class="nc" id="L815">            props.add(createPropertyKey(P.CALLABLE));</span>
+<span class="nc" id="L816">            props.add(createPropertyKey(P.DESCRIPTION));</span>
+<span class="nc" id="L817">            props.add(createPropertyKey(P.CONTEXT));</span>
+<span class="nc" id="L818">            props.add(createPropertyKey(P.STATUS, DataType.BYTE));</span>
+<span class="nc" id="L819">            props.add(createPropertyKey(P.PROGRESS, DataType.INT));</span>
+<span class="nc" id="L820">            props.add(createPropertyKey(P.CREATE, DataType.DATE));</span>
+<span class="nc" id="L821">            props.add(createPropertyKey(P.UPDATE, DataType.DATE));</span>
+<span class="nc" id="L822">            props.add(createPropertyKey(P.RETRIES, DataType.INT));</span>
+<span class="nc" id="L823">            props.add(createPropertyKey(P.INPUT, DataType.BLOB));</span>
+<span class="nc" id="L824">            props.add(createPropertyKey(P.RESULT, DataType.BLOB));</span>
+<span class="nc" id="L825">            props.add(createPropertyKey(P.DEPENDENCIES, DataType.LONG,</span>
+                                        Cardinality.SET));
+<span class="nc" id="L827">            props.add(createPropertyKey(P.SERVER));</span>
+
+<span class="nc" id="L829">            return props.toArray(new String[0]);</span>
+        }
+
+        private String createPropertyKey(String name) {
+<span class="nc" id="L833">            return this.createPropertyKey(name, DataType.TEXT);</span>
+        }
+
+        private String createPropertyKey(String name, DataType dataType) {
+<span class="nc" id="L837">            return this.createPropertyKey(name, dataType, Cardinality.SINGLE);</span>
+        }
+
+        private String createPropertyKey(String name, DataType dataType,
+                                         Cardinality cardinality) {
+<span class="nc" id="L842">            HugeGraph graph = this.graph();</span>
+<span class="nc" id="L843">            SchemaManager schema = graph.schema();</span>
+<span class="nc" id="L844">            PropertyKey propertyKey = schema.propertyKey(name)</span>
+<span class="nc" id="L845">                                            .dataType(dataType)</span>
+<span class="nc" id="L846">                                            .cardinality(cardinality)</span>
+<span class="nc" id="L847">                                            .build();</span>
+<span class="nc" id="L848">            this.params().schemaTransaction().addPropertyKey(propertyKey);</span>
+<span class="nc" id="L849">            return name;</span>
+        }
+
+        private IndexLabel createIndexLabel(VertexLabel label, String field) {
+<span class="nc" id="L853">            HugeGraph graph = this.graph();</span>
+<span class="nc" id="L854">            SchemaManager schema = graph.schema();</span>
+<span class="nc" id="L855">            String name = Hidden.hide(&quot;task-index-by-&quot; + field);</span>
+<span class="nc" id="L856">            IndexLabel indexLabel = schema.indexLabel(name)</span>
+<span class="nc" id="L857">                                          .on(HugeType.VERTEX_LABEL, TASK)</span>
+<span class="nc" id="L858">                                          .by(field)</span>
+<span class="nc" id="L859">                                          .build();</span>
+<span class="nc" id="L860">            this.params().schemaTransaction().addIndexLabel(label, indexLabel);</span>
+<span class="nc" id="L861">            return indexLabel;</span>
+        }
+
+        private IndexLabel indexLabel(String field) {
+<span class="nc" id="L865">            String name = Hidden.hide(&quot;task-index-by-&quot; + field);</span>
+<span class="nc" id="L866">            HugeGraph graph = this.graph();</span>
+<span class="nc" id="L867">            return graph.indexLabel(name);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

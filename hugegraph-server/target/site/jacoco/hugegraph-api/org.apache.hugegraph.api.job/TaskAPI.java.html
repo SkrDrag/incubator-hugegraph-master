@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>TaskAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.job</a> &gt; <span class="el_source">TaskAPI.java</span></div><h1>TaskAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.job;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import org.apache.groovy.util.Maps;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.RedirectFilter;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.page.PageInfo;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.task.HugeTask;
+import org.apache.hugegraph.task.TaskScheduler;
+import org.apache.hugegraph.task.TaskStatus;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.annotation.Timed;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotSupportedException;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Path(&quot;graphs/{graph}/tasks&quot;)
+@Singleton
+@Tag(name = &quot;TaskAPI&quot;)
+<span class="nc" id="L61">public class TaskAPI extends API {</span>
+
+<span class="nc" id="L63">    private static final Logger LOG = Log.logger(TaskAPI.class);</span>
+    private static final long NO_LIMIT = -1L;
+
+    public static final String ACTION_CANCEL = &quot;cancel&quot;;
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public Map&lt;String, Object&gt; list(@Context GraphManager manager,
+                                    @PathParam(&quot;graph&quot;) String graph,
+                                    @QueryParam(&quot;status&quot;) String status,
+                                    @QueryParam(&quot;ids&quot;) List&lt;Long&gt; ids,
+                                    @QueryParam(&quot;limit&quot;)
+                                    @DefaultValue(&quot;100&quot;) long limit,
+                                    @QueryParam(&quot;page&quot;) String page) {
+<span class="nc" id="L78">        LOG.debug(&quot;Graph [{}] list tasks with status {}, ids {}, &quot; +</span>
+<span class="nc" id="L79">                  &quot;limit {}, page {}&quot;, graph, status, ids, limit, page);</span>
+
+<span class="nc" id="L81">        TaskScheduler scheduler = graph(manager, graph).taskScheduler();</span>
+
+        Iterator&lt;HugeTask&lt;Object&gt;&gt; iter;
+
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (!ids.isEmpty()) {</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">            E.checkArgument(status == null,</span>
+                            &quot;Not support status when query task by ids, &quot; +
+                            &quot;but got status='%s'&quot;, status);
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            E.checkArgument(page == null,</span>
+                            &quot;Not support page when query task by ids, &quot; +
+                            &quot;but got page='%s'&quot;, page);
+            // Set limit to NO_LIMIT to ignore limit when query task by ids
+<span class="nc" id="L93">            limit = NO_LIMIT;</span>
+<span class="nc" id="L94">            List&lt;Id&gt; idList = ids.stream().map(IdGenerator::of)</span>
+<span class="nc" id="L95">                                          .collect(Collectors.toList());</span>
+<span class="nc" id="L96">            iter = scheduler.tasks(idList);</span>
+<span class="nc" id="L97">        } else {</span>
+<span class="nc bnc" id="L98" title="All 2 branches missed.">            if (status == null) {</span>
+<span class="nc" id="L99">                iter = scheduler.tasks(null, limit, page);</span>
+            } else {
+<span class="nc" id="L101">                iter = scheduler.tasks(parseStatus(status), limit, page);</span>
+            }
+        }
+
+<span class="nc" id="L105">        List&lt;Object&gt; tasks = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        while (iter.hasNext()) {</span>
+<span class="nc" id="L107">            tasks.add(iter.next().asMap(false));</span>
+        }
+<span class="nc bnc" id="L109" title="All 4 branches missed.">        if (limit != NO_LIMIT &amp;&amp; tasks.size() &gt; limit) {</span>
+<span class="nc" id="L110">            tasks = tasks.subList(0, (int) limit);</span>
+        }
+
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        if (page == null) {</span>
+<span class="nc" id="L114">            return Maps.of(&quot;tasks&quot;, tasks);</span>
+        } else {
+<span class="nc" id="L116">            return Maps.of(&quot;tasks&quot;, tasks, &quot;page&quot;, PageInfo.pageInfo(iter));</span>
+        }
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public Map&lt;String, Object&gt; get(@Context GraphManager manager,
+                                   @PathParam(&quot;graph&quot;) String graph,
+                                   @PathParam(&quot;id&quot;) long id) {
+<span class="nc" id="L127">        LOG.debug(&quot;Graph [{}] get task: {}&quot;, graph, id);</span>
+
+<span class="nc" id="L129">        TaskScheduler scheduler = graph(manager, graph).taskScheduler();</span>
+<span class="nc" id="L130">        return scheduler.task(IdGenerator.of(id)).asMap();</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @RedirectFilter.RedirectMasterRole
+    public void delete(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @PathParam(&quot;id&quot;) long id) {
+<span class="nc" id="L140">        LOG.debug(&quot;Graph [{}] delete task: {}&quot;, graph, id);</span>
+
+<span class="nc" id="L142">        TaskScheduler scheduler = graph(manager, graph).taskScheduler();</span>
+<span class="nc" id="L143">        HugeTask&lt;?&gt; task = scheduler.delete(IdGenerator.of(id));</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">        E.checkArgument(task != null, &quot;There is no task with id '%s'&quot;, id);</span>
+<span class="nc" id="L145">    }</span>
+
+    @PUT
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Status(Status.ACCEPTED)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RedirectFilter.RedirectMasterRole
+    public Map&lt;String, Object&gt; update(@Context GraphManager manager,
+                                      @PathParam(&quot;graph&quot;) String graph,
+                                      @PathParam(&quot;id&quot;) long id,
+                                      @QueryParam(&quot;action&quot;) String action) {
+<span class="nc" id="L157">        LOG.debug(&quot;Graph [{}] cancel task: {}&quot;, graph, id);</span>
+
+<span class="nc bnc" id="L159" title="All 2 branches missed.">        if (!ACTION_CANCEL.equals(action)) {</span>
+<span class="nc" id="L160">            throw new NotSupportedException(String.format(</span>
+                      &quot;Not support action '%s'&quot;, action));
+        }
+
+<span class="nc" id="L164">        TaskScheduler scheduler = graph(manager, graph).taskScheduler();</span>
+<span class="nc" id="L165">        HugeTask&lt;?&gt; task = scheduler.task(IdGenerator.of(id));</span>
+<span class="nc bnc" id="L166" title="All 4 branches missed.">        if (!task.completed() &amp;&amp; !task.cancelling()) {</span>
+<span class="nc" id="L167">            scheduler.cancel(task);</span>
+<span class="nc bnc" id="L168" title="All 4 branches missed.">            if (task.cancelling() || task.cancelled()) {</span>
+<span class="nc" id="L169">                return task.asMap();</span>
+            }
+        }
+
+<span class="nc bnc" id="L173" title="All 4 branches missed.">        assert task.completed() || task.cancelling();</span>
+<span class="nc" id="L174">        throw new BadRequestException(String.format(</span>
+                  &quot;Can't cancel task '%s' which is completed or cancelling&quot;,
+<span class="nc" id="L176">                  id));</span>
+    }
+
+    private static TaskStatus parseStatus(String status) {
+        try {
+<span class="nc" id="L181">            return TaskStatus.valueOf(status.toUpperCase());</span>
+<span class="nc" id="L182">        } catch (Exception e) {</span>
+<span class="nc" id="L183">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;Status value must be in %s, but got '%s'&quot;,
+<span class="nc" id="L185">                      Arrays.asList(TaskStatus.values()), status));</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

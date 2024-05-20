@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>SubgraphStatAlgorithm.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm</a> &gt; <span class="el_source">SubgraphStatAlgorithm.java</span></div><h1>SubgraphStatAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm;
+
+import java.util.Iterator;
+import java.util.Map;
+
+import org.apache.commons.configuration2.PropertiesConfiguration;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.util.ParameterUtil;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.StandardHugeGraph;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.task.HugeTask;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.traversal.optimize.HugeScriptTraversal;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.Log;
+import com.google.common.collect.ImmutableMap;
+
+<span class="nc" id="L43">public class SubgraphStatAlgorithm extends AbstractAlgorithm {</span>
+
+    public static final String KEY_SUBGRAPH = &quot;subgraph&quot;;
+    public static final String KEY_COPY_SCHEMA = &quot;copy_schema&quot;;
+
+<span class="nc" id="L48">    private static final Logger LOG = Log.logger(SubgraphStatAlgorithm.class);</span>
+
+    @Override
+    public String name() {
+<span class="nc" id="L52">        return &quot;subgraph_stat&quot;;</span>
+    }
+
+    @Override
+    public String category() {
+<span class="nc" id="L57">        return CATEGORY_AGGR;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L62">        subgraph(parameters);</span>
+<span class="nc" id="L63">    }</span>
+
+    @Override
+    public Object call(UserJob&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L67">        HugeGraph graph = this.createTempGraph(job);</span>
+<span class="nc" id="L68">        try (Traverser traverser = new Traverser(job)) {</span>
+<span class="nc" id="L69">            this.initGraph(job.graph(), graph,</span>
+<span class="nc" id="L70">                           subgraph(parameters), copySchema(parameters));</span>
+<span class="nc" id="L71">            UserJob&lt;Object&gt; tmpJob = new TempJob&lt;&gt;(graph, job, job.task());</span>
+<span class="nc" id="L72">            return traverser.subgraphStat(tmpJob);</span>
+        } finally {
+            // Use clearBackend instead of truncateBackend due to no server-id
+<span class="nc" id="L75">            graph.clearBackend();</span>
+            try {
+<span class="nc" id="L77">                graph.close();</span>
+<span class="nc" id="L78">            } catch (Throwable e) {</span>
+<span class="nc" id="L79">                LOG.warn(&quot;Can't close subgraph_stat temp graph {}: {}&quot;,</span>
+<span class="nc" id="L80">                         graph, e.getMessage(), e);</span>
+<span class="nc" id="L81">            }</span>
+        }
+    }
+
+    private HugeGraph createTempGraph(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L86">        Id id = job.task().id();</span>
+<span class="nc" id="L87">        String name = &quot;tmp_&quot; + id;</span>
+<span class="nc" id="L88">        PropertiesConfiguration config = new PropertiesConfiguration();</span>
+<span class="nc" id="L89">        config.setProperty(CoreOptions.BACKEND.name(), &quot;memory&quot;);</span>
+<span class="nc" id="L90">        config.setProperty(CoreOptions.STORE.name(), name);</span>
+        /*
+         * NOTE: this temp graph don't need to init backend because no task info
+         * required, also not set started because no task to be scheduled.
+         */
+<span class="nc" id="L95">        return new StandardHugeGraph(new HugeConfig(config));</span>
+    }
+
+    @SuppressWarnings(&quot;resource&quot;)
+    private void initGraph(HugeGraph parent, HugeGraph graph,
+                           String script, boolean copySchema) {
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (copySchema) {</span>
+<span class="nc" id="L102">            graph.schema().copyFrom(parent.schema());</span>
+        }
+<span class="nc" id="L104">        new HugeScriptTraversal&lt;&gt;(graph.traversal(), &quot;gremlin-groovy&quot;,</span>
+<span class="nc" id="L105">                                  script, ImmutableMap.of(),</span>
+<span class="nc" id="L106">                                  ImmutableMap.of()).iterate();</span>
+<span class="nc" id="L107">        graph.tx().commit();</span>
+<span class="nc" id="L108">    }</span>
+
+    protected static String subgraph(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L111">        Object subgraph = parameters.get(KEY_SUBGRAPH);</span>
+<span class="nc bnc" id="L112" title="All 2 branches missed.">        E.checkArgument(subgraph != null,</span>
+                        &quot;Must pass parameter '%s'&quot;, KEY_SUBGRAPH);
+<span class="nc" id="L114">        E.checkArgument(subgraph instanceof String,</span>
+                        &quot;Invalid parameter '%s', expect a String, but got %s&quot;,
+<span class="nc" id="L116">                        KEY_SUBGRAPH, subgraph.getClass().getSimpleName());</span>
+<span class="nc" id="L117">        return (String) subgraph;</span>
+    }
+
+    protected static boolean copySchema(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_COPY_SCHEMA)) {</span>
+<span class="nc" id="L122">            return false;</span>
+        }
+<span class="nc" id="L124">        return ParameterUtil.parameterBoolean(parameters, KEY_COPY_SCHEMA);</span>
+    }
+
+    private static class Traverser extends AlgoTraverser {
+
+<span class="nc" id="L129">        private static final Map&lt;String, Object&gt; PARAMS = ImmutableMap.of(&quot;depth&quot;, 10L,</span>
+<span class="nc" id="L130">                                                                          &quot;degree&quot;, -1L,</span>
+<span class="nc" id="L131">                                                                          &quot;sample&quot;, -1L,</span>
+<span class="nc" id="L132">                                                                          &quot;top&quot;, -1L /* sorted */,</span>
+<span class="nc" id="L133">                                                                          &quot;workers&quot;, 0);</span>
+
+        public Traverser(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L136">            super(job);</span>
+<span class="nc" id="L137">        }</span>
+
+        public Object subgraphStat(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L140">            AlgorithmPool pool = AlgorithmPool.instance();</span>
+<span class="nc" id="L141">            Map&lt;String, Object&gt; results = InsertionOrderUtil.newMap();</span>
+
+<span class="nc" id="L143">            GraphTraversalSource g = job.graph().traversal();</span>
+<span class="nc" id="L144">            results.put(&quot;vertices_count&quot;, g.V().count().next());</span>
+<span class="nc" id="L145">            results.put(&quot;edges_count&quot;, g.E().count().next());</span>
+
+<span class="nc" id="L147">            Algorithm algo = pool.get(&quot;degree_centrality&quot;);</span>
+<span class="nc" id="L148">            Map&lt;String, Object&gt; parameters = ImmutableMap.copyOf(PARAMS);</span>
+<span class="nc" id="L149">            results.put(&quot;degrees&quot;, algo.call(job, parameters));</span>
+
+<span class="nc" id="L151">            algo = pool.get(&quot;stress_centrality&quot;);</span>
+<span class="nc" id="L152">            results.put(&quot;stress&quot;, algo.call(job, parameters));</span>
+
+<span class="nc" id="L154">            algo = pool.get(&quot;betweenness_centrality&quot;);</span>
+<span class="nc" id="L155">            results.put(&quot;betweenness&quot;, algo.call(job, parameters));</span>
+
+<span class="nc" id="L157">            algo = pool.get(&quot;eigenvector_centrality&quot;);</span>
+<span class="nc" id="L158">            results.put(&quot;eigenvectors&quot;, algo.call(job, parameters));</span>
+
+<span class="nc" id="L160">            algo = pool.get(&quot;closeness_centrality&quot;);</span>
+<span class="nc" id="L161">            results.put(&quot;closeness&quot;, algo.call(job, parameters));</span>
+
+<span class="nc" id="L163">            results.put(&quot;page_ranks&quot;, pageRanks(job));</span>
+
+<span class="nc" id="L165">            algo = pool.get(&quot;cluster_coefficient&quot;);</span>
+<span class="nc" id="L166">            results.put(&quot;cluster_coefficient&quot;, algo.call(job, parameters));</span>
+
+<span class="nc" id="L168">            algo = pool.get(&quot;rings&quot;);</span>
+<span class="nc" id="L169">            parameters = ImmutableMap.&lt;String, Object&gt;builder()</span>
+<span class="nc" id="L170">                                     .putAll(PARAMS)</span>
+<span class="nc" id="L171">                                     .put(&quot;count_only&quot;, true)</span>
+<span class="nc" id="L172">                                     .put(&quot;each_limit&quot;, NO_LIMIT)</span>
+<span class="nc" id="L173">                                     .put(&quot;limit&quot;, NO_LIMIT)</span>
+<span class="nc" id="L174">                                     .build();</span>
+<span class="nc" id="L175">            results.put(&quot;rings&quot;, algo.call(job, parameters));</span>
+
+<span class="nc" id="L177">            return results;</span>
+        }
+
+        private Map&lt;Object, Double&gt; pageRanks(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L181">            Algorithm algo = AlgorithmPool.instance().get(&quot;page_rank&quot;);</span>
+<span class="nc" id="L182">            algo.call(job, ImmutableMap.of(&quot;alpha&quot;, 0.15));</span>
+
+            // Collect page ranks
+<span class="nc" id="L185">            Map&lt;Object, Double&gt; ranks = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L186">            Iterator&lt;Vertex&gt; vertices = job.graph().vertices();</span>
+<span class="nc bnc" id="L187" title="All 2 branches missed.">            while (vertices.hasNext()) {</span>
+<span class="nc" id="L188">                Vertex vertex = vertices.next();</span>
+<span class="nc" id="L189">                ranks.put(vertex.id(), vertex.value(R_RANK));</span>
+<span class="nc" id="L190">            }</span>
+<span class="nc" id="L191">            ranks = HugeTraverser.topN(ranks, true, NO_LIMIT);</span>
+<span class="nc" id="L192">            return ranks;</span>
+        }
+    }
+
+    private static class TempJob&lt;V&gt; extends UserJob&lt;V&gt; {
+
+        private final UserJob&lt;V&gt; parent;
+
+<span class="nc" id="L200">        public TempJob(HugeGraph graph, UserJob&lt;V&gt; job, HugeTask&lt;V&gt; task) {</span>
+<span class="nc" id="L201">            this.graph(graph);</span>
+<span class="nc" id="L202">            this.task(task);</span>
+<span class="nc" id="L203">            this.parent = job;</span>
+<span class="nc" id="L204">        }</span>
+
+        @Override
+        public String type() {
+<span class="nc" id="L208">            return &quot;temp&quot;;</span>
+        }
+
+        @Override
+        public V execute() throws Exception {
+<span class="nc" id="L213">            return null;</span>
+        }
+
+        @Override
+        public void updateProgress(int progress) {
+<span class="nc" id="L218">            this.parent.updateProgress(progress);</span>
+<span class="nc" id="L219">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

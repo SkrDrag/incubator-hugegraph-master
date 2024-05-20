@@ -1,0 +1,516 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RamCache.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.cache</a> &gt; <span class="el_source">RamCache.java</span></div><h1>RamCache.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.cache;
+
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.Lock;
+import java.util.function.Consumer;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.concurrent.KeyLock;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.util.E;
+
+<span class="nc" id="L33">public class RamCache extends AbstractCache&lt;Id, Object&gt; {</span>
+
+    // Implement LRU cache
+    private final ConcurrentMap&lt;Id, LinkNode&lt;Id, Object&gt;&gt; map;
+    private final LinkedQueueNonBigLock&lt;Id, Object&gt; queue;
+
+    private final KeyLock keyLock;
+    private final long halfCapacity;
+
+    public RamCache() {
+<span class="nc" id="L43">        this(DEFAULT_SIZE);</span>
+<span class="nc" id="L44">    }</span>
+
+    public RamCache(long capacity) {
+<span class="nc" id="L47">        super(capacity);</span>
+
+<span class="nc bnc" id="L49" title="All 2 branches missed.">        if (capacity &lt; 0L) {</span>
+<span class="nc" id="L50">            capacity = 0L;</span>
+        }
+<span class="nc" id="L52">        this.keyLock = new KeyLock();</span>
+<span class="nc" id="L53">        this.halfCapacity = capacity &gt;&gt; 1;</span>
+
+<span class="nc bnc" id="L55" title="All 2 branches missed.">        long initialCapacity = capacity &gt;= MB ? capacity &gt;&gt; 10 : 256;</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">        if (initialCapacity &gt; MAX_INIT_CAP) {</span>
+<span class="nc" id="L57">            initialCapacity = MAX_INIT_CAP;</span>
+        }
+
+<span class="nc" id="L60">        this.map = new ConcurrentHashMap&lt;&gt;((int) initialCapacity);</span>
+<span class="nc" id="L61">        this.queue = new LinkedQueueNonBigLock&lt;&gt;();</span>
+<span class="nc" id="L62">    }</span>
+
+    @Override
+    @Watched(prefix = &quot;ramcache&quot;)
+    protected final Object access(Id id) {
+<span class="nc bnc" id="L67" title="All 2 branches missed.">        assert id != null;</span>
+
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (this.map.size() &lt;= this.halfCapacity) {</span>
+<span class="nc" id="L70">            LinkNode&lt;Id, Object&gt; node = this.map.get(id);</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">            if (node == null) {</span>
+<span class="nc" id="L72">                return null;</span>
+            }
+<span class="nc bnc" id="L74" title="All 2 branches missed.">            assert id.equals(node.key());</span>
+<span class="nc" id="L75">            return node.value();</span>
+        }
+
+        // Avoid to catch lock if cache missed
+<span class="nc bnc" id="L79" title="All 2 branches missed.">        if (!this.containsKey(id)) {</span>
+<span class="nc" id="L80">            return null;</span>
+        }
+
+<span class="nc" id="L83">        final Lock lock = this.keyLock.lock(id);</span>
+        try {
+            // Maybe the id removed by other threads and returned null value
+<span class="nc" id="L86">            LinkNode&lt;Id, Object&gt; node = this.map.get(id);</span>
+<span class="nc bnc" id="L87" title="All 2 branches missed.">            if (node == null) {</span>
+<span class="nc" id="L88">                return null;</span>
+            }
+
+            // NOTE: update the queue only if the size &gt; capacity/2
+<span class="nc bnc" id="L92" title="All 2 branches missed.">            if (this.map.size() &gt; this.halfCapacity) {</span>
+                // Move the node from mid to tail
+<span class="nc bnc" id="L94" title="All 2 branches missed.">                if (this.queue.remove(node) == null) {</span>
+                    // The node may be removed by others through dequeue()
+<span class="nc" id="L96">                    return null;</span>
+                }
+<span class="nc" id="L98">                this.queue.enqueue(node);</span>
+            }
+
+<span class="nc bnc" id="L101" title="All 2 branches missed.">            assert id.equals(node.key());</span>
+<span class="nc" id="L102">            return node.value();</span>
+        } finally {
+<span class="nc" id="L104">            lock.unlock();</span>
+        }
+    }
+
+    @Override
+    @Watched(prefix = &quot;ramcache&quot;)
+    protected final boolean write(Id id, Object value, long timeOffset) {
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        assert id != null;</span>
+<span class="nc" id="L112">        long capacity = this.capacity();</span>
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        assert capacity &gt; 0;</span>
+
+<span class="nc" id="L115">        final Lock lock = this.keyLock.lock(id);</span>
+        try {
+            // The cache is full
+<span class="nc" id="L118">            this.removeOldestIfCacheFull(id, capacity);</span>
+
+            // Remove the old node if exists
+<span class="nc" id="L121">            LinkNode&lt;Id, Object&gt; node = this.map.get(id);</span>
+<span class="nc bnc" id="L122" title="All 2 branches missed.">            if (node != null) {</span>
+<span class="nc" id="L123">                this.queue.remove(node);</span>
+            }
+
+            // Add the new item to tail of the queue, then map it
+<span class="nc" id="L127">            this.map.put(id, this.queue.enqueue(id, value, timeOffset));</span>
+<span class="nc" id="L128">            return true;</span>
+        } finally {
+<span class="nc" id="L130">            lock.unlock();</span>
+        }
+    }
+
+    @Override
+    @Watched(prefix = &quot;ramcache&quot;)
+    protected final void remove(Id id) {
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        if (id == null) {</span>
+<span class="nc" id="L138">            return;</span>
+        }
+
+<span class="nc" id="L141">        final Lock lock = this.keyLock.lock(id);</span>
+        try {
+            /*
+             * Remove the id from map and queue
+             * NOTE: it maybe return null if other threads have removed the id
+             */
+<span class="nc" id="L147">            LinkNode&lt;Id, Object&gt; node = this.map.remove(id);</span>
+<span class="nc bnc" id="L148" title="All 2 branches missed.">            if (node != null) {</span>
+<span class="nc" id="L149">                this.queue.remove(node);</span>
+            }
+        } finally {
+<span class="nc" id="L152">            lock.unlock();</span>
+        }
+<span class="nc" id="L154">    }</span>
+
+    @Override
+    protected Iterator&lt;CacheNode&lt;Id, Object&gt;&gt; nodes() {
+<span class="nc" id="L158">        Iterator&lt;LinkNode&lt;Id, Object&gt;&gt; iter = this.map.values().iterator();</span>
+        @SuppressWarnings({ &quot;unchecked&quot;, &quot;rawtypes&quot; })
+<span class="nc" id="L160">        Iterator&lt;CacheNode&lt;Id, Object&gt;&gt; iterSuper = (Iterator) iter;</span>
+<span class="nc" id="L161">        return iterSuper;</span>
+    }
+
+    @Override
+    public boolean containsKey(Id id) {
+<span class="nc" id="L166">        return this.map.containsKey(id);</span>
+    }
+
+    @Watched(prefix = &quot;ramcache&quot;)
+    @Override
+    public void traverse(Consumer&lt;Object&gt; consumer) {
+<span class="nc" id="L172">        E.checkNotNull(consumer, &quot;consumer&quot;);</span>
+        // NOTE: forEach is 20% faster than for-in with ConcurrentHashMap
+<span class="nc" id="L174">        this.map.values().forEach(node -&gt; consumer.accept(node.value()));</span>
+<span class="nc" id="L175">    }</span>
+
+    @Watched(prefix = &quot;ramcache&quot;)
+    @Override
+    public void clear() {
+        // TODO: synchronized
+<span class="nc bnc" id="L181" title="All 4 branches missed.">        if (this.capacity() &lt;= 0 || this.map.isEmpty()) {</span>
+<span class="nc" id="L182">            return;</span>
+        }
+<span class="nc" id="L184">        this.map.clear();</span>
+<span class="nc" id="L185">        this.queue.clear();</span>
+<span class="nc" id="L186">    }</span>
+
+    @Override
+    public long size() {
+<span class="nc" id="L190">        return this.map.size();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L195">        return this.map.toString();</span>
+    }
+
+    private void removeOldestIfCacheFull(Id id, long capacity) {
+<span class="nc bnc" id="L199" title="All 2 branches missed.">        while (this.map.size() &gt;= capacity) {</span>
+            /*
+             * Remove the oldest from the queue
+             * NOTE: it maybe return null if someone else (that's other
+             * threads) are doing dequeue() and the queue may be empty.
+             */
+<span class="nc" id="L205">            LinkNode&lt;Id, Object&gt; removed = this.queue.dequeue();</span>
+<span class="nc bnc" id="L206" title="All 2 branches missed.">            if (removed == null) {</span>
+                /*
+                 * If at this time someone add some new items, these will
+                 * be cleared in the map, but still stay in the queue, so
+                 * the queue will have some more nodes than the map.
+                 */
+<span class="nc" id="L212">                this.map.clear();</span>
+<span class="nc" id="L213">                break;</span>
+            }
+            /*
+             * Remove the oldest from the map
+             * NOTE: it maybe return null if other threads are doing remove
+             */
+<span class="nc" id="L219">            this.map.remove(removed.key());</span>
+<span class="nc bnc" id="L220" title="All 2 branches missed.">            if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L221">                LOG.debug(&quot;RamCache replaced '{}' with '{}' (capacity={})&quot;,</span>
+<span class="nc" id="L222">                          removed.key(), id, capacity);</span>
+            }
+            /*
+             * Release the object
+             * NOTE: we can't reuse the removed node due to someone else
+             * may access the node (will do remove() -&gt; enqueue())
+             */
+<span class="nc" id="L229">            removed = null;</span>
+<span class="nc" id="L230">        }</span>
+<span class="nc" id="L231">    }</span>
+
+    private static final class LinkNode&lt;K, V&gt; extends CacheNode&lt;K, V&gt; {
+
+        private LinkNode&lt;K, V&gt; prev;
+        private LinkNode&lt;K, V&gt; next;
+
+        public LinkNode(K key, V value) {
+<span class="nc" id="L239">            this(key, value, 0L);</span>
+<span class="nc" id="L240">        }</span>
+
+        public LinkNode(K key, V value, long timeOffset) {
+<span class="nc" id="L243">            super(key, value, timeOffset);</span>
+<span class="nc" id="L244">            this.prev = this.next = null;</span>
+<span class="nc" id="L245">        }</span>
+
+        @Override
+        public boolean equals(Object obj) {
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            if (!(obj instanceof LinkNode)) {</span>
+<span class="nc" id="L250">                return false;</span>
+            }
+            @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L253">            LinkNode&lt;K, V&gt; other = (LinkNode&lt;K, V&gt;) obj;</span>
+<span class="nc" id="L254">            return this.key().equals(other.key());</span>
+        }
+
+        public int hashCode() {
+<span class="nc" id="L258">            return this.key().hashCode();</span>
+        }
+    }
+
+<span class="nc" id="L262">    private static final class LinkedQueueNonBigLock&lt;K, V&gt; {</span>
+
+        private final KeyLock keyLock;
+        private final LinkNode&lt;K, V&gt; empty;
+        private final LinkNode&lt;K, V&gt; head;
+        private final LinkNode&lt;K, V&gt; rear;
+        // private volatile long size;
+
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L271">        public LinkedQueueNonBigLock() {</span>
+<span class="nc" id="L272">            this.keyLock = new KeyLock();</span>
+<span class="nc" id="L273">            this.empty = new LinkNode&lt;&gt;((K) &quot;&lt;empty&gt;&quot;, null);</span>
+<span class="nc" id="L274">            this.head = new LinkNode&lt;&gt;((K) &quot;&lt;head&gt;&quot;, null);</span>
+<span class="nc" id="L275">            this.rear = new LinkNode&lt;&gt;((K) &quot;&lt;rear&gt;&quot;, null);</span>
+
+<span class="nc" id="L277">            this.reset();</span>
+<span class="nc" id="L278">        }</span>
+
+        /**
+         * Reset the head node and rear node
+         * NOTE:
+         *  only called by LinkedQueueNonBigLock() without lock
+         *  or called by clear() with lock(head, rear)
+         */
+        private void reset() {
+<span class="nc" id="L287">            this.head.prev = this.empty;</span>
+<span class="nc" id="L288">            this.head.next = this.rear;</span>
+
+<span class="nc" id="L290">            this.rear.prev = this.head;</span>
+<span class="nc" id="L291">            this.rear.next = this.empty;</span>
+
+<span class="nc bnc" id="L293" title="All 2 branches missed.">            assert this.head.next == this.rear;</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">            assert this.rear.prev == this.head;</span>
+<span class="nc" id="L295">        }</span>
+
+        /**
+         * Dump keys of all nodes in this queue (just for debug)
+         */
+        private List&lt;K&gt; dumpKeys() {
+<span class="nc" id="L301">            List&lt;K&gt; keys = new LinkedList&lt;&gt;();</span>
+<span class="nc" id="L302">            LinkNode&lt;K, V&gt; node = this.head.next;</span>
+<span class="nc bnc" id="L303" title="All 4 branches missed.">            while (node != this.rear &amp;&amp; node != this.empty) {</span>
+<span class="nc bnc" id="L304" title="All 2 branches missed.">                assert node != null;</span>
+<span class="nc" id="L305">                keys.add(node.key());</span>
+<span class="nc" id="L306">                node = node.next;</span>
+            }
+<span class="nc" id="L308">            return keys;</span>
+        }
+
+        /**
+         * Check whether a key not in this queue (just for debug)
+         */
+        @SuppressWarnings(&quot;unused&quot;)
+        private boolean checkNotInQueue(K key) {
+<span class="nc" id="L316">            List&lt;K&gt; keys = this.dumpKeys();</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">            if (keys.contains(key)) {</span>
+<span class="nc" id="L318">                throw new RuntimeException(String.format(</span>
+                          &quot;Expect %s should be not in %s&quot;, key, keys));
+            }
+<span class="nc" id="L321">            return true;</span>
+        }
+
+        /**
+         * Check whether there is circular reference (just for debug)
+         * NOTE: but it is important to note that this is only key check
+         * rather than pointer check.
+         */
+        @SuppressWarnings(&quot;unused&quot;)
+        private boolean checkPrevNotInNext(LinkNode&lt;K, V&gt; self) {
+<span class="nc" id="L331">            LinkNode&lt;K, V&gt; prev = self.prev;</span>
+<span class="nc bnc" id="L332" title="All 2 branches missed.">            if (prev.key() == null) {</span>
+<span class="nc bnc" id="L333" title="All 4 branches missed.">                assert prev == this.head || prev == this.empty : prev;</span>
+<span class="nc" id="L334">                return true;</span>
+            }
+<span class="nc" id="L336">            List&lt;K&gt; keys = this.dumpKeys();</span>
+<span class="nc" id="L337">            int prevPos = keys.indexOf(prev.key());</span>
+<span class="nc" id="L338">            int selfPos = keys.indexOf(self.key());</span>
+<span class="nc bnc" id="L339" title="All 4 branches missed.">            if (prevPos &gt; selfPos &amp;&amp; selfPos != -1) {</span>
+<span class="nc" id="L340">                throw new RuntimeException(String.format(</span>
+                          &quot;Expect %s should be before %s, actual %s&quot;,
+<span class="nc" id="L342">                          prev.key(), self.key(), keys));</span>
+            }
+<span class="nc" id="L344">            return true;</span>
+        }
+
+        private List&lt;Lock&gt; lock(Object... nodes) {
+<span class="nc" id="L348">            return this.keyLock.lockAll(nodes);</span>
+        }
+
+        private List&lt;Lock&gt; lock(Object node1, Object node2) {
+<span class="nc" id="L352">            return this.keyLock.lockAll(node1, node2);</span>
+        }
+
+        private void unlock(List&lt;Lock&gt; locks) {
+<span class="nc" id="L356">            this.keyLock.unlockAll(locks);</span>
+<span class="nc" id="L357">        }</span>
+
+        /**
+         * Clear the queue
+         */
+        public void clear() {
+<span class="nc bnc" id="L363" title="All 2 branches missed.">            assert this.rear.prev != null : this.head.next;</span>
+
+            while (true) {
+                /*
+                 * If someone is removing the last node by remove(),
+                 * it will update the rear.prev, so we should lock it.
+                 */
+<span class="nc" id="L370">                LinkNode&lt;K, V&gt; last = this.rear.prev;</span>
+
+<span class="nc" id="L372">                List&lt;Lock&gt; locks = this.lock(this.head, last, this.rear);</span>
+                try {
+<span class="nc bnc" id="L374" title="All 2 branches missed.">                    if (last != this.rear.prev) {</span>
+                        // The rear.prev has changed, try to get lock again
+                        continue;
+                    }
+<span class="nc" id="L378">                    this.reset();</span>
+                } finally {
+<span class="nc" id="L380">                    this.unlock(locks);</span>
+                }
+<span class="nc" id="L382">                return;</span>
+            }
+        }
+
+        /**
+         * Add an item with key-value to the queue
+         */
+        public LinkNode&lt;K, V&gt; enqueue(K key, V value, long timeOffset) {
+<span class="nc" id="L390">            return this.enqueue(new LinkNode&lt;&gt;(key, value, timeOffset));</span>
+        }
+
+        /**
+         * Add a node to tail of the queue
+         */
+        public LinkNode&lt;K, V&gt; enqueue(LinkNode&lt;K, V&gt; node) {
+<span class="nc bnc" id="L397" title="All 2 branches missed.">            assert node != null;</span>
+<span class="nc bnc" id="L398" title="All 4 branches missed.">            assert node.prev == null || node.prev == this.empty;</span>
+<span class="nc bnc" id="L399" title="All 4 branches missed.">            assert node.next == null || node.next == this.empty;</span>
+
+            while (true) {
+<span class="nc" id="L402">                LinkNode&lt;K, V&gt; last = this.rear.prev;</span>
+<span class="nc bnc" id="L403" title="All 2 branches missed.">                assert last != this.empty : last;</span>
+
+                // TODO: should we lock the new `node`?
+<span class="nc" id="L406">                List&lt;Lock&gt; locks = this.lock(last, this.rear);</span>
+                try {
+<span class="nc bnc" id="L408" title="All 2 branches missed.">                    if (last != this.rear.prev) {</span>
+                        // The rear.prev has changed, try to get lock again
+                        continue;
+                    }
+
+                    /*
+                     * Link the node to the `rear` before to the `last` if we
+                     * have not locked the `node` itself, because dumpKeys()
+                     * may get the new node with next=null.
+                     * TODO: it also depends on memory barrier.
+                     */
+
+                    // Build the link between `node` and the `rear`
+<span class="nc" id="L421">                    node.next = this.rear;</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">                    assert this.rear.prev == last : this.rear.prev;</span>
+<span class="nc" id="L423">                    this.rear.prev = node;</span>
+
+                    // Build the link between `last` and `node`
+<span class="nc" id="L426">                    node.prev = last;</span>
+<span class="nc" id="L427">                    last.next = node;</span>
+
+<span class="nc" id="L429">                    return node;</span>
+                } finally {
+<span class="nc" id="L431">                    this.unlock(locks);</span>
+                }
+            }
+        }
+
+        /**
+         * Remove a node from head of the queue
+         */
+        public LinkNode&lt;K, V&gt; dequeue() {
+            while (true) {
+<span class="nc" id="L441">                LinkNode&lt;K, V&gt; first = this.head.next;</span>
+<span class="nc bnc" id="L442" title="All 2 branches missed.">                if (first == this.rear) {</span>
+                    // Empty queue
+<span class="nc" id="L444">                    return null;</span>
+                }
+
+<span class="nc" id="L447">                List&lt;Lock&gt; locks = this.lock(this.head, first);</span>
+                try {
+<span class="nc bnc" id="L449" title="All 2 branches missed.">                    if (first != this.head.next) {</span>
+                        // The head.next has changed, try to get lock again
+                        continue;
+                    }
+
+                    // Break the link between the `head` and `first`
+<span class="nc bnc" id="L455" title="All 4 branches missed.">                    assert first.next != null &amp;&amp; first.next != this.empty;</span>
+<span class="nc" id="L456">                    this.head.next = first.next;</span>
+<span class="nc" id="L457">                    first.next.prev = this.head;</span>
+
+                    // Clear the links of the `first` node
+<span class="nc" id="L460">                    first.prev = this.empty;</span>
+<span class="nc" id="L461">                    first.next = this.empty;</span>
+
+<span class="nc" id="L463">                    return first;</span>
+                } finally {
+<span class="nc" id="L465">                    this.unlock(locks);</span>
+                }
+            }
+        }
+
+        /**
+         * Remove a specified node from the queue
+         */
+        public LinkNode&lt;K, V&gt; remove(LinkNode&lt;K, V&gt; node) {
+<span class="nc bnc" id="L474" title="All 2 branches missed.">            assert node != this.empty;</span>
+<span class="nc bnc" id="L475" title="All 4 branches missed.">            assert node != this.head &amp;&amp; node != this.rear;</span>
+
+            while (true) {
+<span class="nc" id="L478">                LinkNode&lt;K, V&gt; prev = node.prev;</span>
+<span class="nc bnc" id="L479" title="All 4 branches missed.">                if (prev == this.empty || node.next == this.empty) {</span>
+                    // Ignore the `node` if it has been removed
+<span class="nc" id="L481">                    return null;</span>
+                }
+
+<span class="nc" id="L484">                List&lt;Lock&gt; locks = this.lock(prev, node);</span>
+                try {
+<span class="nc bnc" id="L486" title="All 2 branches missed.">                    if (prev != node.prev) {</span>
+                        /*
+                         * The previous node has changed (maybe it's lock
+                         * released after it's removed, then we got the
+                         * lock), so try again until it's not changed.
+                         */
+                        continue;
+                    }
+<span class="nc bnc" id="L494" title="All 2 branches missed.">                    assert node.next != null : node;</span>
+<span class="nc bnc" id="L495" title="All 2 branches missed.">                    assert node.next != this.empty : node.next;</span>
+<span class="nc bnc" id="L496" title="All 2 branches missed.">                    assert node.next != node.prev : node.next;</span>
+
+                    // Break `node` &amp; Build the link between node.prev~node.next
+<span class="nc" id="L499">                    node.prev.next = node.next;</span>
+<span class="nc" id="L500">                    node.next.prev = node.prev;</span>
+
+<span class="nc bnc" id="L502" title="All 2 branches missed.">                    assert prev == node.prev : prev.key() + &quot;!=&quot; + node.prev;</span>
+
+                    // Clear the links of `node`
+<span class="nc" id="L505">                    node.prev = this.empty;</span>
+<span class="nc" id="L506">                    node.next = this.empty;</span>
+
+<span class="nc" id="L508">                    return node;</span>
+                } finally {
+<span class="nc" id="L510">                    this.unlock(locks);</span>
+                }
+            }
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

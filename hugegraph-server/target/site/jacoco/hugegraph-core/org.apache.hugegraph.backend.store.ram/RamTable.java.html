@@ -1,0 +1,595 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RamTable.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.ram</a> &gt; <span class="el_source">RamTable.java</span></div><h1>RamTable.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.ram;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.ConditionQueryFlatten;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.iterator.FlatMapperIterator;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.Consumers;
+import org.apache.hugegraph.util.Log;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+import org.apache.tinkerpop.gremlin.util.iterator.IteratorUtils;
+import org.slf4j.Logger;
+
+public final class RamTable {
+
+<span class="nc" id="L65">    public static final String USER_DIR = System.getProperty(&quot;user.dir&quot;);</span>
+<span class="nc" id="L66">    public static final String EXPORT_PATH = USER_DIR + &quot;/export&quot;;</span>
+
+<span class="nc" id="L68">    private static final Logger LOG = Log.logger(RamTable.class);</span>
+
+    // max vertices count, include non exists vertex, default 2.4 billion
+    private static final long VERTICES_CAPACITY = 2400000000L;
+    // max edges count, include OUT and IN edges, default 2.1 billion
+    private static final int EDGES_CAPACITY = 2100000000;
+
+    private static final int NULL = 0;
+
+<span class="nc" id="L77">    private static final Condition BOTH_COND = Condition.or(</span>
+<span class="nc" id="L78">                         Condition.eq(HugeKeys.DIRECTION, Directions.OUT),</span>
+<span class="nc" id="L79">                         Condition.eq(HugeKeys.DIRECTION, Directions.IN));</span>
+
+    private final HugeGraph graph;
+    private final long verticesCapacity;
+    private final int verticesCapacityHalf;
+    private final int edgesCapacity;
+
+    private IntIntMap verticesLow;
+    private IntIntMap verticesHigh;
+    private IntLongMap edges;
+
+<span class="nc" id="L90">    private volatile boolean loading = false;</span>
+
+    public RamTable(HugeGraph graph) {
+<span class="nc" id="L93">        this(graph, VERTICES_CAPACITY, EDGES_CAPACITY);</span>
+<span class="nc" id="L94">    }</span>
+
+<span class="nc" id="L96">    public RamTable(HugeGraph graph, long maxVertices, int maxEdges) {</span>
+<span class="nc" id="L97">        this.graph = graph;</span>
+<span class="nc" id="L98">        this.verticesCapacity = maxVertices + 2L;</span>
+<span class="nc" id="L99">        this.verticesCapacityHalf = (int) (this.verticesCapacity / 2L);</span>
+<span class="nc" id="L100">        this.edgesCapacity = maxEdges + 1;</span>
+<span class="nc" id="L101">        this.reset();</span>
+<span class="nc" id="L102">    }</span>
+
+    private void reset() {
+<span class="nc" id="L105">        this.verticesLow = null;</span>
+<span class="nc" id="L106">        this.verticesHigh = null;</span>
+<span class="nc" id="L107">        this.edges = null;</span>
+<span class="nc" id="L108">        this.verticesLow = new IntIntMap(this.verticesCapacityHalf);</span>
+<span class="nc" id="L109">        this.verticesHigh = new IntIntMap(this.verticesCapacityHalf);</span>
+<span class="nc" id="L110">        this.edges = new IntLongMap(this.edgesCapacity);</span>
+        // Set the first element as null edge
+<span class="nc" id="L112">        this.edges.add(0L);</span>
+<span class="nc" id="L113">    }</span>
+
+    public void reload(boolean loadFromFile, String file) {
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (this.loading) {</span>
+<span class="nc" id="L117">            throw new HugeException(&quot;There is one loading task, &quot; +</span>
+                                    &quot;please wait for it to complete&quot;);
+        }
+
+<span class="nc" id="L121">        this.loading = true;</span>
+        try {
+<span class="nc" id="L123">            this.reset();</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">            if (loadFromFile) {</span>
+<span class="nc" id="L125">                this.loadFromFile(file);</span>
+            } else {
+<span class="nc" id="L127">                this.loadFromDB();</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                if (file != null) {</span>
+<span class="nc" id="L129">                    LOG.info(&quot;Export graph to file '{}'&quot;, file);</span>
+<span class="nc bnc" id="L130" title="All 2 branches missed.">                    if (!this.exportToFile(file)) {</span>
+<span class="nc" id="L131">                        LOG.warn(&quot;Can't export graph to file '{}'&quot;, file);</span>
+                    }
+                }
+            }
+<span class="nc" id="L135">            LOG.info(&quot;Loaded {} edges&quot;, this.edgesSize());</span>
+<span class="nc" id="L136">        } catch (Throwable e) {</span>
+<span class="nc" id="L137">            this.reset();</span>
+<span class="nc" id="L138">            throw new HugeException(&quot;Failed to load ramtable&quot;, e);</span>
+        } finally {
+<span class="nc" id="L140">            this.loading = false;</span>
+        }
+<span class="nc" id="L142">    }</span>
+
+    private void loadFromFile(String fileName) throws Exception {
+<span class="nc" id="L145">        File file = Paths.get(EXPORT_PATH, fileName).toFile();</span>
+<span class="nc bnc" id="L146" title="All 6 branches missed.">        if (!file.exists() || !file.isFile() || !file.canRead()) {</span>
+<span class="nc" id="L147">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;File '%s' does not existed or readable&quot;, fileName));
+        }
+<span class="nc" id="L150">        try (FileInputStream fis = new FileInputStream(file);</span>
+<span class="nc" id="L151">             BufferedInputStream bis = new BufferedInputStream(fis);</span>
+<span class="nc" id="L152">             DataInputStream input = new DataInputStream(bis)) {</span>
+            // read vertices
+<span class="nc" id="L154">            this.verticesLow.readFrom(input);</span>
+<span class="nc" id="L155">            this.verticesHigh.readFrom(input);</span>
+            // read edges
+<span class="nc" id="L157">            this.edges.readFrom(input);</span>
+        }
+<span class="nc" id="L159">    }</span>
+
+    private boolean exportToFile(String fileName) throws Exception {
+<span class="nc" id="L162">        File file = Paths.get(EXPORT_PATH, fileName).toFile();</span>
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        if (!file.exists()) {</span>
+<span class="nc" id="L164">            FileUtils.forceMkdir(file.getParentFile());</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">            if (!file.createNewFile()) {</span>
+<span class="nc" id="L166">                return false;</span>
+            }
+        }
+<span class="nc" id="L169">        try (FileOutputStream fos = new FileOutputStream(file);</span>
+<span class="nc" id="L170">             BufferedOutputStream bos = new BufferedOutputStream(fos);</span>
+<span class="nc" id="L171">             DataOutputStream output = new DataOutputStream(bos)) {</span>
+            // write vertices
+<span class="nc" id="L173">            this.verticesLow.writeTo(output);</span>
+<span class="nc" id="L174">            this.verticesHigh.writeTo(output);</span>
+            // write edges
+<span class="nc" id="L176">            this.edges.writeTo(output);</span>
+        }
+<span class="nc" id="L178">        return true;</span>
+    }
+
+    private void loadFromDB() throws Exception {
+<span class="nc" id="L182">        Query query = new Query(HugeType.VERTEX);</span>
+<span class="nc" id="L183">        query.capacity(this.verticesCapacityHalf * 2L);</span>
+<span class="nc" id="L184">        query.limit(Query.NO_LIMIT);</span>
+<span class="nc" id="L185">        Iterator&lt;Vertex&gt; vertices = this.graph.vertices(query);</span>
+
+        // switch concurrent loading here
+<span class="nc" id="L188">        boolean concurrent = true;</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        if (concurrent) {</span>
+<span class="nc" id="L190">            try (LoadTraverser traverser = new LoadTraverser()) {</span>
+<span class="nc" id="L191">                traverser.load(vertices);</span>
+            }
+<span class="nc" id="L193">            return;</span>
+        }
+
+        Iterator&lt;Edge&gt; adjEdges;
+<span class="nc" id="L197">        Id lastId = IdGenerator.ZERO;</span>
+<span class="nc bnc" id="L198" title="All 2 branches missed.">        while (vertices.hasNext()) {</span>
+<span class="nc" id="L199">            Id vertex = (Id) vertices.next().id();</span>
+<span class="nc bnc" id="L200" title="All 2 branches missed.">            if (vertex.compareTo(lastId) &lt; 0) {</span>
+<span class="nc" id="L201">                throw new HugeException(&quot;The ramtable feature is not &quot; +</span>
+                                        &quot;supported by %s backend&quot;,
+<span class="nc" id="L203">                                        this.graph.backend());</span>
+            }
+<span class="nc" id="L205">            ensureNumberId(vertex);</span>
+<span class="nc" id="L206">            lastId = vertex;</span>
+
+<span class="nc" id="L208">            adjEdges = this.graph.adjacentEdges(vertex);</span>
+<span class="nc bnc" id="L209" title="All 2 branches missed.">            if (adjEdges.hasNext()) {</span>
+<span class="nc" id="L210">                HugeEdge edge = (HugeEdge) adjEdges.next();</span>
+<span class="nc" id="L211">                this.addEdge(true, edge);</span>
+            }
+<span class="nc bnc" id="L213" title="All 2 branches missed.">            while (adjEdges.hasNext()) {</span>
+<span class="nc" id="L214">                HugeEdge edge = (HugeEdge) adjEdges.next();</span>
+<span class="nc" id="L215">                this.addEdge(false, edge);</span>
+<span class="nc" id="L216">            }</span>
+<span class="nc" id="L217">        }</span>
+<span class="nc" id="L218">    }</span>
+
+    public void addEdge(boolean newVertex, HugeEdge edge) {
+<span class="nc bnc" id="L221" title="All 2 branches missed.">        if (edge.schemaLabel().existSortKeys()) {</span>
+<span class="nc" id="L222">            throw new HugeException(&quot;Only edge label without sortkey is &quot; +</span>
+                                    &quot;supported by ramtable, but got '%s'&quot;,
+<span class="nc" id="L224">                                    edge.schemaLabel());</span>
+        }
+<span class="nc" id="L226">        ensureNumberId(edge.id().ownerVertexId());</span>
+<span class="nc" id="L227">        ensureNumberId(edge.id().otherVertexId());</span>
+
+<span class="nc" id="L229">        this.addEdge(newVertex,</span>
+<span class="nc" id="L230">                     edge.id().ownerVertexId().asLong(),</span>
+<span class="nc" id="L231">                     edge.id().otherVertexId().asLong(),</span>
+<span class="nc" id="L232">                     edge.direction(),</span>
+<span class="nc" id="L233">                     (int) edge.schemaLabel().id().asLong());</span>
+<span class="nc" id="L234">    }</span>
+
+    public void addEdge(boolean newVertex, long owner, long target,
+                        Directions direction, int label) {
+<span class="nc" id="L238">        long value = encode(target, direction, label);</span>
+<span class="nc" id="L239">        this.addEdge(newVertex, owner, value);</span>
+<span class="nc" id="L240">    }</span>
+
+    public void addEdge(boolean newVertex, long owner, long value) {
+<span class="nc" id="L243">        int position = this.edges.add(value);</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        if (newVertex) {</span>
+<span class="nc bnc" id="L245" title="All 2 branches missed.">            assert this.vertexAdjPosition(owner) &lt;= NULL : owner;</span>
+<span class="nc" id="L246">            this.vertexAdjPosition(owner, position);</span>
+        }
+        // maybe there is no edges of the next vertex, set -position first
+<span class="nc" id="L249">        this.vertexAdjPosition(owner + 1, -position);</span>
+<span class="nc" id="L250">    }</span>
+
+    public long edgesSize() {
+        // -1 means the first is NULL edge
+<span class="nc" id="L254">        return this.edges.size() - 1L;</span>
+    }
+
+    @Watched
+    public boolean matched(Query query) {
+<span class="nc bnc" id="L259" title="All 4 branches missed.">        if (this.edgesSize() == 0L || this.loading) {</span>
+<span class="nc" id="L260">            return false;</span>
+        }
+<span class="nc bnc" id="L262" title="All 4 branches missed.">        if (!query.resultType().isEdge() ||</span>
+            !(query instanceof ConditionQuery)) {
+<span class="nc" id="L264">            return false;</span>
+        }
+
+<span class="nc" id="L267">        ConditionQuery cq = (ConditionQuery) query;</span>
+
+<span class="nc" id="L269">        int conditionsSize = cq.conditionsSize();</span>
+<span class="nc" id="L270">        Object owner = cq.condition(HugeKeys.OWNER_VERTEX);</span>
+<span class="nc" id="L271">        Directions direction = cq.condition(HugeKeys.DIRECTION);</span>
+<span class="nc" id="L272">        Id label = cq.condition(HugeKeys.LABEL);</span>
+
+<span class="nc bnc" id="L274" title="All 4 branches missed.">        if (direction == null &amp;&amp; conditionsSize &gt; 1) {</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">            for (Condition cond : cq.conditions()) {</span>
+<span class="nc bnc" id="L276" title="All 2 branches missed.">                if (cond.equals(BOTH_COND)) {</span>
+<span class="nc" id="L277">                    direction = Directions.BOTH;</span>
+<span class="nc" id="L278">                    break;</span>
+                }
+<span class="nc" id="L280">            }</span>
+        }
+
+<span class="nc" id="L283">        int matchedConds = 0;</span>
+<span class="nc bnc" id="L284" title="All 2 branches missed.">        if (owner != null) {</span>
+<span class="nc" id="L285">            matchedConds++;</span>
+        } else {
+<span class="nc" id="L287">            return false;</span>
+        }
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        if (direction != null) {</span>
+<span class="nc" id="L290">            matchedConds++;</span>
+        }
+<span class="nc bnc" id="L292" title="All 2 branches missed.">        if (label != null) {</span>
+<span class="nc" id="L293">            matchedConds++;</span>
+        }
+<span class="nc bnc" id="L295" title="All 2 branches missed.">        return matchedConds == cq.conditionsSize();</span>
+    }
+
+    @Watched
+    public Iterator&lt;HugeEdge&gt; query(Query query) {
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        assert this.matched(query);</span>
+<span class="nc bnc" id="L301" title="All 2 branches missed.">        assert this.edgesSize() &gt; 0;</span>
+
+<span class="nc" id="L303">        List&lt;ConditionQuery&gt; cqs = ConditionQueryFlatten.flatten(</span>
+                                   (ConditionQuery) query);
+<span class="nc bnc" id="L305" title="All 2 branches missed.">        if (cqs.size() == 1) {</span>
+<span class="nc" id="L306">            ConditionQuery cq = cqs.get(0);</span>
+<span class="nc" id="L307">            return this.query(cq);</span>
+        }
+<span class="nc" id="L309">        return new FlatMapperIterator&lt;&gt;(cqs.iterator(), cq -&gt; {</span>
+<span class="nc" id="L310">            return this.query(cq);</span>
+        });
+    }
+
+    private Iterator&lt;HugeEdge&gt; query(ConditionQuery query) {
+<span class="nc" id="L315">        Id owner = query.condition(HugeKeys.OWNER_VERTEX);</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">        assert owner != null;</span>
+<span class="nc" id="L317">        Directions dir = query.condition(HugeKeys.DIRECTION);</span>
+<span class="nc bnc" id="L318" title="All 2 branches missed.">        if (dir == null) {</span>
+<span class="nc" id="L319">            dir = Directions.BOTH;</span>
+        }
+<span class="nc" id="L321">        Id label = query.condition(HugeKeys.LABEL);</span>
+<span class="nc bnc" id="L322" title="All 2 branches missed.">        if (label == null) {</span>
+<span class="nc" id="L323">            label = IdGenerator.ZERO;</span>
+        }
+<span class="nc" id="L325">        return this.query(owner.asLong(), dir, (int) label.asLong());</span>
+    }
+
+    @Watched
+    public Iterator&lt;HugeEdge&gt; query(long owner, Directions dir, int label) {
+<span class="nc bnc" id="L330" title="All 2 branches missed.">        if (this.loading) {</span>
+            // don't query when loading
+<span class="nc" id="L332">            return Collections.emptyIterator();</span>
+        }
+
+<span class="nc" id="L335">        int start = this.vertexAdjPosition(owner);</span>
+<span class="nc bnc" id="L336" title="All 2 branches missed.">        if (start &lt;= NULL) {</span>
+<span class="nc" id="L337">            return Collections.emptyIterator();</span>
+        }
+<span class="nc" id="L339">        int end = this.vertexAdjPosition(owner + 1);</span>
+<span class="nc bnc" id="L340" title="All 2 branches missed.">        assert start != NULL;</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">        if (end &lt; NULL) {</span>
+            // The next vertex does not exist edges
+<span class="nc" id="L343">            end = 1 - end;</span>
+        }
+<span class="nc" id="L345">        return new EdgeRangeIterator(start, end, dir, label, owner);</span>
+    }
+
+    private void vertexAdjPosition(long vertex, int position) {
+<span class="nc bnc" id="L349" title="All 2 branches missed.">        if (vertex &lt; this.verticesCapacityHalf) {</span>
+<span class="nc" id="L350">            this.verticesLow.put(vertex, position);</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">        } else if (vertex &lt; this.verticesCapacity) {</span>
+<span class="nc" id="L352">            vertex -= this.verticesCapacityHalf;</span>
+<span class="nc bnc" id="L353" title="All 2 branches missed.">            assert vertex &lt; Integer.MAX_VALUE;</span>
+<span class="nc" id="L354">            this.verticesHigh.put(vertex, position);</span>
+        } else {
+<span class="nc" id="L356">            throw new HugeException(&quot;Out of vertices capacity %s&quot;,</span>
+<span class="nc" id="L357">                                    this.verticesCapacity);</span>
+        }
+<span class="nc" id="L359">    }</span>
+
+    private int vertexAdjPosition(long vertex) {
+<span class="nc bnc" id="L362" title="All 2 branches missed.">        if (vertex &lt; this.verticesCapacityHalf) {</span>
+<span class="nc" id="L363">            return this.verticesLow.get(vertex);</span>
+<span class="nc bnc" id="L364" title="All 2 branches missed.">        } else if (vertex &lt; this.verticesCapacity) {</span>
+<span class="nc" id="L365">            vertex -= this.verticesCapacityHalf;</span>
+<span class="nc bnc" id="L366" title="All 2 branches missed.">            assert vertex &lt; Integer.MAX_VALUE;</span>
+<span class="nc" id="L367">            return this.verticesHigh.get(vertex);</span>
+        } else {
+<span class="nc" id="L369">            throw new HugeException(&quot;Out of vertices capacity %s: %s&quot;,</span>
+<span class="nc" id="L370">                                    this.verticesCapacity, vertex);</span>
+        }
+    }
+
+    private static void ensureNumberId(Id id) {
+<span class="nc bnc" id="L375" title="All 2 branches missed.">        if (!id.number()) {</span>
+<span class="nc" id="L376">            throw new HugeException(&quot;Only number id is supported by &quot; +</span>
+                                    &quot;ramtable, but got %s id '%s'&quot;,
+<span class="nc" id="L378">                                    id.type().name().toLowerCase(), id);</span>
+        }
+<span class="nc" id="L380">    }</span>
+
+    private static long encode(long target, Directions direction, int label) {
+        // TODO: support property
+<span class="nc bnc" id="L384" title="All 2 branches missed.">        assert (label &amp; 0x0fffffff) == label;</span>
+<span class="nc bnc" id="L385" title="All 2 branches missed.">        assert target &lt; 2L * Integer.MAX_VALUE : target;</span>
+<span class="nc" id="L386">        long value = target &amp; 0xffffffff;</span>
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        long dir = direction == Directions.OUT ?</span>
+<span class="nc" id="L388">                   0x00000000L : 0x80000000L;</span>
+<span class="nc" id="L389">        value = (value &lt;&lt; 32) | (dir | label);</span>
+<span class="nc" id="L390">        return value;</span>
+    }
+
+<span class="nc" id="L393">    private class EdgeRangeIterator implements Iterator&lt;HugeEdge&gt; {</span>
+
+        private final int end;
+        private final Directions dir;
+        private final int label;
+        private final HugeVertex owner;
+        private int current;
+        private HugeEdge currentEdge;
+
+        public EdgeRangeIterator(int start, int end,
+<span class="nc" id="L403">                                 Directions dir, int label, long owner) {</span>
+<span class="nc bnc" id="L404" title="All 4 branches missed.">            assert 0 &lt; start &amp;&amp; start &lt; end;</span>
+<span class="nc" id="L405">            this.end = end;</span>
+<span class="nc" id="L406">            this.dir = dir;</span>
+<span class="nc" id="L407">            this.label = label;</span>
+<span class="nc" id="L408">            this.owner = new HugeVertex(RamTable.this.graph,</span>
+<span class="nc" id="L409">                                        IdGenerator.of(owner),</span>
+                                        VertexLabel.NONE);
+<span class="nc" id="L411">            this.current = start;</span>
+<span class="nc" id="L412">            this.currentEdge = null;</span>
+<span class="nc" id="L413">        }</span>
+
+        @Override
+        public boolean hasNext() {
+<span class="nc bnc" id="L417" title="All 2 branches missed.">            if (this.currentEdge != null) {</span>
+<span class="nc" id="L418">                return true;</span>
+            }
+<span class="nc bnc" id="L420" title="All 2 branches missed.">            while (this.current &lt; this.end) {</span>
+<span class="nc" id="L421">                this.currentEdge = this.fetch();</span>
+<span class="nc bnc" id="L422" title="All 2 branches missed.">                if (this.currentEdge != null) {</span>
+<span class="nc" id="L423">                    return true;</span>
+                }
+            }
+<span class="nc" id="L426">            return false;</span>
+        }
+
+        @Override
+        public HugeEdge next() {
+<span class="nc bnc" id="L431" title="All 2 branches missed.">            if (!this.hasNext()) {</span>
+<span class="nc" id="L432">                throw new NoSuchElementException();</span>
+            }
+<span class="nc bnc" id="L434" title="All 2 branches missed.">            assert this.currentEdge != null;</span>
+<span class="nc" id="L435">            HugeEdge edge = this.currentEdge;</span>
+<span class="nc" id="L436">            this.currentEdge = null;</span>
+<span class="nc" id="L437">            return edge;</span>
+        }
+
+        private HugeEdge fetch() {
+<span class="nc bnc" id="L441" title="All 2 branches missed.">            if (this.current &gt;= this.end) {</span>
+<span class="nc" id="L442">                return null;</span>
+            }
+<span class="nc" id="L444">            long value = RamTable.this.edges.get(this.current++);</span>
+<span class="nc" id="L445">            long otherV = value &gt;&gt;&gt; 32;</span>
+<span class="nc bnc" id="L446" title="All 2 branches missed.">            assert otherV &gt;= 0L : otherV;</span>
+<span class="nc bnc" id="L447" title="All 2 branches missed.">            Directions actualDir = (value &amp; 0x80000000L) == 0L ?</span>
+<span class="nc" id="L448">                                   Directions.OUT : Directions.IN;</span>
+<span class="nc" id="L449">            int label = (int) value &amp; 0x7fffffff;</span>
+<span class="nc bnc" id="L450" title="All 2 branches missed.">            assert label &gt;= 0;</span>
+
+<span class="nc bnc" id="L452" title="All 4 branches missed.">            if (this.dir != actualDir &amp;&amp; this.dir != Directions.BOTH) {</span>
+<span class="nc" id="L453">                return null;</span>
+            }
+<span class="nc bnc" id="L455" title="All 4 branches missed.">            if (this.label != label &amp;&amp; this.label != 0) {</span>
+<span class="nc" id="L456">                return null;</span>
+            }
+
+<span class="nc" id="L459">            HugeGraph graph = RamTable.this.graph;</span>
+<span class="nc" id="L460">            this.owner.correctVertexLabel(VertexLabel.NONE);</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">            boolean direction = actualDir == Directions.OUT;</span>
+<span class="nc" id="L462">            Id labelId = IdGenerator.of(label);</span>
+<span class="nc" id="L463">            Id otherVertexId = IdGenerator.of(otherV);</span>
+<span class="nc" id="L464">            String sortValues = &quot;&quot;;</span>
+<span class="nc" id="L465">            EdgeLabel edgeLabel = graph.edgeLabel(labelId);</span>
+
+<span class="nc" id="L467">            HugeEdge edge = HugeEdge.constructEdge(this.owner, direction,</span>
+                                                   edgeLabel, sortValues,
+                                                   otherVertexId);
+<span class="nc" id="L470">            edge.propNotLoaded();</span>
+<span class="nc" id="L471">            return edge;</span>
+        }
+    }
+
+<span class="nc" id="L475">    private class LoadTraverser implements AutoCloseable {</span>
+
+        private final HugeGraph graph;
+        private final ExecutorService executor;
+        private final List&lt;Id&gt; vertices;
+        private final Map&lt;Id, List&lt;Edge&gt;&gt; edges;
+
+        private static final int ADD_BATCH = Consumers.QUEUE_WORKER_SIZE;
+
+<span class="nc" id="L484">        public LoadTraverser() {</span>
+<span class="nc" id="L485">            this.graph = RamTable.this.graph;</span>
+<span class="nc" id="L486">            this.executor = Consumers.newThreadPool(&quot;ramtable-load&quot;,</span>
+                                                    Consumers.THREADS);
+<span class="nc" id="L488">            this.vertices = new ArrayList&lt;&gt;(ADD_BATCH);</span>
+<span class="nc" id="L489">            this.edges = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L490">        }</span>
+
+        @Override
+        public void close() throws Exception {
+<span class="nc bnc" id="L494" title="All 2 branches missed.">            if (this.executor != null) {</span>
+<span class="nc bnc" id="L495" title="All 2 branches missed.">                for (int i = 0; i &lt; Consumers.THREADS; i++) {</span>
+<span class="nc" id="L496">                    this.executor.execute(() -&gt; {</span>
+<span class="nc" id="L497">                        this.graph.tx().commit();</span>
+<span class="nc" id="L498">                    });</span>
+                }
+<span class="nc" id="L500">                this.executor.shutdown();</span>
+            }
+<span class="nc" id="L502">        }</span>
+
+        protected long load(Iterator&lt;Vertex&gt; vertices) {
+<span class="nc" id="L505">            Consumers&lt;Id&gt; consumers = new Consumers&lt;&gt;(this.executor, vertex -&gt; {</span>
+<span class="nc" id="L506">                Iterator&lt;Edge&gt; adjEdges = this.graph.adjacentEdges(vertex);</span>
+<span class="nc" id="L507">                this.edges.put(vertex, IteratorUtils.list(adjEdges));</span>
+<span class="nc" id="L508">            }, null);</span>
+
+<span class="nc" id="L510">            consumers.start(&quot;ramtable-loading&quot;);</span>
+
+<span class="nc" id="L512">            long total = 0L;</span>
+            try {
+<span class="nc bnc" id="L514" title="All 2 branches missed.">                while (vertices.hasNext()) {</span>
+<span class="nc bnc" id="L515" title="All 2 branches missed.">                    if (++total % 10000000 == 0) {</span>
+<span class="nc" id="L516">                        LOG.info(&quot;Loaded {} vertices&quot;, total);</span>
+                    }
+
+<span class="nc" id="L519">                    Id vertex = (Id) vertices.next().id();</span>
+<span class="nc" id="L520">                    this.addVertex(vertex);</span>
+
+<span class="nc" id="L522">                    consumers.provide(vertex);</span>
+<span class="nc" id="L523">                }</span>
+<span class="nc" id="L524">            } catch (Consumers.StopExecution e) {</span>
+                // pass
+<span class="nc" id="L526">            } catch (Throwable e) {</span>
+<span class="nc" id="L527">                throw Consumers.wrapException(e);</span>
+            } finally {
+                try {
+<span class="nc" id="L530">                    consumers.await();</span>
+<span class="nc" id="L531">                } catch (Throwable e) {</span>
+<span class="nc" id="L532">                    throw Consumers.wrapException(e);</span>
+                } finally {
+<span class="nc" id="L534">                    CloseableIterator.closeIterator(vertices);</span>
+                }
+            }
+<span class="nc" id="L537">            this.addEdgesByBatch();</span>
+<span class="nc" id="L538">            return total;</span>
+        }
+
+        private void addVertex(Id vertex) {
+<span class="nc" id="L542">            Id lastId = IdGenerator.ZERO;</span>
+<span class="nc bnc" id="L543" title="All 2 branches missed.">            if (this.vertices.size() &gt; 0) {</span>
+<span class="nc" id="L544">                lastId = this.vertices.get(this.vertices.size() - 1);</span>
+            }
+<span class="nc" id="L546">            LOG.info(&quot;scan from hbase source {} lastId value: {} compare {} size {}&quot;,</span>
+<span class="nc" id="L547">                     vertex, lastId, vertex.compareTo(lastId), this.vertices.size());</span>
+
+<span class="nc bnc" id="L549" title="All 2 branches missed.">            if (vertex.compareTo(lastId) &lt; 0) {</span>
+<span class="nc" id="L550">                throw new HugeException(&quot;The ramtable feature is not &quot; +</span>
+                                        &quot;supported by %s backend&quot;,
+<span class="nc" id="L552">                                        this.graph.backend());</span>
+            }
+<span class="nc bnc" id="L554" title="All 2 branches missed.">            if (!vertex.number()) {</span>
+<span class="nc" id="L555">                throw new HugeException(&quot;Only number id is supported &quot; +</span>
+                                        &quot;by ramtable, but got %s id '%s'&quot;,
+<span class="nc" id="L557">                                        vertex.type().name().toLowerCase(),</span>
+                                        vertex);
+            }
+
+<span class="nc bnc" id="L561" title="All 2 branches missed.">            if (this.vertices.size() &gt;= ADD_BATCH) {</span>
+<span class="nc" id="L562">                this.addEdgesByBatch();</span>
+            }
+<span class="nc" id="L564">            this.vertices.add(vertex);</span>
+<span class="nc" id="L565">        }</span>
+
+        private void addEdgesByBatch() {
+<span class="nc" id="L568">            int waitTimes = 0;</span>
+<span class="nc bnc" id="L569" title="All 2 branches missed.">            for (Id vertex : this.vertices) {</span>
+<span class="nc" id="L570">                List&lt;Edge&gt; adjEdges = this.edges.remove(vertex);</span>
+<span class="nc bnc" id="L571" title="All 2 branches missed.">                while (adjEdges == null) {</span>
+<span class="nc" id="L572">                    waitTimes++;</span>
+                    try {
+<span class="nc" id="L574">                        Thread.sleep(1);</span>
+<span class="nc" id="L575">                    } catch (InterruptedException ignored) {</span>
+                        // pass
+<span class="nc" id="L577">                    }</span>
+<span class="nc" id="L578">                    adjEdges = this.edges.remove(vertex);</span>
+                }
+<span class="nc bnc" id="L580" title="All 2 branches missed.">                for (int i = 0; i &lt; adjEdges.size(); i++) {</span>
+<span class="nc" id="L581">                    HugeEdge edge = (HugeEdge) adjEdges.get(i);</span>
+<span class="nc bnc" id="L582" title="All 2 branches missed.">                    assert edge.id().ownerVertexId().equals(vertex);</span>
+<span class="nc bnc" id="L583" title="All 2 branches missed.">                    addEdge(i == 0, edge);</span>
+                }
+<span class="nc" id="L585">            }</span>
+
+<span class="nc bnc" id="L587" title="All 2 branches missed.">            if (waitTimes &gt; this.vertices.size()) {</span>
+<span class="nc" id="L588">                LOG.info(&quot;Loading wait times is {}&quot;, waitTimes);</span>
+            }
+
+<span class="nc" id="L591">            this.vertices.clear();</span>
+<span class="nc" id="L592">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

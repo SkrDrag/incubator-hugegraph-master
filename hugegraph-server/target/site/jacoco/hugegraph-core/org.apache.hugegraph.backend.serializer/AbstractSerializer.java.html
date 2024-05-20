@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractSerializer.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.serializer</a> &gt; <span class="el_source">AbstractSerializer.java</span></div><h1>AbstractSerializer.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.serializer;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.IdQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.config.HugeConfig;
+
+public abstract class AbstractSerializer
+                implements GraphSerializer, SchemaSerializer {
+
+    protected HugeConfig config;
+
+<span class="nc" id="L34">    public AbstractSerializer() {</span>
+        // TODO: default constructor
+<span class="nc" id="L36">    }</span>
+
+<span class="nc" id="L38">    public AbstractSerializer(HugeConfig config) {</span>
+<span class="nc" id="L39">       this.config = config;</span>
+<span class="nc" id="L40">    }</span>
+
+    protected BackendEntry convertEntry(BackendEntry entry) {
+<span class="nc" id="L43">        return entry;</span>
+    }
+
+    protected abstract BackendEntry newBackendEntry(HugeType type, Id id);
+
+    protected abstract Id writeQueryId(HugeType type, Id id);
+
+    protected abstract Query writeQueryEdgeCondition(Query query);
+
+    protected abstract Query writeQueryCondition(Query query);
+
+    @Override
+    public Query writeQuery(Query query) {
+<span class="nc" id="L56">        HugeType type = query.resultType();</span>
+
+        // Serialize edge condition query (TODO: add VEQ(for EOUT/EIN))
+<span class="nc bnc" id="L59" title="All 4 branches missed.">        if (type.isEdge() &amp;&amp; query.conditionsSize() &gt; 0) {</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">            if (query.idsSize() &gt; 0) {</span>
+<span class="nc" id="L61">                throw new BackendException(&quot;Not supported query edge by id &quot; +</span>
+                                           &quot;and by condition at the same time&quot;);
+            }
+
+<span class="nc" id="L65">            Query result = this.writeQueryEdgeCondition(query);</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">            if (result != null) {</span>
+<span class="nc" id="L67">                return result;</span>
+            }
+        }
+
+        // Serialize id in query
+<span class="nc bnc" id="L72" title="All 4 branches missed.">        if (query.idsSize() == 1 &amp;&amp; query instanceof IdQuery.OneIdQuery) {</span>
+<span class="nc" id="L73">            IdQuery.OneIdQuery result = (IdQuery.OneIdQuery) query.copy();</span>
+<span class="nc" id="L74">            result.resetId(this.writeQueryId(type, result.id()));</span>
+<span class="nc" id="L75">            query = result;</span>
+<span class="nc bnc" id="L76" title="All 4 branches missed.">        } else if (query.idsSize() &gt; 0 &amp;&amp; query instanceof IdQuery) {</span>
+<span class="nc" id="L77">            IdQuery result = (IdQuery) query.copy();</span>
+<span class="nc" id="L78">            result.resetIds();</span>
+<span class="nc bnc" id="L79" title="All 2 branches missed.">            for (Id id : query.ids()) {</span>
+<span class="nc" id="L80">                result.query(this.writeQueryId(type, id));</span>
+<span class="nc" id="L81">            }</span>
+<span class="nc" id="L82">            query = result;</span>
+        }
+
+        // Serialize condition(key/value) in query
+<span class="nc bnc" id="L86" title="All 4 branches missed.">        if (query instanceof ConditionQuery &amp;&amp; query.conditionsSize() &gt; 0) {</span>
+<span class="nc" id="L87">            query = this.writeQueryCondition(query);</span>
+        }
+
+<span class="nc" id="L90">        return query;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,573 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>EdgeAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.graph</a> &gt; <span class="el_source">EdgeAPI.java</span></div><h1>EdgeAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.graph;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.structure.Direction;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.util.function.TriFunction;
+import org.apache.hugegraph.config.ServerOptions;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.UpdateStrategy;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.CompressInterceptor.Compress;
+import org.apache.hugegraph.api.filter.DecompressInterceptor.Decompress;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.backend.id.EdgeId;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.traversal.optimize.QueryHolder;
+import org.apache.hugegraph.traversal.optimize.TraversalUtil;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Path(&quot;graphs/{graph}/graph/edges&quot;)
+@Singleton
+@Tag(name = &quot;EdgeAPI&quot;)
+<span class="nc" id="L78">public class EdgeAPI extends BatchAPI {</span>
+
+<span class="nc" id="L80">    private static final Logger LOG = Log.logger(EdgeAPI.class);</span>
+
+    @POST
+    @Timed(name = &quot;single-create&quot;)
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_write&quot;})
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonEdge jsonEdge) {
+<span class="nc" id="L91">        LOG.debug(&quot;Graph [{}] create edge: {}&quot;, graph, jsonEdge);</span>
+<span class="nc" id="L92">        checkCreatingBody(jsonEdge);</span>
+
+<span class="nc" id="L94">        HugeGraph g = graph(manager, graph);</span>
+
+<span class="nc bnc" id="L96" title="All 4 branches missed.">        if (jsonEdge.sourceLabel != null &amp;&amp; jsonEdge.targetLabel != null) {</span>
+            /*
+             * NOTE: If the vertex id is correct but label not match with id,
+             * we allow to create it here
+             */
+<span class="nc" id="L101">            vertexLabel(g, jsonEdge.sourceLabel,</span>
+                        &quot;Invalid source vertex label '%s'&quot;);
+<span class="nc" id="L103">            vertexLabel(g, jsonEdge.targetLabel,</span>
+                        &quot;Invalid target vertex label '%s'&quot;);
+        }
+
+<span class="nc" id="L107">        Vertex srcVertex = getVertex(g, jsonEdge.source, jsonEdge.sourceLabel);</span>
+<span class="nc" id="L108">        Vertex tgtVertex = getVertex(g, jsonEdge.target, jsonEdge.targetLabel);</span>
+
+<span class="nc" id="L110">        Edge edge = commit(g, () -&gt; {</span>
+<span class="nc" id="L111">            return srcVertex.addEdge(jsonEdge.label, tgtVertex,</span>
+<span class="nc" id="L112">                                     jsonEdge.properties());</span>
+        });
+
+<span class="nc" id="L115">        return manager.serializer(g).writeEdge(edge);</span>
+    }
+
+    @POST
+    @Timed(name = &quot;batch-create&quot;)
+    @Decompress
+    @Path(&quot;batch&quot;)
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_write&quot;})
+    public String create(@Context HugeConfig config,
+                         @Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @QueryParam(&quot;check_vertex&quot;)
+                         @DefaultValue(&quot;true&quot;) boolean checkVertex,
+                         List&lt;JsonEdge&gt; jsonEdges) {
+<span class="nc" id="L132">        LOG.debug(&quot;Graph [{}] create edges: {}&quot;, graph, jsonEdges);</span>
+<span class="nc" id="L133">        checkCreatingBody(jsonEdges);</span>
+<span class="nc" id="L134">        checkBatchSize(config, jsonEdges);</span>
+
+<span class="nc" id="L136">        HugeGraph g = graph(manager, graph);</span>
+
+        TriFunction&lt;HugeGraph, Object, String, Vertex&gt; getVertex =
+<span class="nc bnc" id="L139" title="All 2 branches missed.">                    checkVertex ? EdgeAPI::getVertex : EdgeAPI::newVertex;</span>
+
+<span class="nc" id="L141">        return this.commit(config, g, jsonEdges.size(), () -&gt; {</span>
+<span class="nc" id="L142">            List&lt;Id&gt; ids = new ArrayList&lt;&gt;(jsonEdges.size());</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">            for (JsonEdge jsonEdge : jsonEdges) {</span>
+                /*
+                 * NOTE: If the query param 'checkVertex' is false,
+                 * then the label is correct and not matched id,
+                 * it will be allowed currently
+                 */
+<span class="nc" id="L149">                Vertex srcVertex = getVertex.apply(g, jsonEdge.source,</span>
+                                                   jsonEdge.sourceLabel);
+<span class="nc" id="L151">                Vertex tgtVertex = getVertex.apply(g, jsonEdge.target,</span>
+                                                   jsonEdge.targetLabel);
+<span class="nc" id="L153">                Edge edge = srcVertex.addEdge(jsonEdge.label, tgtVertex,</span>
+<span class="nc" id="L154">                                              jsonEdge.properties());</span>
+<span class="nc" id="L155">                ids.add((Id) edge.id());</span>
+<span class="nc" id="L156">            }</span>
+<span class="nc" id="L157">            return manager.serializer(g).writeIds(ids);</span>
+        });
+    }
+
+    /**
+     * Batch update steps are same like vertices
+     */
+    @PUT
+    @Timed(name = &quot;batch-update&quot;)
+    @Decompress
+    @Path(&quot;batch&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_write&quot;})
+    public String update(@Context HugeConfig config,
+                         @Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         BatchEdgeRequest req) {
+<span class="nc" id="L175">        BatchEdgeRequest.checkUpdate(req);</span>
+<span class="nc" id="L176">        LOG.debug(&quot;Graph [{}] update edges: {}&quot;, graph, req);</span>
+<span class="nc" id="L177">        checkUpdatingBody(req.jsonEdges);</span>
+<span class="nc" id="L178">        checkBatchSize(config, req.jsonEdges);</span>
+
+<span class="nc" id="L180">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L181">        Map&lt;Id, JsonEdge&gt; map = new HashMap&lt;&gt;(req.jsonEdges.size());</span>
+        TriFunction&lt;HugeGraph, Object, String, Vertex&gt; getVertex =
+<span class="nc bnc" id="L183" title="All 2 branches missed.">                    req.checkVertex ? EdgeAPI::getVertex : EdgeAPI::newVertex;</span>
+
+<span class="nc" id="L185">        return this.commit(config, g, map.size(), () -&gt; {</span>
+            // 1.Put all newEdges' properties into map (combine first)
+<span class="nc" id="L187">            req.jsonEdges.forEach(newEdge -&gt; {</span>
+<span class="nc" id="L188">                Id newEdgeId = getEdgeId(graph(manager, graph), newEdge);</span>
+<span class="nc" id="L189">                JsonEdge oldEdge = map.get(newEdgeId);</span>
+<span class="nc" id="L190">                this.updateExistElement(oldEdge, newEdge,</span>
+                                        req.updateStrategies);
+<span class="nc" id="L192">                map.put(newEdgeId, newEdge);</span>
+<span class="nc" id="L193">            });</span>
+
+            // 2.Get all oldEdges and update with new ones
+<span class="nc" id="L196">            Object[] ids = map.keySet().toArray();</span>
+<span class="nc" id="L197">            Iterator&lt;Edge&gt; oldEdges = g.edges(ids);</span>
+<span class="nc" id="L198">            oldEdges.forEachRemaining(oldEdge -&gt; {</span>
+<span class="nc" id="L199">                JsonEdge newEdge = map.get(oldEdge.id());</span>
+<span class="nc" id="L200">                this.updateExistElement(g, oldEdge, newEdge,</span>
+                                        req.updateStrategies);
+<span class="nc" id="L202">            });</span>
+
+            // 3.Add all finalEdges
+<span class="nc" id="L205">            List&lt;Edge&gt; edges = new ArrayList&lt;&gt;(map.size());</span>
+<span class="nc" id="L206">            map.values().forEach(finalEdge -&gt; {</span>
+<span class="nc" id="L207">                Vertex srcVertex = getVertex.apply(g, finalEdge.source,</span>
+                                                   finalEdge.sourceLabel);
+<span class="nc" id="L209">                Vertex tgtVertex = getVertex.apply(g, finalEdge.target,</span>
+                                                   finalEdge.targetLabel);
+<span class="nc" id="L211">                edges.add(srcVertex.addEdge(finalEdge.label, tgtVertex,</span>
+<span class="nc" id="L212">                                            finalEdge.properties()));</span>
+<span class="nc" id="L213">            });</span>
+
+            // If return ids, the ids.size() maybe different with the origins'
+<span class="nc" id="L216">            return manager.serializer(g).writeEdges(edges.iterator(), false);</span>
+        });
+    }
+
+    @PUT
+    @Timed(name = &quot;single-update&quot;)
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_write&quot;})
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;id&quot;) String id,
+                         @QueryParam(&quot;action&quot;) String action,
+                         JsonEdge jsonEdge) {
+<span class="nc" id="L231">        LOG.debug(&quot;Graph [{}] update edge: {}&quot;, graph, jsonEdge);</span>
+<span class="nc" id="L232">        checkUpdatingBody(jsonEdge);</span>
+
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if (jsonEdge.id != null) {</span>
+<span class="nc" id="L235">            E.checkArgument(id.equals(jsonEdge.id),</span>
+                            &quot;The ids are different between url and &quot; +
+                            &quot;request body ('%s' != '%s')&quot;, id, jsonEdge.id);
+        }
+
+        // Parse action param
+<span class="nc" id="L241">        boolean append = checkAndParseAction(action);</span>
+
+<span class="nc" id="L243">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L244">        HugeEdge edge = (HugeEdge) g.edge(id);</span>
+<span class="nc" id="L245">        EdgeLabel edgeLabel = edge.schemaLabel();</span>
+
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        for (String key : jsonEdge.properties.keySet()) {</span>
+<span class="nc" id="L248">            PropertyKey pkey = g.propertyKey(key);</span>
+<span class="nc" id="L249">            E.checkArgument(edgeLabel.properties().contains(pkey.id()),</span>
+                            &quot;Can't update property for edge '%s' because &quot; +
+                            &quot;there is no property key '%s' in its edge label&quot;,
+                            id, key);
+<span class="nc" id="L253">        }</span>
+
+<span class="nc" id="L255">        commit(g, () -&gt; updateProperties(edge, jsonEdge, append));</span>
+
+<span class="nc" id="L257">        return manager.serializer(g).writeEdge(edge);</span>
+    }
+
+    @GET
+    @Timed
+    @Compress
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_read&quot;})
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;vertex_id&quot;) String vertexId,
+                       @QueryParam(&quot;direction&quot;) String direction,
+                       @QueryParam(&quot;label&quot;) String label,
+                       @QueryParam(&quot;properties&quot;) String properties,
+                       @QueryParam(&quot;keep_start_p&quot;)
+                       @DefaultValue(&quot;false&quot;) boolean keepStartP,
+                       @QueryParam(&quot;offset&quot;) @DefaultValue(&quot;0&quot;) long offset,
+                       @QueryParam(&quot;page&quot;) String page,
+                       @QueryParam(&quot;limit&quot;) @DefaultValue(&quot;100&quot;) long limit) {
+<span class="nc" id="L276">        LOG.debug(&quot;Graph [{}] query edges by vertex: {}, direction: {}, &quot; +</span>
+                  &quot;label: {}, properties: {}, offset: {}, page: {}, limit: {}&quot;,
+                  graph, vertexId, direction,
+<span class="nc" id="L279">                  label, properties, offset, page, limit);</span>
+
+<span class="nc" id="L281">        Map&lt;String, Object&gt; props = parseProperties(properties);</span>
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        if (page != null) {</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            E.checkArgument(offset == 0,</span>
+                            &quot;Not support querying edges based on paging &quot; +
+                            &quot;and offset together&quot;);
+        }
+
+<span class="nc" id="L288">        Id vertex = VertexAPI.checkAndParseVertexId(vertexId);</span>
+<span class="nc" id="L289">        Direction dir = parseDirection(direction);</span>
+
+<span class="nc" id="L291">        HugeGraph g = graph(manager, graph);</span>
+
+        GraphTraversal&lt;?, Edge&gt; traversal;
+<span class="nc bnc" id="L294" title="All 2 branches missed.">        if (vertex != null) {</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">            if (label != null) {</span>
+<span class="nc" id="L296">                traversal = g.traversal().V(vertex).toE(dir, label);</span>
+            } else {
+<span class="nc" id="L298">                traversal = g.traversal().V(vertex).toE(dir);</span>
+            }
+        } else {
+<span class="nc bnc" id="L301" title="All 2 branches missed.">            if (label != null) {</span>
+<span class="nc" id="L302">                traversal = g.traversal().E().hasLabel(label);</span>
+            } else {
+<span class="nc" id="L304">                traversal = g.traversal().E();</span>
+            }
+        }
+
+        // Convert relational operator like P.gt()/P.lt()
+<span class="nc bnc" id="L309" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; prop : props.entrySet()) {</span>
+<span class="nc" id="L310">            Object value = prop.getValue();</span>
+<span class="nc bnc" id="L311" title="All 4 branches missed.">            if (!keepStartP &amp;&amp; value instanceof String &amp;&amp;</span>
+<span class="nc bnc" id="L312" title="All 2 branches missed.">                ((String) value).startsWith(TraversalUtil.P_CALL)) {</span>
+<span class="nc" id="L313">                prop.setValue(TraversalUtil.parsePredicate((String) value));</span>
+            }
+<span class="nc" id="L315">        }</span>
+
+<span class="nc bnc" id="L317" title="All 2 branches missed.">        for (Map.Entry&lt;String, Object&gt; entry : props.entrySet()) {</span>
+<span class="nc" id="L318">            traversal = traversal.has(entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L319">        }</span>
+
+<span class="nc bnc" id="L321" title="All 2 branches missed.">        if (page == null) {</span>
+<span class="nc" id="L322">            traversal = traversal.range(offset, offset + limit);</span>
+        } else {
+<span class="nc" id="L324">            traversal = traversal.has(QueryHolder.SYSPROP_PAGE, page)</span>
+<span class="nc" id="L325">                                 .limit(limit);</span>
+        }
+
+        try {
+<span class="nc bnc" id="L329" title="All 2 branches missed.">            return manager.serializer(g).writeEdges(traversal, page != null);</span>
+        } finally {
+<span class="nc bnc" id="L331" title="All 2 branches missed.">            if (g.tx().isOpen()) {</span>
+<span class="nc" id="L332">                g.tx().close();</span>
+            }
+        }
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_read&quot;})
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L345">        LOG.debug(&quot;Graph [{}] get edge by id '{}'&quot;, graph, id);</span>
+
+<span class="nc" id="L347">        HugeGraph g = graph(manager, graph);</span>
+        try {
+<span class="nc" id="L349">            Edge edge = g.edge(id);</span>
+<span class="nc" id="L350">            return manager.serializer(g).writeEdge(edge);</span>
+        } finally {
+<span class="nc bnc" id="L352" title="All 2 branches missed.">            if (g.tx().isOpen()) {</span>
+<span class="nc" id="L353">                g.tx().close();</span>
+            }
+        }
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner=$graph $action=edge_delete&quot;})
+    public void delete(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @PathParam(&quot;id&quot;) String id,
+                       @QueryParam(&quot;label&quot;) String label) {
+<span class="nc" id="L367">        LOG.debug(&quot;Graph [{}] remove vertex by id '{}'&quot;, graph, id);</span>
+
+<span class="nc" id="L369">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L370">        commit(g, () -&gt; {</span>
+            try {
+<span class="nc" id="L372">                g.removeEdge(label, id);</span>
+<span class="nc" id="L373">            } catch (NotFoundException e) {</span>
+<span class="nc" id="L374">                throw new IllegalArgumentException(String.format(</span>
+                          &quot;No such edge with id: '%s', %s&quot;, id, e));
+<span class="nc" id="L376">            } catch (NoSuchElementException e) {</span>
+<span class="nc" id="L377">                throw new IllegalArgumentException(String.format(</span>
+                          &quot;No such edge with id: '%s'&quot;, id));
+<span class="nc" id="L379">            }</span>
+<span class="nc" id="L380">        });</span>
+<span class="nc" id="L381">    }</span>
+
+    private static void checkBatchSize(HugeConfig config,
+                                       List&lt;JsonEdge&gt; edges) {
+<span class="nc" id="L385">        int max = config.get(ServerOptions.MAX_EDGES_PER_BATCH);</span>
+<span class="nc bnc" id="L386" title="All 2 branches missed.">        if (edges.size() &gt; max) {</span>
+<span class="nc" id="L387">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;Too many edges for one time post, &quot; +
+<span class="nc" id="L389">                      &quot;the maximum number is '%s'&quot;, max));</span>
+        }
+<span class="nc bnc" id="L391" title="All 2 branches missed.">        if (edges.size() == 0) {</span>
+<span class="nc" id="L392">            throw new IllegalArgumentException(</span>
+                      &quot;The number of edges can't be 0&quot;);
+        }
+<span class="nc" id="L395">    }</span>
+
+    private static Vertex getVertex(HugeGraph graph,
+                                    Object id, String label) {
+        HugeVertex vertex;
+        try {
+<span class="nc" id="L401">            vertex = (HugeVertex) graph.vertices(id).next();</span>
+<span class="nc" id="L402">        } catch (NoSuchElementException e) {</span>
+<span class="nc" id="L403">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;Invalid vertex id '%s'&quot;, id));
+<span class="nc" id="L405">        }</span>
+<span class="nc bnc" id="L406" title="All 4 branches missed.">        if (label != null &amp;&amp; !vertex.label().equals(label)) {</span>
+<span class="nc" id="L407">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;The label of vertex '%s' is unmatched, users expect &quot; +
+                      &quot;label '%s', actual label stored is '%s'&quot;,
+<span class="nc" id="L410">                      id, label, vertex.label()));</span>
+        }
+        // Clone a new vertex to support multi-thread access
+<span class="nc" id="L413">        return vertex.copy();</span>
+    }
+
+    private static Vertex newVertex(HugeGraph g, Object id, String label) {
+<span class="nc" id="L417">        VertexLabel vl = vertexLabel(g, label, &quot;Invalid vertex label '%s'&quot;);</span>
+<span class="nc" id="L418">        Id idValue = HugeVertex.getIdValue(id);</span>
+<span class="nc" id="L419">        return new HugeVertex(g, idValue, vl);</span>
+    }
+
+    private static VertexLabel vertexLabel(HugeGraph graph, String label,
+                                           String message) {
+        try {
+            // NOTE: don't use SchemaManager because it will throw 404
+<span class="nc" id="L426">            return graph.vertexLabel(label);</span>
+<span class="nc" id="L427">        } catch (IllegalArgumentException e) {</span>
+<span class="nc" id="L428">            throw new IllegalArgumentException(String.format(message, label));</span>
+        }
+    }
+
+    public static Direction parseDirection(String direction) {
+<span class="nc bnc" id="L433" title="All 4 branches missed.">        if (direction == null || direction.isEmpty()) {</span>
+<span class="nc" id="L434">            return Direction.BOTH;</span>
+        }
+        try {
+<span class="nc" id="L437">            return Direction.valueOf(direction);</span>
+<span class="nc" id="L438">        } catch (Exception e) {</span>
+<span class="nc" id="L439">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;Direction value must be in [OUT, IN, BOTH], &quot; +
+                      &quot;but got '%s'&quot;, direction));
+        }
+    }
+
+    private Id getEdgeId(HugeGraph g, JsonEdge newEdge) {
+<span class="nc" id="L446">        String sortKeys = &quot;&quot;;</span>
+<span class="nc" id="L447">        Id labelId = g.edgeLabel(newEdge.label).id();</span>
+<span class="nc" id="L448">        List&lt;Id&gt; sortKeyIds = g.edgeLabel(labelId).sortKeys();</span>
+<span class="nc bnc" id="L449" title="All 2 branches missed.">        if (!sortKeyIds.isEmpty()) {</span>
+<span class="nc" id="L450">            List&lt;Object&gt; sortKeyValues = new ArrayList&lt;&gt;(sortKeyIds.size());</span>
+<span class="nc" id="L451">            sortKeyIds.forEach(skId -&gt; {</span>
+<span class="nc" id="L452">                PropertyKey pk = g.propertyKey(skId);</span>
+<span class="nc" id="L453">                String sortKey = pk.name();</span>
+<span class="nc" id="L454">                Object sortKeyValue = newEdge.properties.get(sortKey);</span>
+<span class="nc bnc" id="L455" title="All 2 branches missed.">                E.checkArgument(sortKeyValue != null,</span>
+                                &quot;The value of sort key '%s' can't be null&quot;,
+                                sortKey);
+<span class="nc" id="L458">                sortKeyValue = pk.validValueOrThrow(sortKeyValue);</span>
+<span class="nc" id="L459">                sortKeyValues.add(sortKeyValue);</span>
+<span class="nc" id="L460">            });</span>
+<span class="nc" id="L461">            sortKeys = ConditionQuery.concatValues(sortKeyValues);</span>
+        }
+<span class="nc" id="L463">        EdgeId edgeId = new EdgeId(HugeVertex.getIdValue(newEdge.source),</span>
+                                   Directions.OUT, labelId, sortKeys,
+<span class="nc" id="L465">                                   HugeVertex.getIdValue(newEdge.target));</span>
+<span class="nc bnc" id="L466" title="All 2 branches missed.">        if (newEdge.id != null) {</span>
+<span class="nc" id="L467">            E.checkArgument(edgeId.asString().equals(newEdge.id),</span>
+                            &quot;The ids are different between server and &quot; +
+                            &quot;request body ('%s' != '%s'). And note the sort &quot; +
+                            &quot;key values should either be null or equal to &quot; +
+                            &quot;the origin value when specified edge id&quot;,
+                            edgeId, newEdge.id);
+        }
+<span class="nc" id="L474">        return edgeId;</span>
+    }
+
+<span class="nc" id="L477">    protected static class BatchEdgeRequest {</span>
+
+        @JsonProperty(&quot;edges&quot;)
+        public List&lt;JsonEdge&gt; jsonEdges;
+        @JsonProperty(&quot;update_strategies&quot;)
+        public Map&lt;String, UpdateStrategy&gt; updateStrategies;
+<span class="nc" id="L483">        @JsonProperty(&quot;check_vertex&quot;)</span>
+        public boolean checkVertex = false;
+<span class="nc" id="L485">        @JsonProperty(&quot;create_if_not_exist&quot;)</span>
+        public boolean createIfNotExist = true;
+
+        private static void checkUpdate(BatchEdgeRequest req) {
+<span class="nc" id="L489">            E.checkArgumentNotNull(req, &quot;BatchEdgeRequest can't be null&quot;);</span>
+<span class="nc" id="L490">            E.checkArgumentNotNull(req.jsonEdges,</span>
+                                   &quot;Parameter 'edges' can't be null&quot;);
+<span class="nc bnc" id="L492" title="All 2 branches missed.">            E.checkArgument(req.updateStrategies != null &amp;&amp;</span>
+<span class="nc bnc" id="L493" title="All 2 branches missed.">                            !req.updateStrategies.isEmpty(),</span>
+                            &quot;Parameter 'update_strategies' can't be empty&quot;);
+<span class="nc bnc" id="L495" title="All 2 branches missed.">            E.checkArgument(req.createIfNotExist == true,</span>
+                            &quot;Parameter 'create_if_not_exist' &quot; +
+                            &quot;dose not support false now&quot;);
+<span class="nc" id="L498">        }</span>
+
+        @Override
+        public String toString() {
+<span class="nc" id="L502">            return String.format(&quot;BatchEdgeRequest{jsonEdges=%s,&quot; +</span>
+                                 &quot;updateStrategies=%s,&quot; +
+                                 &quot;checkVertex=%s,createIfNotExist=%s}&quot;,
+                                 this.jsonEdges, this.updateStrategies,
+<span class="nc" id="L506">                                 this.checkVertex, this.createIfNotExist);</span>
+        }
+    }
+
+    private static class JsonEdge extends JsonElement {
+
+        @JsonProperty(&quot;outV&quot;)
+        public Object source;
+        @JsonProperty(&quot;outVLabel&quot;)
+        public String sourceLabel;
+        @JsonProperty(&quot;inV&quot;)
+        public Object target;
+        @JsonProperty(&quot;inVLabel&quot;)
+        public String targetLabel;
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L523">            E.checkArgumentNotNull(this.label, &quot;Expect the label of edge&quot;);</span>
+<span class="nc" id="L524">            E.checkArgumentNotNull(this.source, &quot;Expect source vertex id&quot;);</span>
+<span class="nc" id="L525">            E.checkArgumentNotNull(this.target, &quot;Expect target vertex id&quot;);</span>
+<span class="nc bnc" id="L526" title="All 2 branches missed.">            if (isBatch) {</span>
+<span class="nc" id="L527">                E.checkArgumentNotNull(this.sourceLabel,</span>
+                                       &quot;Expect source vertex label&quot;);
+<span class="nc" id="L529">                E.checkArgumentNotNull(this.targetLabel,</span>
+                                       &quot;Expect target vertex label&quot;);
+            } else {
+<span class="nc bnc" id="L532" title="All 8 branches missed.">                E.checkArgument(this.sourceLabel == null &amp;&amp;</span>
+                                this.targetLabel == null ||
+                                this.sourceLabel != null &amp;&amp;
+                                this.targetLabel != null,
+                                &quot;The both source and target vertex label &quot; +
+                                &quot;are either passed in, or not passed in&quot;);
+            }
+<span class="nc" id="L539">            this.checkUpdate();</span>
+<span class="nc" id="L540">        }</span>
+
+        @Override
+        public void checkUpdate() {
+<span class="nc" id="L544">            E.checkArgumentNotNull(this.properties,</span>
+                                   &quot;The properties of edge can't be null&quot;);
+
+<span class="nc bnc" id="L547" title="All 2 branches missed.">            for (Map.Entry&lt;String, Object&gt; entry : this.properties.entrySet()) {</span>
+<span class="nc" id="L548">                String key = entry.getKey();</span>
+<span class="nc" id="L549">                Object value = entry.getValue();</span>
+<span class="nc" id="L550">                E.checkArgumentNotNull(value, &quot;Not allowed to set value of &quot; +</span>
+                                       &quot;property '%s' to null for edge '%s'&quot;,
+                                       key, this.id);
+<span class="nc" id="L553">            }</span>
+<span class="nc" id="L554">        }</span>
+
+        @Override
+        public Object[] properties() {
+<span class="nc" id="L558">            return API.properties(this.properties);</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L563">            return String.format(&quot;JsonEdge{label=%s, &quot; +</span>
+                                 &quot;source-vertex=%s, source-vertex-label=%s, &quot; +
+                                 &quot;target-vertex=%s, target-vertex-label=%s, &quot; +
+                                 &quot;properties=%s}&quot;,
+                                 this.label, this.source, this.sourceLabel,
+                                 this.target, this.targetLabel,
+                                 this.properties);
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

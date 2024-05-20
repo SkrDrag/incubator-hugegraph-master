@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>BackendStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">BackendStore.java</span></div><h1>BackendStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import java.util.Iterator;
+import java.util.Map;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+
+public interface BackendStore {
+
+    // Store name
+    String store();
+
+    // Stored version
+    String storedVersion();
+
+    // Database name
+    String database();
+
+    // Get the parent provider
+    BackendStoreProvider provider();
+
+    // Get the system schema store
+    SystemSchemaStore systemSchemaStore();
+
+    // Whether it is the storage of schema
+    boolean isSchemaStore();
+
+    // Open/close database
+    void open(HugeConfig config);
+
+    void close();
+
+    boolean opened();
+
+    // Initialize/clear database
+    void init();
+
+    void clear(boolean clearSpace);
+
+    boolean initialized();
+
+    // Delete all data of database (keep table structure)
+    void truncate();
+
+    // Add/delete data
+    void mutate(BackendMutation mutation);
+
+    // Query data
+    Iterator&lt;BackendEntry&gt; query(Query query);
+
+    Number queryNumber(Query query);
+
+    // Transaction
+    void beginTx();
+
+    void commitTx();
+
+    void rollbackTx();
+
+    // Get metadata by key
+    &lt;R&gt; R metadata(HugeType type, String meta, Object[] args);
+
+    // Backend features
+    BackendFeatures features();
+
+    // Generate an id for a specific type
+    default Id nextId(HugeType type) {
+<span class="nc" id="L90">        final int MAX_TIMES = 1000;</span>
+        // Do get-increase-get-compare operation
+<span class="nc" id="L92">        long counter = 0L;</span>
+<span class="nc" id="L93">        long expect = -1L;</span>
+<span class="nc" id="L94">        synchronized (this) {</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">            for (int i = 0; i &lt; MAX_TIMES; i++) {</span>
+<span class="nc" id="L96">                counter = this.getCounter(type);</span>
+
+<span class="nc bnc" id="L98" title="All 2 branches missed.">                if (counter == expect) {</span>
+<span class="nc" id="L99">                    break;</span>
+                }
+                // Increase local counter
+<span class="nc" id="L102">                expect = counter + 1L;</span>
+                // Increase remote counter
+<span class="nc" id="L104">                this.increaseCounter(type, 1L);</span>
+            }
+<span class="nc" id="L106">        }</span>
+
+<span class="nc bnc" id="L108" title="All 2 branches missed.">        E.checkState(counter != 0L, &quot;Please check whether '%s' is OK&quot;,</span>
+<span class="nc" id="L109">                      this.provider().type());</span>
+
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        E.checkState(counter == expect, &quot;'%s' is busy please try again&quot;,</span>
+<span class="nc" id="L112">                     this.provider().type());</span>
+
+<span class="nc" id="L114">        return IdGenerator.of(expect);</span>
+    }
+
+    // Set next id &gt;= lowest for a specific type
+    default void setCounterLowest(HugeType type, long lowest) {
+<span class="nc" id="L119">        long current = this.getCounter(type);</span>
+<span class="nc bnc" id="L120" title="All 2 branches missed.">        if (current &gt;= lowest) {</span>
+<span class="nc" id="L121">            return;</span>
+        }
+<span class="nc" id="L123">        long increment = lowest - current;</span>
+<span class="nc" id="L124">        this.increaseCounter(type, increment);</span>
+<span class="nc" id="L125">    }</span>
+
+    default String olapTableName(HugeType type) {
+<span class="nc" id="L128">        StringBuilder builder = new StringBuilder(7);</span>
+<span class="nc" id="L129">        builder.append(this.store())</span>
+<span class="nc" id="L130">               .append(&quot;_&quot;)</span>
+<span class="nc" id="L131">               .append(HugeType.OLAP.string())</span>
+<span class="nc" id="L132">               .append(&quot;_&quot;)</span>
+<span class="nc" id="L133">               .append(type.string());</span>
+<span class="nc" id="L134">        return builder.toString().toLowerCase();</span>
+    }
+
+    default String olapTableName(Id id) {
+<span class="nc" id="L138">        StringBuilder builder = new StringBuilder(5 + 4);</span>
+<span class="nc" id="L139">        builder.append(this.store())</span>
+<span class="nc" id="L140">               .append(&quot;_&quot;)</span>
+<span class="nc" id="L141">               .append(HugeType.OLAP.string())</span>
+<span class="nc" id="L142">               .append(&quot;_&quot;)</span>
+<span class="nc" id="L143">               .append(id.asLong());</span>
+<span class="nc" id="L144">        return builder.toString().toLowerCase();</span>
+    }
+
+    // Increase next id for specific type
+    void increaseCounter(HugeType type, long increment);
+
+    // Get current counter for a specific type
+    long getCounter(HugeType type);
+
+    default void createOlapTable(Id pkId) {
+<span class="nc" id="L154">        throw new UnsupportedOperationException(&quot;BackendStore.createOlapTable()&quot;);</span>
+    }
+
+    default void checkAndRegisterOlapTable(Id pkId) {
+<span class="nc" id="L158">        throw new UnsupportedOperationException(&quot;BackendStore.checkAndRegisterOlapTable()&quot;);</span>
+    }
+
+    default void clearOlapTable(Id pkId) {
+<span class="nc" id="L162">        throw new UnsupportedOperationException(&quot;BackendStore.clearOlapTable()&quot;);</span>
+    }
+
+    default void removeOlapTable(Id pkId) {
+<span class="nc" id="L166">        throw new UnsupportedOperationException(&quot;BackendStore.removeOlapTable()&quot;);</span>
+    }
+
+    default Map&lt;String, String&gt; createSnapshot(String snapshotDir) {
+<span class="nc" id="L170">        throw new UnsupportedOperationException(&quot;createSnapshot&quot;);</span>
+    }
+
+    default void resumeSnapshot(String snapshotDir, boolean deleteSnapshot) {
+<span class="nc" id="L174">        throw new UnsupportedOperationException(&quot;resumeSnapshot&quot;);</span>
+    }
+
+<span class="nc" id="L177">    enum TxState {</span>
+<span class="nc" id="L178">        BEGIN, COMMITTING, COMMITT_FAIL, ROLLBACKING, ROLLBACK_FAIL, CLEAN</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

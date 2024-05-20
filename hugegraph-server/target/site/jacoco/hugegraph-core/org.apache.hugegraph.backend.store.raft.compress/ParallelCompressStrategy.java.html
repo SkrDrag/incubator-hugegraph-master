@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ParallelCompressStrategy.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.raft.compress</a> &gt; <span class="el_source">ParallelCompressStrategy.java</span></div><h1>ParallelCompressStrategy.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.raft.compress;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Enumeration;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionHandler;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.zip.CheckedInputStream;
+import java.util.zip.CheckedOutputStream;
+import java.util.zip.Checksum;
+import java.util.zip.ZipEntry;
+
+import org.apache.commons.compress.archivers.zip.ParallelScatterZipCreator;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
+import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
+import org.apache.commons.compress.archivers.zip.ZipFile;
+import org.apache.commons.compress.parallel.InputStreamSupplier;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.input.NullInputStream;
+import org.apache.hugegraph.config.CoreOptions;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.alipay.sofa.jraft.util.ExecutorServiceHelper;
+import com.alipay.sofa.jraft.util.NamedThreadFactory;
+import com.alipay.sofa.jraft.util.Requires;
+import com.alipay.sofa.jraft.util.ThreadPoolUtil;
+import com.google.common.collect.Lists;
+
+public class ParallelCompressStrategy implements CompressStrategy {
+
+<span class="nc" id="L65">    private static final Logger LOG = LoggerFactory.getLogger(ParallelCompressStrategy.class);</span>
+
+<span class="nc" id="L67">    public static final int QUEUE_SIZE = CoreOptions.CPUS;</span>
+    public static final long KEEP_ALIVE_SECOND = 300L;
+
+    private final int compressThreads;
+    private final int decompressThreads;
+
+<span class="nc" id="L73">    public ParallelCompressStrategy(int compressThreads, int decompressThreads) {</span>
+<span class="nc" id="L74">        this.compressThreads = compressThreads;</span>
+<span class="nc" id="L75">        this.decompressThreads = decompressThreads;</span>
+<span class="nc" id="L76">    }</span>
+
+    /**
+     * Parallel output streams controller
+     */
+    private static class ZipArchiveScatterOutputStream {
+
+        private final ParallelScatterZipCreator creator;
+
+<span class="nc" id="L85">        public ZipArchiveScatterOutputStream(ExecutorService executorService) {</span>
+<span class="nc" id="L86">            this.creator = new ParallelScatterZipCreator(executorService);</span>
+<span class="nc" id="L87">        }</span>
+
+        public void addEntry(ZipArchiveEntry entry, InputStreamSupplier supplier) {
+<span class="nc" id="L90">            creator.addArchiveEntry(entry, supplier);</span>
+<span class="nc" id="L91">        }</span>
+
+        public void writeTo(ZipArchiveOutputStream archiveOutput) throws Exception {
+<span class="nc" id="L94">            creator.writeTo(archiveOutput);</span>
+<span class="nc" id="L95">        }</span>
+    }
+
+    @Override
+    public void compressZip(String rootDir, String sourceDir, String outputZipFile,
+                            Checksum checksum) throws Throwable {
+<span class="nc" id="L101">        File rootFile = new File(Paths.get(rootDir, sourceDir).toString());</span>
+<span class="nc" id="L102">        File zipFile = new File(outputZipFile);</span>
+<span class="nc" id="L103">        LOG.info(&quot;Start to compress snapshot in parallel mode&quot;);</span>
+<span class="nc" id="L104">        FileUtils.forceMkdir(zipFile.getParentFile());</span>
+
+<span class="nc" id="L106">        ExecutorService compressExecutor =</span>
+<span class="nc" id="L107">            newFixedPool(compressThreads, compressThreads, &quot;raft-snapshot-compress-executor&quot;,</span>
+                         new ThreadPoolExecutor.CallerRunsPolicy());
+<span class="nc" id="L109">        ZipArchiveScatterOutputStream scatterOutput =</span>
+            new ZipArchiveScatterOutputStream(compressExecutor);
+<span class="nc" id="L111">        compressDirectoryToZipFile(rootFile, scatterOutput, sourceDir, ZipEntry.DEFLATED);</span>
+
+<span class="nc" id="L113">        try (FileOutputStream fos = new FileOutputStream(zipFile);</span>
+<span class="nc" id="L114">             BufferedOutputStream bos = new BufferedOutputStream(fos);</span>
+<span class="nc" id="L115">             CheckedOutputStream cos = new CheckedOutputStream(bos, checksum);</span>
+<span class="nc" id="L116">             ZipArchiveOutputStream archiveOutputStream = new ZipArchiveOutputStream(cos)) {</span>
+<span class="nc" id="L117">            scatterOutput.writeTo(archiveOutputStream);</span>
+<span class="nc" id="L118">            archiveOutputStream.flush();</span>
+<span class="nc" id="L119">            fos.getFD().sync();</span>
+        }
+
+<span class="nc" id="L122">        ExecutorServiceHelper.shutdownAndAwaitTermination(compressExecutor);</span>
+<span class="nc" id="L123">    }</span>
+
+    @Override
+    public void decompressZip(String sourceZipFile, String outputDir,
+                              Checksum checksum) throws Throwable {
+<span class="nc" id="L128">        LOG.info(&quot;Start to decompress snapshot in parallel mode&quot;);</span>
+<span class="nc" id="L129">        ExecutorService decompressExecutor =</span>
+<span class="nc" id="L130">            newFixedPool(decompressThreads, decompressThreads,</span>
+                         &quot;raft-snapshot-decompress-executor&quot;,
+                         new ThreadPoolExecutor.CallerRunsPolicy());
+        // compute the checksum in a single thread
+<span class="nc" id="L134">        Future&lt;Boolean&gt; checksumFuture = decompressExecutor.submit(() -&gt; {</span>
+<span class="nc" id="L135">            computeZipFileChecksumValue(sourceZipFile, checksum);</span>
+<span class="nc" id="L136">            return true;</span>
+        });
+
+<span class="nc" id="L139">        try (ZipFile zipFile = new ZipFile(sourceZipFile)) {</span>
+<span class="nc" id="L140">            List&lt;Future&lt;Boolean&gt;&gt; futures = Lists.newArrayList();</span>
+<span class="nc" id="L141">            for (Enumeration&lt;ZipArchiveEntry&gt; e = zipFile.getEntries();</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">                 e.hasMoreElements(); ) {</span>
+<span class="nc" id="L143">                ZipArchiveEntry zipEntry = e.nextElement();</span>
+<span class="nc" id="L144">                Future&lt;Boolean&gt; future = decompressExecutor.submit(() -&gt; {</span>
+<span class="nc" id="L145">                    unZipFile(zipFile, zipEntry, outputDir);</span>
+<span class="nc" id="L146">                    return true;</span>
+                });
+<span class="nc" id="L148">                futures.add(future);</span>
+<span class="nc" id="L149">            }</span>
+            // blocking and caching exception
+<span class="nc bnc" id="L151" title="All 2 branches missed.">            for (Future&lt;Boolean&gt; future : futures) {</span>
+<span class="nc" id="L152">                future.get();</span>
+<span class="nc" id="L153">            }</span>
+        }
+        // wait for checksum to be calculated
+<span class="nc" id="L156">        checksumFuture.get();</span>
+<span class="nc" id="L157">        ExecutorServiceHelper.shutdownAndAwaitTermination(decompressExecutor);</span>
+<span class="nc" id="L158">    }</span>
+
+    private void compressDirectoryToZipFile(File dir, ZipArchiveScatterOutputStream scatterOutput,
+                                            String sourceDir, int method) {
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (dir == null) {</span>
+<span class="nc" id="L163">            return;</span>
+        }
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        if (dir.isFile()) {</span>
+<span class="nc" id="L166">            addEntry(sourceDir, dir, scatterOutput, method);</span>
+<span class="nc" id="L167">            return;</span>
+        }
+<span class="nc" id="L169">        File[] files = Requires.requireNonNull(Objects.requireNonNull(dir.listFiles()), &quot;files&quot;);</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        for (File file : files) {</span>
+<span class="nc" id="L171">            String child = Paths.get(sourceDir, file.getName()).toString();</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">            if (file.isDirectory()) {</span>
+<span class="nc" id="L173">                compressDirectoryToZipFile(file, scatterOutput, child, method);</span>
+            } else {
+<span class="nc" id="L175">                addEntry(child, file, scatterOutput, method);</span>
+            }
+        }
+<span class="nc" id="L178">    }</span>
+
+    /**
+     * Add archive entry to the scatterOutputStream
+     */
+    private void addEntry(String filePath, File file,
+                          ZipArchiveScatterOutputStream scatterOutputStream, int method) {
+<span class="nc" id="L185">        ZipArchiveEntry archiveEntry = new ZipArchiveEntry(filePath);</span>
+<span class="nc" id="L186">        archiveEntry.setMethod(method);</span>
+<span class="nc" id="L187">        scatterOutputStream.addEntry(archiveEntry, () -&gt; {</span>
+            try {
+<span class="nc bnc" id="L189" title="All 2 branches missed.">                return file.isDirectory() ? new NullInputStream(0)</span>
+<span class="nc" id="L190">                                          : new BufferedInputStream(new FileInputStream(file));</span>
+<span class="nc" id="L191">            } catch (FileNotFoundException e) {</span>
+<span class="nc" id="L192">                LOG.error(&quot;Can't find file, path={}, {}&quot;, file.getPath(), e);</span>
+            }
+<span class="nc" id="L194">            return new NullInputStream(0);</span>
+        });
+<span class="nc" id="L196">    }</span>
+
+    /**
+     * Unzip the archive entry to targetDir
+     */
+    private void unZipFile(ZipFile zipFile, ZipArchiveEntry entry,
+                           String targetDir) throws Exception {
+<span class="nc" id="L203">        File targetFile = new File(Paths.get(targetDir, entry.getName()).toString());</span>
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (!targetFile.toPath().normalize().startsWith(targetDir)) {</span>
+<span class="nc" id="L205">            throw new IOException(String.format(&quot;Bad entry: %s&quot;, entry.getName()));</span>
+        }
+
+<span class="nc" id="L208">        FileUtils.forceMkdir(targetFile.getParentFile());</span>
+<span class="nc" id="L209">        try (InputStream is = zipFile.getInputStream(entry);</span>
+<span class="nc" id="L210">             BufferedInputStream fis = new BufferedInputStream(is);</span>
+<span class="nc" id="L211">             BufferedOutputStream bos =</span>
+<span class="nc" id="L212">                 new BufferedOutputStream(Files.newOutputStream(targetFile.toPath()))) {</span>
+<span class="nc" id="L213">            IOUtils.copy(fis, bos);</span>
+        }
+<span class="nc" id="L215">    }</span>
+
+    /**
+     * Compute the value of checksum
+     */
+    private void computeZipFileChecksumValue(String zipPath, Checksum checksum) throws Exception {
+<span class="nc" id="L221">        try (BufferedInputStream bis =</span>
+<span class="nc" id="L222">                 new BufferedInputStream(Files.newInputStream(Paths.get(zipPath)));</span>
+<span class="nc" id="L223">             CheckedInputStream cis = new CheckedInputStream(bis, checksum);</span>
+<span class="nc" id="L224">             ZipArchiveInputStream zis = new ZipArchiveInputStream(cis)) {</span>
+            // checksum is calculated in the process
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            while (zis.getNextZipEntry() != null) {</span>
+                // TODO: any better way to do the check?
+            }
+        }
+<span class="nc" id="L230">    }</span>
+
+    private static ExecutorService newFixedPool(int coreThreads, int maxThreads, String name,
+                                                RejectedExecutionHandler handler) {
+<span class="nc" id="L234">        BlockingQueue&lt;Runnable&gt; queue = new ArrayBlockingQueue&lt;&gt;(QUEUE_SIZE);</span>
+<span class="nc" id="L235">        return ThreadPoolUtil.newBuilder()</span>
+<span class="nc" id="L236">                             .poolName(name)</span>
+<span class="nc" id="L237">                             .enableMetric(false)</span>
+<span class="nc" id="L238">                             .coreThreads(coreThreads)</span>
+<span class="nc" id="L239">                             .maximumThreads(maxThreads)</span>
+<span class="nc" id="L240">                             .keepAliveSeconds(KEEP_ALIVE_SECOND)</span>
+<span class="nc" id="L241">                             .workQueue(queue)</span>
+<span class="nc" id="L242">                             .threadFactory(new NamedThreadFactory(name, true))</span>
+<span class="nc" id="L243">                             .rejectedHandler(handler)</span>
+<span class="nc" id="L244">                             .build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

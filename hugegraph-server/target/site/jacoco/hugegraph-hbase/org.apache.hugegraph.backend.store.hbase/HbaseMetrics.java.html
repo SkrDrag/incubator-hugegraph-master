@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HbaseMetrics.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-hbase</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.hbase</a> &gt; <span class="el_source">HbaseMetrics.java</span></div><h1>HbaseMetrics.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.hbase;
+
+import java.util.Collection;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import org.apache.hadoop.hbase.ClusterMetrics;
+import org.apache.hadoop.hbase.RegionMetrics;
+import org.apache.hadoop.hbase.ServerMetrics;
+import org.apache.hadoop.hbase.ServerName;
+import org.apache.hadoop.hbase.Size;
+import org.apache.hadoop.hbase.client.Admin;
+
+import org.apache.hugegraph.backend.store.BackendMetrics;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.UnitUtil;
+import com.google.common.collect.ImmutableMap;
+
+public class HbaseMetrics implements BackendMetrics {
+
+    private final HbaseSessions hbase;
+
+<span class="nc" id="L43">    public HbaseMetrics(HbaseSessions hbase) {</span>
+<span class="nc" id="L44">        E.checkArgumentNotNull(hbase, &quot;HBase connection is not opened&quot;);</span>
+<span class="nc" id="L45">        this.hbase = hbase;</span>
+<span class="nc" id="L46">    }</span>
+
+    @Override
+    public Map&lt;String, Object&gt; metrics() {
+<span class="nc" id="L50">        Map&lt;String, Object&gt; results = this.clusterInfo();</span>
+<span class="nc bnc" id="L51" title="All 2 branches missed.">        if (results.containsKey(EXCEPTION)) {</span>
+<span class="nc" id="L52">            return results;</span>
+        }
+
+<span class="nc" id="L55">        try (Admin admin = this.hbase.hbase().getAdmin()) {</span>
+<span class="nc" id="L56">            ClusterMetrics clusterMetrics = admin.getClusterMetrics();</span>
+<span class="nc" id="L57">            Map&lt;ServerName, ServerMetrics&gt; metrics =</span>
+<span class="nc" id="L58">                            clusterMetrics.getLiveServerMetrics();</span>
+<span class="nc" id="L59">            Map&lt;String, Object&gt; regionServers = InsertionOrderUtil.newMap();</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">            for (Map.Entry&lt;ServerName, ServerMetrics&gt; e : metrics.entrySet()) {</span>
+<span class="nc" id="L61">                ServerName server = e.getKey();</span>
+<span class="nc" id="L62">                ServerMetrics serverMetrics = e.getValue();</span>
+<span class="nc" id="L63">                regionServers.put(server.getAddress().toString(),</span>
+<span class="nc" id="L64">                                  formatMetrics(serverMetrics));</span>
+<span class="nc" id="L65">            }</span>
+<span class="nc" id="L66">            results.put(SERVERS, regionServers);</span>
+<span class="nc" id="L67">        } catch (Throwable e) {</span>
+<span class="nc" id="L68">            results.put(EXCEPTION, e.toString());</span>
+<span class="nc" id="L69">        }</span>
+<span class="nc" id="L70">        return results;</span>
+    }
+
+    public Map&lt;String, Object&gt; compact(List&lt;String&gt; tableNames) {
+<span class="nc" id="L74">        Map&lt;String, Object&gt; results = this.clusterInfo();</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        if (results.containsKey(EXCEPTION)) {</span>
+<span class="nc" id="L76">            return results;</span>
+        }
+
+        try {
+<span class="nc" id="L80">            this.hbase.compactTables(tableNames);</span>
+<span class="nc" id="L81">            results.put(SERVERS, ImmutableMap.of(SERVER_CLUSTER, &quot;OK&quot;));</span>
+<span class="nc" id="L82">        } catch (Throwable e) {</span>
+<span class="nc" id="L83">            results.put(EXCEPTION, e.toString());</span>
+<span class="nc" id="L84">        }</span>
+<span class="nc" id="L85">        return results;</span>
+    }
+
+    private Map&lt;String, Object&gt; clusterInfo() {
+<span class="nc" id="L89">        Map&lt;String, Object&gt; results = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L90">        try (Admin admin = this.hbase.hbase().getAdmin()) {</span>
+            // Cluster info
+<span class="nc" id="L92">            ClusterMetrics clusterMetrics = admin.getClusterMetrics();</span>
+<span class="nc" id="L93">            results.put(CLUSTER_ID, clusterMetrics.getClusterId());</span>
+<span class="nc" id="L94">            results.put(&quot;master_name&quot;,</span>
+<span class="nc" id="L95">                        clusterMetrics.getMasterName().getAddress().toString());</span>
+<span class="nc" id="L96">            results.put(&quot;average_load&quot;, clusterMetrics.getAverageLoad());</span>
+<span class="nc" id="L97">            results.put(&quot;hbase_version&quot;, clusterMetrics.getHBaseVersion());</span>
+<span class="nc" id="L98">            results.put(&quot;region_count&quot;, clusterMetrics.getRegionCount());</span>
+<span class="nc" id="L99">            results.put(&quot;leaving_servers&quot;,</span>
+<span class="nc" id="L100">                        serversAddress(clusterMetrics.getDeadServerNames()));</span>
+            // Region servers info
+<span class="nc" id="L102">            Collection&lt;ServerName&gt; regionServers = admin.getRegionServers();</span>
+<span class="nc" id="L103">            results.put(NODES, regionServers.size());</span>
+<span class="nc" id="L104">            results.put(&quot;region_servers&quot;, serversAddress(regionServers));</span>
+<span class="nc" id="L105">        } catch (Throwable e) {</span>
+<span class="nc" id="L106">            results.put(EXCEPTION, e.toString());</span>
+<span class="nc" id="L107">        }</span>
+<span class="nc" id="L108">        return results;</span>
+    }
+
+    private static Map&lt;String, Object&gt; formatMetrics(
+                                       ServerMetrics serverMetrics) {
+<span class="nc" id="L113">        Map&lt;String, Object&gt; metrics = InsertionOrderUtil.newMap();</span>
+
+<span class="nc" id="L115">        Size memMax = serverMetrics.getMaxHeapSize();</span>
+<span class="nc" id="L116">        Size memUsed = serverMetrics.getUsedHeapSize();</span>
+<span class="nc" id="L117">        long memUsedBytes = (long) memUsed.get(Size.Unit.BYTE);</span>
+<span class="nc" id="L118">        metrics.put(MEM_MAX, memMax.get(Size.Unit.MEGABYTE));</span>
+<span class="nc" id="L119">        metrics.put(MEM_USED, memUsed.get(Size.Unit.MEGABYTE));</span>
+<span class="nc" id="L120">        metrics.put(MEM_USED + READABLE,</span>
+<span class="nc" id="L121">                    UnitUtil.bytesToReadableString(memUsedBytes));</span>
+<span class="nc" id="L122">        metrics.put(MEM_UNIT, &quot;MB&quot;);</span>
+
+<span class="nc" id="L124">        Collection&lt;RegionMetrics&gt; regions = serverMetrics.getRegionMetrics()</span>
+<span class="nc" id="L125">                                                         .values();</span>
+<span class="nc" id="L126">        long fileSizeBytes = 0L;</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        for (RegionMetrics region : regions) {</span>
+<span class="nc" id="L128">            Double tempValue = region.getStoreFileSize().get(Size.Unit.BYTE);</span>
+<span class="nc" id="L129">            fileSizeBytes += tempValue.longValue();</span>
+<span class="nc" id="L130">        }</span>
+<span class="nc" id="L131">        metrics.put(DISK_USAGE, UnitUtil.bytesToGB(fileSizeBytes));</span>
+<span class="nc" id="L132">        metrics.put(DISK_USAGE + READABLE,</span>
+<span class="nc" id="L133">                    UnitUtil.bytesToReadableString(fileSizeBytes));</span>
+<span class="nc" id="L134">        metrics.put(DISK_UNIT, &quot;GB&quot;);</span>
+
+<span class="nc" id="L136">        metrics.put(&quot;request_count&quot;, serverMetrics.getRequestCount());</span>
+<span class="nc" id="L137">        metrics.put(&quot;request_count_per_second&quot;,</span>
+<span class="nc" id="L138">                    serverMetrics.getRequestCountPerSecond());</span>
+<span class="nc" id="L139">        metrics.put(&quot;coprocessor_names&quot;, serverMetrics.getCoprocessorNames());</span>
+
+<span class="nc" id="L141">        metrics.put(&quot;regions&quot;, formatRegions(regions));</span>
+
+<span class="nc" id="L143">        return metrics;</span>
+    }
+
+    private static Map&lt;String, Object&gt; formatRegions(
+                                       Collection&lt;RegionMetrics&gt; regions) {
+<span class="nc" id="L148">        Map&lt;String, Object&gt; metrics = InsertionOrderUtil.newMap();</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">        for (RegionMetrics region : regions) {</span>
+<span class="nc" id="L150">            metrics.put(region.getNameAsString(), formatRegion(region));</span>
+<span class="nc" id="L151">        }</span>
+<span class="nc" id="L152">        return metrics;</span>
+    }
+
+    private static Map&lt;String, Object&gt; formatRegion(RegionMetrics region) {
+<span class="nc" id="L156">        Map&lt;String, Object&gt; metrics = InsertionOrderUtil.newMap();</span>
+
+<span class="nc" id="L158">        Size fileSize = region.getStoreFileSize();</span>
+<span class="nc" id="L159">        long fileSizeBytes = (long) fileSize.get(Size.Unit.BYTE);</span>
+<span class="nc" id="L160">        metrics.put(DISK_USAGE, fileSize.get(Size.Unit.GIGABYTE));</span>
+<span class="nc" id="L161">        metrics.put(DISK_USAGE + READABLE,</span>
+<span class="nc" id="L162">                    UnitUtil.bytesToReadableString(fileSizeBytes));</span>
+<span class="nc" id="L163">        metrics.put(DISK_UNIT, &quot;GB&quot;);</span>
+
+<span class="nc" id="L165">        metrics.put(&quot;index_store_size&quot;,</span>
+<span class="nc" id="L166">                    region.getStoreFileIndexSize().get(Size.Unit.MEGABYTE));</span>
+<span class="nc" id="L167">        metrics.put(&quot;root_level_index_store_size&quot;,</span>
+<span class="nc" id="L168">                    region.getStoreFileRootLevelIndexSize()</span>
+<span class="nc" id="L169">                          .get(Size.Unit.MEGABYTE));</span>
+<span class="nc" id="L170">        metrics.put(&quot;mem_store_size&quot;,</span>
+<span class="nc" id="L171">                    region.getMemStoreSize().get(Size.Unit.MEGABYTE));</span>
+<span class="nc" id="L172">        metrics.put(&quot;bloom_filter_size&quot;,</span>
+<span class="nc" id="L173">                    region.getBloomFilterSize().get(Size.Unit.MEGABYTE));</span>
+<span class="nc" id="L174">        metrics.put(&quot;size_unit&quot;, &quot;MB&quot;);</span>
+
+<span class="nc" id="L176">        metrics.put(&quot;store_count&quot;, region.getStoreCount());</span>
+<span class="nc" id="L177">        metrics.put(&quot;store_file_count&quot;, region.getStoreFileCount());</span>
+
+<span class="nc" id="L179">        metrics.put(&quot;request_count&quot;, region.getRequestCount());</span>
+<span class="nc" id="L180">        metrics.put(&quot;write_request_count&quot;, region.getWriteRequestCount());</span>
+<span class="nc" id="L181">        metrics.put(&quot;read_request_count&quot;, region.getReadRequestCount());</span>
+<span class="nc" id="L182">        metrics.put(&quot;filtered_read_request_count&quot;,</span>
+<span class="nc" id="L183">                    region.getFilteredReadRequestCount());</span>
+
+<span class="nc" id="L185">        metrics.put(&quot;completed_sequence_id&quot;, region.getCompletedSequenceId());</span>
+<span class="nc" id="L186">        metrics.put(&quot;data_locality&quot;, region.getDataLocality());</span>
+<span class="nc" id="L187">        metrics.put(&quot;compacted_cell_count&quot;, region.getCompactedCellCount());</span>
+<span class="nc" id="L188">        metrics.put(&quot;compacting_cell_count&quot;, region.getCompactingCellCount());</span>
+<span class="nc" id="L189">        metrics.put(&quot;last_compaction_time&quot;,</span>
+<span class="nc" id="L190">                    new Date(region.getLastMajorCompactionTimestamp()));</span>
+
+<span class="nc" id="L192">        return metrics;</span>
+    }
+
+    private static List&lt;String&gt; serversAddress(
+                                Collection&lt;ServerName&gt; servers) {
+<span class="nc" id="L197">        return servers.stream().map(server -&gt; {</span>
+<span class="nc" id="L198">            return server.getAddress().toString();</span>
+<span class="nc" id="L199">        }).collect(Collectors.toList());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

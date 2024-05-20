@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>DataType.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.type.define</a> &gt; <span class="el_source">DataType.java</span></div><h1>DataType.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.type.define;
+
+import java.nio.ByteBuffer;
+import java.util.Date;
+import java.util.List;
+import java.util.UUID;
+
+import org.apache.hugegraph.util.Blob;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.util.Bytes;
+import org.apache.hugegraph.util.DateUtil;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.StringEncoding;
+
+<span class="nc" id="L33">public enum DataType implements SerialEnum {</span>
+
+<span class="nc" id="L35">    UNKNOWN(0, &quot;unknown&quot;, Object.class),</span>
+<span class="nc" id="L36">    OBJECT(1, &quot;object&quot;, Object.class),</span>
+<span class="nc" id="L37">    BOOLEAN(2, &quot;boolean&quot;, Boolean.class),</span>
+<span class="nc" id="L38">    BYTE(3, &quot;byte&quot;, Byte.class),</span>
+<span class="nc" id="L39">    INT(4, &quot;int&quot;, Integer.class),</span>
+<span class="nc" id="L40">    LONG(5, &quot;long&quot;, Long.class),</span>
+<span class="nc" id="L41">    FLOAT(6, &quot;float&quot;, Float.class),</span>
+<span class="nc" id="L42">    DOUBLE(7, &quot;double&quot;, Double.class),</span>
+<span class="nc" id="L43">    TEXT(8, &quot;text&quot;, String.class),</span>
+<span class="nc" id="L44">    BLOB(9, &quot;blob&quot;, Blob.class),</span>
+<span class="nc" id="L45">    DATE(10, &quot;date&quot;, Date.class),</span>
+<span class="nc" id="L46">    UUID(11, &quot;uuid&quot;, UUID.class);</span>
+
+    private final byte code;
+    private final String name;
+    private final Class&lt;?&gt; clazz;
+
+    static {
+<span class="nc" id="L53">        SerialEnum.register(DataType.class);</span>
+<span class="nc" id="L54">    }</span>
+
+<span class="nc" id="L56">    DataType(int code, String name, Class&lt;?&gt; clazz) {</span>
+<span class="nc bnc" id="L57" title="All 2 branches missed.">        assert code &lt; 256;</span>
+<span class="nc" id="L58">        this.code = (byte) code;</span>
+<span class="nc" id="L59">        this.name = name;</span>
+<span class="nc" id="L60">        this.clazz = clazz;</span>
+<span class="nc" id="L61">    }</span>
+
+    @Override
+    public byte code() {
+<span class="nc" id="L65">        return this.code;</span>
+    }
+
+    public String string() {
+<span class="nc" id="L69">        return this.name;</span>
+    }
+
+    public Class&lt;?&gt; clazz() {
+<span class="nc" id="L73">        return this.clazz;</span>
+    }
+
+    public boolean isText() {
+<span class="nc bnc" id="L77" title="All 2 branches missed.">        return this == DataType.TEXT;</span>
+    }
+
+    public boolean isNumber() {
+<span class="nc bnc" id="L81" title="All 10 branches missed.">        return this == BYTE || this == INT || this == LONG ||</span>
+               this == FLOAT || this == DOUBLE;
+    }
+
+    public boolean isNumber4() {
+        // Store index value of Byte using 4 bytes
+<span class="nc bnc" id="L87" title="All 6 branches missed.">        return this == BYTE || this == INT || this == FLOAT;</span>
+    }
+
+    public boolean isNumber8() {
+<span class="nc bnc" id="L91" title="All 4 branches missed.">        return this == LONG || this == DOUBLE;</span>
+    }
+
+    public boolean isBlob() {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        return this == DataType.BLOB;</span>
+    }
+
+    public boolean isDate() {
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        return this == DataType.DATE;</span>
+    }
+
+    public boolean isUUID() {
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        return this == DataType.UUID;</span>
+    }
+
+    public &lt;V&gt; Number valueToNumber(V value) {
+<span class="nc bnc" id="L107" title="All 4 branches missed.">        if (!(this.isNumber() &amp;&amp; value instanceof Number) &amp;&amp;</span>
+<span class="nc bnc" id="L108" title="All 2 branches missed.">            !JsonUtil.isInfinityOrNaN(value)) {</span>
+<span class="nc" id="L109">            return null;</span>
+        }
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        if (this.clazz.isInstance(value)) {</span>
+<span class="nc" id="L112">            return (Number) value;</span>
+        }
+
+        Number number;
+        try {
+<span class="nc bnc" id="L117" title="All 6 branches missed.">            switch (this) {</span>
+                case BYTE:
+<span class="nc" id="L119">                    number = Byte.valueOf(value.toString());</span>
+<span class="nc" id="L120">                    break;</span>
+                case INT:
+<span class="nc" id="L122">                    number = Integer.valueOf(value.toString());</span>
+<span class="nc" id="L123">                    break;</span>
+                case LONG:
+<span class="nc" id="L125">                    number = Long.valueOf(value.toString());</span>
+<span class="nc" id="L126">                    break;</span>
+                case FLOAT:
+<span class="nc" id="L128">                    number = Float.valueOf(value.toString());</span>
+<span class="nc" id="L129">                    break;</span>
+                case DOUBLE:
+<span class="nc" id="L131">                    number = Double.valueOf(value.toString());</span>
+<span class="nc" id="L132">                    break;</span>
+                default:
+<span class="nc" id="L134">                    throw new AssertionError(String.format(</span>
+                              &quot;Number type only contains Byte, Integer, &quot; +
+<span class="nc" id="L136">                              &quot;Long, Float, Double, but got %s&quot;, this.clazz()));</span>
+            }
+<span class="nc" id="L138">        } catch (NumberFormatException e) {</span>
+<span class="nc" id="L139">            throw new IllegalArgumentException(String.format(</span>
+                      &quot;Can't read '%s' as %s: %s&quot;,
+<span class="nc" id="L141">                      value, this.name, e.getMessage()));</span>
+<span class="nc" id="L142">        }</span>
+<span class="nc" id="L143">        return number;</span>
+    }
+
+    public &lt;V&gt; Date valueToDate(V value) {
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        if (!this.isDate()) {</span>
+<span class="nc" id="L148">            return null;</span>
+        }
+<span class="nc bnc" id="L150" title="All 2 branches missed.">        if (value instanceof Date) {</span>
+<span class="nc" id="L151">            return (Date) value;</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        } else if (value instanceof Integer) {</span>
+<span class="nc" id="L153">            return new Date(((Number) value).intValue());</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        } else if (value instanceof Long) {</span>
+<span class="nc" id="L155">            return new Date(((Number) value).longValue());</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        } else if (value instanceof String) {</span>
+<span class="nc" id="L157">            return DateUtil.parse((String) value);</span>
+        }
+<span class="nc" id="L159">        return null;</span>
+    }
+
+    public &lt;V&gt; UUID valueToUUID(V value) {
+<span class="nc bnc" id="L163" title="All 2 branches missed.">        if (!this.isUUID()) {</span>
+<span class="nc" id="L164">            return null;</span>
+        }
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        if (value instanceof UUID) {</span>
+<span class="nc" id="L167">            return (UUID) value;</span>
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        } else if (value instanceof String) {</span>
+<span class="nc" id="L169">            return StringEncoding.uuid((String) value);</span>
+        }
+<span class="nc" id="L171">        return null;</span>
+    }
+
+    public &lt;V&gt; Blob valueToBlob(V value) {
+<span class="nc bnc" id="L175" title="All 2 branches missed.">        if (!this.isBlob()) {</span>
+<span class="nc" id="L176">            return null;</span>
+        }
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (value instanceof Blob) {</span>
+<span class="nc" id="L179">            return (Blob) value;</span>
+<span class="nc bnc" id="L180" title="All 2 branches missed.">        } else if (value instanceof byte[]) {</span>
+<span class="nc" id="L181">            return Blob.wrap((byte[]) value);</span>
+<span class="nc bnc" id="L182" title="All 2 branches missed.">        } else if (value instanceof ByteBuffer) {</span>
+<span class="nc" id="L183">            return Blob.wrap(((ByteBuffer) value).array());</span>
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        } else if (value instanceof BytesBuffer) {</span>
+<span class="nc" id="L185">            return Blob.wrap(((BytesBuffer) value).bytes());</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        } else if (value instanceof String) {</span>
+            // Only base64 string or hex string accepted
+<span class="nc" id="L188">            String str = ((String) value);</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">            if (str.startsWith(&quot;0x&quot;)) {</span>
+<span class="nc" id="L190">                return Blob.wrap(Bytes.fromHex(str.substring(2)));</span>
+            }
+<span class="nc" id="L192">            return Blob.wrap(StringEncoding.decodeBase64(str));</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        } else if (value instanceof List) {</span>
+<span class="nc" id="L194">            List&lt;?&gt; values = (List&lt;?&gt;) value;</span>
+<span class="nc" id="L195">            byte[] bytes = new byte[values.size()];</span>
+<span class="nc bnc" id="L196" title="All 2 branches missed.">            for (int i = 0; i &lt; bytes.length; i++) {</span>
+<span class="nc" id="L197">                Object v = values.get(i);</span>
+<span class="nc bnc" id="L198" title="All 4 branches missed.">                if (v instanceof Byte || v instanceof Integer) {</span>
+<span class="nc" id="L199">                    bytes[i] = ((Number) v).byteValue();</span>
+                } else {
+<span class="nc" id="L201">                    throw new IllegalArgumentException(String.format(</span>
+                              &quot;expect byte or int value, but got '%s'&quot;, v));
+                }
+            }
+<span class="nc" id="L205">            return Blob.wrap(bytes);</span>
+        }
+<span class="nc" id="L207">        return null;</span>
+    }
+
+    public static DataType fromClass(Class&lt;?&gt; clazz) {
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        for (DataType type : DataType.values()) {</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">            if (type.clazz() == clazz) {</span>
+<span class="nc" id="L213">                return type;</span>
+            }
+        }
+<span class="nc" id="L216">        throw new HugeException(&quot;Unknown clazz '%s' for DataType&quot;, clazz);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

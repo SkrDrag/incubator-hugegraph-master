@@ -1,0 +1,378 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>Consumers.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util</a> &gt; <span class="el_source">Consumers.java</span></div><h1>Consumers.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Queue;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.task.TaskManager.ContextCallable;
+import org.slf4j.Logger;
+
+public final class Consumers&lt;V&gt; {
+
+<span class="nc" id="L43">    public static final int THREADS = 4 + CoreOptions.CPUS / 4;</span>
+    public static final int QUEUE_WORKER_SIZE = 1000;
+    public static final long CONSUMER_WAKE_PERIOD = 1;
+
+<span class="nc" id="L47">    private static final Logger LOG = Log.logger(Consumers.class);</span>
+
+<span class="nc" id="L49">    private final V QUEUE_END = (V) new Object();</span>
+    private final ExecutorService executor;
+    private final Consumer&lt;V&gt; consumer;
+    private final Runnable doneHandle;
+    private final Consumer&lt;Throwable&gt; exceptionHandle;
+    private final int workers;
+    private final List&lt;Future&gt; runningFutures;
+    private final int queueSize;
+    private final CountDownLatch latch;
+    private final BlockingQueue&lt;V&gt; queue;
+<span class="nc" id="L59">    private volatile Throwable exception = null;</span>
+
+    public Consumers(ExecutorService executor, Consumer&lt;V&gt; consumer) {
+<span class="nc" id="L62">        this(executor, consumer, null);</span>
+<span class="nc" id="L63">    }</span>
+
+    public Consumers(ExecutorService executor,
+                     Consumer&lt;V&gt; consumer, Runnable doneHandle) {
+<span class="nc" id="L67">        this(executor, consumer, doneHandle, QUEUE_WORKER_SIZE);</span>
+<span class="nc" id="L68">    }</span>
+
+    public Consumers(ExecutorService executor,
+                     Consumer&lt;V&gt; consumer,
+                     Runnable doneHandle,
+                     int queueSizePerWorker) {
+<span class="nc" id="L74">        this(executor, consumer, doneHandle, null, queueSizePerWorker);</span>
+<span class="nc" id="L75">    }</span>
+
+    public Consumers(ExecutorService executor,
+                     Consumer&lt;V&gt; consumer,
+                     Runnable doneHandle,
+                     Consumer&lt;Throwable&gt; exceptionHandle,
+<span class="nc" id="L81">                     int queueSizePerWorker) {</span>
+<span class="nc" id="L82">        this.executor = executor;</span>
+<span class="nc" id="L83">        this.consumer = consumer;</span>
+<span class="nc" id="L84">        this.doneHandle = doneHandle;</span>
+<span class="nc" id="L85">        this.exceptionHandle = exceptionHandle;</span>
+
+<span class="nc" id="L87">        int workers = THREADS;</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        if (this.executor instanceof ThreadPoolExecutor) {</span>
+<span class="nc" id="L89">            workers = ((ThreadPoolExecutor) this.executor).getCorePoolSize();</span>
+        }
+<span class="nc" id="L91">        this.workers = workers;</span>
+
+<span class="nc" id="L93">        this.runningFutures = new ArrayList&lt;&gt;(workers);</span>
+<span class="nc" id="L94">        this.queueSize = queueSizePerWorker * workers + 1;</span>
+<span class="nc" id="L95">        this.latch = new CountDownLatch(workers);</span>
+<span class="nc" id="L96">        this.queue = new ArrayBlockingQueue&lt;&gt;(this.queueSize);</span>
+<span class="nc" id="L97">    }</span>
+
+    public void start(String name) {
+<span class="nc" id="L100">        this.exception = null;</span>
+<span class="nc bnc" id="L101" title="All 2 branches missed.">        if (this.executor == null) {</span>
+<span class="nc" id="L102">            return;</span>
+        }
+<span class="nc" id="L104">        LOG.info(&quot;Starting {} workers[{}] with queue size {}...&quot;,</span>
+<span class="nc" id="L105">                 this.workers, name, this.queueSize);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        for (int i = 0; i &lt; this.workers; i++) {</span>
+<span class="nc" id="L107">            this.runningFutures.add(</span>
+<span class="nc" id="L108">                    this.executor.submit(new ContextCallable&lt;&gt;(this::runAndDone)));</span>
+        }
+<span class="nc" id="L110">    }</span>
+
+    private Void runAndDone() {
+        try {
+<span class="nc" id="L114">            this.run();</span>
+<span class="nc" id="L115">        } catch (Throwable e) {</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">            if (e instanceof StopExecution) {</span>
+<span class="nc" id="L117">                this.queue.clear();</span>
+<span class="nc" id="L118">                putQueueEnd();</span>
+            } else {
+                // Only the first exception to one thread can be stored
+<span class="nc" id="L121">                this.exception = e;</span>
+<span class="nc" id="L122">                LOG.error(&quot;Error when running task&quot;, e);</span>
+            }
+<span class="nc" id="L124">            exceptionHandle(e);</span>
+        } finally {
+<span class="nc" id="L126">            this.done();</span>
+<span class="nc" id="L127">            this.latch.countDown();</span>
+        }
+<span class="nc" id="L129">        return null;</span>
+    }
+
+    private void run() {
+<span class="nc" id="L133">        LOG.debug(&quot;Start to work...&quot;);</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        while (this.consume()) {</span>
+            // ignore
+        }
+
+<span class="nc" id="L138">        LOG.debug(&quot;Worker finished&quot;);</span>
+<span class="nc" id="L139">    }</span>
+
+    private boolean consume() {
+<span class="nc" id="L142">        V elem = null;</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        while (elem == null) {</span>
+            try {
+<span class="nc" id="L145">                elem = this.queue.poll(CONSUMER_WAKE_PERIOD, TimeUnit.MILLISECONDS);</span>
+<span class="nc" id="L146">            } catch (InterruptedException e) {</span>
+                // ignore
+<span class="nc" id="L148">                return false;</span>
+<span class="nc" id="L149">            }</span>
+        }
+
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (elem == QUEUE_END) {</span>
+<span class="nc" id="L153">            putQueueEnd();</span>
+<span class="nc" id="L154">            return false;</span>
+        }
+        // do job
+<span class="nc" id="L157">        this.consumer.accept(elem);</span>
+<span class="nc" id="L158">        return true;</span>
+    }
+
+    private void exceptionHandle(Throwable e) {
+<span class="nc bnc" id="L162" title="All 2 branches missed.">        if (this.exceptionHandle == null) {</span>
+<span class="nc" id="L163">            return;</span>
+        }
+
+        try {
+<span class="nc" id="L167">            this.exceptionHandle.accept(e);</span>
+<span class="nc" id="L168">        } catch (Throwable ex) {</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            if (this.exception == null) {</span>
+<span class="nc" id="L170">                this.exception = ex;</span>
+            } else {
+<span class="nc" id="L172">                LOG.warn(&quot;Error while calling exceptionHandle()&quot;, ex);</span>
+            }
+<span class="nc" id="L174">        }</span>
+<span class="nc" id="L175">    }</span>
+
+    private void done() {
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (this.doneHandle == null) {</span>
+<span class="nc" id="L179">            return;</span>
+        }
+
+        try {
+<span class="nc" id="L183">            this.doneHandle.run();</span>
+<span class="nc" id="L184">        } catch (Throwable e) {</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">            if (this.exception == null) {</span>
+<span class="nc" id="L186">                this.exception = e;</span>
+            } else {
+<span class="nc" id="L188">                LOG.warn(&quot;Error while calling done()&quot;, e);</span>
+            }
+<span class="nc" id="L190">        }</span>
+<span class="nc" id="L191">    }</span>
+
+    private Throwable throwException() {
+<span class="nc bnc" id="L194" title="All 2 branches missed.">        assert this.exception != null;</span>
+<span class="nc" id="L195">        Throwable e = this.exception;</span>
+<span class="nc" id="L196">        this.exception = null;</span>
+<span class="nc" id="L197">        return e;</span>
+    }
+
+    public void provide(V v) throws Throwable {
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (this.executor == null) {</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">            assert this.exception == null;</span>
+            // do job directly if without thread pool
+<span class="nc" id="L204">            this.consumer.accept(v);</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">        } else if (this.exception != null) {</span>
+<span class="nc" id="L206">            throw this.throwException();</span>
+        } else {
+            try {
+<span class="nc" id="L209">                this.queue.put(v);</span>
+<span class="nc" id="L210">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L211">                LOG.warn(&quot;Interrupt while queuing QUEUE_END&quot;, e);</span>
+<span class="nc" id="L212">            }</span>
+        }
+<span class="nc" id="L214">    }</span>
+
+    private void putQueueEnd() {
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (this.executor != null) {</span>
+            try {
+<span class="nc" id="L219">                this.queue.put(QUEUE_END);</span>
+<span class="nc" id="L220">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L221">                LOG.warn(&quot;Interrupted while enqueue&quot;, e);</span>
+<span class="nc" id="L222">            }</span>
+        }
+<span class="nc" id="L224">    }</span>
+
+    public void await() throws Throwable {
+<span class="nc bnc" id="L227" title="All 2 branches missed.">        if (this.executor == null) {</span>
+            // call done() directly if without thread pool
+<span class="nc" id="L229">            this.done();</span>
+        } else {
+            try {
+<span class="nc" id="L232">                putQueueEnd();</span>
+<span class="nc" id="L233">                this.latch.await();</span>
+<span class="nc" id="L234">            } catch (InterruptedException e) {</span>
+<span class="nc" id="L235">                String error = &quot;Interrupted while waiting for consumers&quot;;</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">                for (Future f : this.runningFutures) {</span>
+<span class="nc" id="L237">                    f.cancel(true);</span>
+<span class="nc" id="L238">                }</span>
+<span class="nc" id="L239">                this.exception = new HugeException(error, e);</span>
+<span class="nc" id="L240">                LOG.warn(error, e);</span>
+<span class="nc" id="L241">            }</span>
+        }
+
+<span class="nc bnc" id="L244" title="All 2 branches missed.">        if (this.exception != null) {</span>
+<span class="nc" id="L245">            throw this.throwException();</span>
+        }
+<span class="nc" id="L247">    }</span>
+
+    public ExecutorService executor() {
+<span class="nc" id="L250">        return this.executor;</span>
+    }
+
+    public static void executeOncePerThread(ExecutorService executor,
+                                            int totalThreads,
+                                            Runnable callback,
+                                            long invokeTimeout)
+                                            throws InterruptedException {
+        // Ensure callback execute at least once for every thread
+<span class="nc" id="L259">        final Map&lt;Thread, Integer&gt; threadsTimes = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L260">        final List&lt;Callable&lt;Void&gt;&gt; tasks = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L261">        final Callable&lt;Void&gt; task = () -&gt; {</span>
+<span class="nc" id="L262">            Thread current = Thread.currentThread();</span>
+<span class="nc" id="L263">            threadsTimes.putIfAbsent(current, 0);</span>
+<span class="nc" id="L264">            int times = threadsTimes.get(current);</span>
+<span class="nc bnc" id="L265" title="All 2 branches missed.">            if (times == 0) {</span>
+<span class="nc" id="L266">                callback.run();</span>
+                // Let other threads run
+<span class="nc" id="L268">                Thread.yield();</span>
+            } else {
+<span class="nc bnc" id="L270" title="All 2 branches missed.">                assert times &lt; totalThreads;</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">                assert threadsTimes.size() &lt; totalThreads;</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">                E.checkState(tasks.size() == totalThreads,</span>
+<span class="nc" id="L273">                             &quot;Bad tasks size: %s&quot;, tasks.size());</span>
+                // Let another thread run and wait for it
+<span class="nc" id="L275">                executor.submit(tasks.get(0)).get();</span>
+            }
+<span class="nc" id="L277">            threadsTimes.put(current, ++times);</span>
+<span class="nc" id="L278">            return null;</span>
+        };
+
+        // NOTE: expect each task thread to perform a close operation
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        for (int i = 0; i &lt; totalThreads; i++) {</span>
+<span class="nc" id="L283">            tasks.add(task);</span>
+        }
+<span class="nc" id="L285">        executor.invokeAll(tasks, invokeTimeout, TimeUnit.SECONDS);</span>
+<span class="nc" id="L286">    }</span>
+
+    public static ExecutorService newThreadPool(String prefix, int workers) {
+<span class="nc bnc" id="L289" title="All 2 branches missed.">        if (workers == 0) {</span>
+<span class="nc" id="L290">            return null;</span>
+        } else {
+<span class="nc bnc" id="L292" title="All 2 branches missed.">            if (workers &lt; 0) {</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">                assert workers == -1;</span>
+<span class="nc" id="L294">                workers = Consumers.THREADS;</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">            } else if (workers &gt; CoreOptions.CPUS * 2) {</span>
+<span class="nc" id="L296">                workers = CoreOptions.CPUS * 2;</span>
+            }
+<span class="nc" id="L298">            String name = prefix + &quot;-worker-%d&quot;;</span>
+<span class="nc" id="L299">            return ExecutorUtil.newFixedThreadPool(workers, name);</span>
+        }
+    }
+
+    public static ExecutorPool newExecutorPool(String prefix, int workers) {
+<span class="nc" id="L304">        return new ExecutorPool(prefix, workers);</span>
+    }
+
+    public static RuntimeException wrapException(Throwable e) {
+<span class="nc bnc" id="L308" title="All 2 branches missed.">        if (e instanceof RuntimeException) {</span>
+<span class="nc" id="L309">            throw (RuntimeException) e;</span>
+        }
+<span class="nc" id="L311">        throw new HugeException(&quot;Error when running task: %s&quot;,</span>
+<span class="nc" id="L312">                                HugeException.rootCause(e).getMessage(), e);</span>
+    }
+
+    public static class ExecutorPool {
+
+<span class="nc" id="L317">        private static final int POOL_CAPACITY = 2 * CoreOptions.CPUS;</span>
+
+        private final String threadNamePrefix;
+        private final int executorWorkers;
+        private final AtomicInteger count;
+
+        private final Queue&lt;ExecutorService&gt; executors;
+
+<span class="nc" id="L325">        public ExecutorPool(String prefix, int workers) {</span>
+<span class="nc" id="L326">            this.threadNamePrefix = prefix;</span>
+<span class="nc" id="L327">            this.executorWorkers = workers;</span>
+<span class="nc" id="L328">            this.count = new AtomicInteger();</span>
+<span class="nc" id="L329">            this.executors = new ArrayBlockingQueue&lt;&gt;(POOL_CAPACITY);</span>
+<span class="nc" id="L330">        }</span>
+
+        public synchronized ExecutorService getExecutor() {
+<span class="nc" id="L333">            ExecutorService executor = this.executors.poll();</span>
+<span class="nc bnc" id="L334" title="All 2 branches missed.">            if (executor == null) {</span>
+<span class="nc" id="L335">                int count = this.count.incrementAndGet();</span>
+<span class="nc" id="L336">                String prefix = this.threadNamePrefix + &quot;-&quot; + count;</span>
+<span class="nc" id="L337">                executor = newThreadPool(prefix, this.executorWorkers);</span>
+            }
+<span class="nc" id="L339">            return executor;</span>
+        }
+
+        public synchronized void returnExecutor(ExecutorService executor) {
+<span class="nc" id="L343">            E.checkNotNull(executor, &quot;executor&quot;);</span>
+<span class="nc bnc" id="L344" title="All 2 branches missed.">            if (!this.executors.offer(executor)) {</span>
+                try {
+<span class="nc" id="L346">                    executor.shutdown();</span>
+<span class="nc" id="L347">                } catch (Exception e) {</span>
+<span class="nc" id="L348">                    LOG.warn(&quot;close ExecutorService with error:&quot;, e);</span>
+<span class="nc" id="L349">                }</span>
+            }
+<span class="nc" id="L351">        }</span>
+
+        public synchronized void destroy() {
+<span class="nc bnc" id="L354" title="All 2 branches missed.">            for (ExecutorService executor : this.executors) {</span>
+                try {
+<span class="nc" id="L356">                    executor.shutdownNow();</span>
+<span class="nc" id="L357">                } catch (Exception e) {</span>
+<span class="nc" id="L358">                    LOG.warn(&quot;close ExecutorService with error:&quot;, e);</span>
+<span class="nc" id="L359">                }</span>
+<span class="nc" id="L360">            }</span>
+<span class="nc" id="L361">            this.executors.clear();</span>
+<span class="nc" id="L362">        }</span>
+    }
+
+    public static class StopExecution extends HugeException {
+
+        private static final long serialVersionUID = -371829356182454517L;
+
+        public StopExecution(String message) {
+<span class="nc" id="L370">            super(message);</span>
+<span class="nc" id="L371">        }</span>
+
+        public StopExecution(String message, Object... args) {
+<span class="nc" id="L374">            super(message, args);</span>
+<span class="nc" id="L375">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

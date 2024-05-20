@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IndexableTransaction.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.tx</a> &gt; <span class="el_source">IndexableTransaction.java</span></div><h1>IndexableTransaction.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.tx;
+
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.BackendException;
+
+<span class="nc" id="L25">public abstract class IndexableTransaction extends AbstractTransaction {</span>
+
+    public IndexableTransaction(HugeGraphParams graph, BackendStore store) {
+<span class="nc" id="L28">        super(graph, store);</span>
+<span class="nc" id="L29">    }</span>
+
+    @Override
+    public boolean hasUpdate() {
+<span class="nc" id="L33">        AbstractTransaction indexTx = this.indexTransaction();</span>
+<span class="nc bnc" id="L34" title="All 4 branches missed.">        boolean indexTxChanged = (indexTx != null &amp;&amp; indexTx.hasUpdate());</span>
+<span class="nc bnc" id="L35" title="All 4 branches missed.">        return indexTxChanged || super.hasUpdate();</span>
+    }
+
+    @Override
+    protected void reset() {
+<span class="nc" id="L40">        super.reset();</span>
+
+        // It's null when called by super AbstractTransaction()
+<span class="nc" id="L43">        AbstractTransaction indexTx = this.indexTransaction();</span>
+<span class="nc bnc" id="L44" title="All 2 branches missed.">        if (indexTx != null) {</span>
+<span class="nc" id="L45">            indexTx.reset();</span>
+        }
+<span class="nc" id="L47">    }</span>
+
+    @Override
+    protected void commit2Backend() {
+<span class="nc" id="L51">        BackendMutation mutation = this.prepareCommit();</span>
+<span class="nc" id="L52">        BackendMutation idxMutation = this.indexTransaction().prepareCommit();</span>
+<span class="nc bnc" id="L53" title="All 4 branches missed.">        assert !mutation.isEmpty() || !idxMutation.isEmpty();</span>
+        // Commit graph/schema updates and index updates with graph/schema tx
+<span class="nc" id="L55">        this.commitMutation2Backend(mutation, idxMutation);</span>
+<span class="nc" id="L56">    }</span>
+
+    @Override
+    public void commitIfGtSize(int size) throws BackendException {
+<span class="nc" id="L60">        int totalSize = this.mutationSize() +</span>
+<span class="nc" id="L61">                        this.indexTransaction().mutationSize();</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">        if (totalSize &gt;= size) {</span>
+<span class="nc" id="L63">            this.commit();</span>
+        }
+<span class="nc" id="L65">    }</span>
+
+    @Override
+    public void rollback() throws BackendException {
+        try {
+<span class="nc" id="L70">            super.rollback();</span>
+        } finally {
+<span class="nc" id="L72">            this.indexTransaction().rollback();</span>
+        }
+<span class="nc" id="L74">    }</span>
+
+    @Override
+    public void close() {
+        try {
+<span class="nc" id="L79">            this.indexTransaction().close();</span>
+        } finally {
+<span class="nc" id="L81">            super.close();</span>
+        }
+<span class="nc" id="L83">    }</span>
+
+    protected abstract AbstractTransaction indexTransaction();
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

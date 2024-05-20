@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CypherManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.cypher</a> &gt; <span class="el_source">CypherManager.java</span></div><h1>CypherManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.cypher;
+
+import java.io.File;
+import java.io.FileReader;
+import java.io.Reader;
+import java.net.URL;
+
+import javax.annotation.concurrent.ThreadSafe;
+
+import org.apache.commons.configuration2.Configuration;
+import org.apache.commons.configuration2.YAMLConfiguration;
+import org.apache.hugegraph.util.E;
+
+<span class="nc" id="L31">@ThreadSafe</span>
+public final class CypherManager {
+
+    private final String configurationFile;
+    private YAMLConfiguration configuration;
+
+    public static CypherManager configOf(String configurationFile) {
+<span class="nc bnc" id="L38" title="All 4 branches missed.">        E.checkArgument(configurationFile != null &amp;&amp; !configurationFile.isEmpty(),</span>
+                        &quot;The configurationFile parameter can't be null or empty&quot;);
+<span class="nc" id="L40">        return new CypherManager(configurationFile);</span>
+    }
+
+<span class="nc" id="L43">    private CypherManager(String configurationFile) {</span>
+<span class="nc" id="L44">        this.configurationFile = configurationFile;</span>
+<span class="nc" id="L45">    }</span>
+
+    public CypherClient getClient(String userName, String password) {
+<span class="nc bnc" id="L48" title="All 4 branches missed.">        E.checkArgument(userName != null &amp;&amp; !userName.isEmpty(),</span>
+                        &quot;The userName parameter can't be null or empty&quot;);
+<span class="nc bnc" id="L50" title="All 4 branches missed.">        E.checkArgument(password != null &amp;&amp; !password.isEmpty(),</span>
+                        &quot;The password parameter can't be null or empty&quot;);
+
+        // TODO: Need to cache the client and make it hold the connection.
+<span class="nc" id="L54">        return new CypherClient(userName, password, this::cloneConfig);</span>
+    }
+
+    public CypherClient getClient(String token) {
+<span class="nc bnc" id="L58" title="All 4 branches missed.">        E.checkArgument(token != null &amp;&amp; !token.isEmpty(),</span>
+                        &quot;The token parameter can't be null or empty&quot;);
+
+        // TODO: Need to cache the client and make it hold the connection.
+<span class="nc" id="L62">        return new CypherClient(token, this::cloneConfig);</span>
+    }
+
+    private Configuration cloneConfig() {
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        if (this.configuration == null) {</span>
+<span class="nc" id="L67">            this.configuration = loadYaml(this.configurationFile);</span>
+        }
+<span class="nc" id="L69">        return (Configuration) this.configuration.clone();</span>
+    }
+
+    private static YAMLConfiguration loadYaml(String configurationFile) {
+<span class="nc" id="L73">        File yamlFile = getConfigFile(configurationFile);</span>
+        YAMLConfiguration yaml;
+        try {
+<span class="nc" id="L76">            Reader reader = new FileReader(yamlFile);</span>
+<span class="nc" id="L77">            yaml = new YAMLConfiguration();</span>
+<span class="nc" id="L78">            yaml.read(reader);</span>
+<span class="nc" id="L79">        } catch (Exception e) {</span>
+<span class="nc" id="L80">            throw new RuntimeException(String.format(&quot;Failed to load configuration file,&quot; +</span>
+                                                     &quot; the file at '%s'.&quot;, configurationFile), e);
+<span class="nc" id="L82">        }</span>
+<span class="nc" id="L83">        return yaml;</span>
+    }
+
+    private static File getConfigFile(String configurationFile) {
+<span class="nc" id="L87">        File systemFile = new File(configurationFile);</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        if (!systemFile.exists()) {</span>
+<span class="nc" id="L89">            ClassLoader currentClassLoader = Thread.currentThread().getContextClassLoader();</span>
+<span class="nc" id="L90">            URL resource = currentClassLoader.getResource(configurationFile);</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">            assert resource != null;</span>
+<span class="nc" id="L92">            File resourceFile = new File(resource.getFile());</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">            if (!resourceFile.exists()) {</span>
+<span class="nc" id="L94">                throw new IllegalArgumentException(String.format(&quot;Configuration file at '%s' does&quot; +</span>
+                                                                 &quot; not exist&quot;, configurationFile));
+            }
+<span class="nc" id="L97">            return resourceFile;</span>
+        }
+<span class="nc" id="L99">        return systemFile;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

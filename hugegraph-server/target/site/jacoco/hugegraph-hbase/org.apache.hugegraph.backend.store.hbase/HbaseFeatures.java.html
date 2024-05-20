@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HbaseFeatures.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-hbase</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.hbase</a> &gt; <span class="el_source">HbaseFeatures.java</span></div><h1>HbaseFeatures.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.hbase;
+
+import org.apache.hugegraph.backend.store.BackendFeatures;
+
+public class HbaseFeatures implements BackendFeatures {
+
+    private boolean enablePartition;
+
+<span class="nc" id="L26">    public HbaseFeatures(boolean enablePartition) {</span>
+<span class="nc" id="L27">        this.enablePartition = enablePartition;</span>
+<span class="nc" id="L28">    }</span>
+
+    @Override
+    public boolean supportsScanToken() {
+<span class="nc" id="L32">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsScanKeyPrefix() {
+<span class="nc bnc" id="L37" title="All 2 branches missed.">        return !this.enablePartition;</span>
+    }
+
+    @Override
+    public boolean supportsScanKeyRange() {
+<span class="nc bnc" id="L42" title="All 2 branches missed.">        return !this.enablePartition;</span>
+    }
+
+    @Override
+    public boolean supportsQuerySchemaByName() {
+        // TODO: Supports this feature through HBase secondary index
+<span class="nc" id="L48">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsQueryByLabel() {
+        // TODO: Supports this feature through HBase secondary index
+<span class="nc" id="L54">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsQueryWithInCondition() {
+<span class="nc" id="L59">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsQueryWithRangeCondition() {
+<span class="nc" id="L64">        return true;</span>
+    }
+
+    @Override
+    public boolean supportsQuerySortByInputIds() {
+<span class="nc" id="L69">        return true;</span>
+    }
+
+    @Override
+    public boolean supportsQueryWithOrderBy() {
+<span class="nc" id="L74">        return true;</span>
+    }
+
+    @Override
+    public boolean supportsQueryWithContains() {
+        // TODO: Need to traversal all items
+<span class="nc" id="L80">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsQueryWithContainsKey() {
+        // TODO: Need to traversal all items
+<span class="nc" id="L86">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsQueryByPage() {
+<span class="nc" id="L91">        return true;</span>
+    }
+
+    @Override
+    public boolean supportsDeleteEdgeByLabel() {
+        // TODO: Supports this feature through HBase secondary index
+<span class="nc" id="L97">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsUpdateVertexProperty() {
+        // Vertex properties are stored in a cell(column value)
+<span class="nc" id="L103">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsMergeVertexProperty() {
+<span class="nc" id="L108">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsUpdateEdgeProperty() {
+        // Edge properties are stored in a cell(column value)
+<span class="nc" id="L114">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsTransaction() {
+        // TODO: Supports tx through BufferedMutator and range-lock
+<span class="nc" id="L120">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsNumberType() {
+<span class="nc" id="L125">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsAggregateProperty() {
+<span class="nc" id="L130">        return false;</span>
+    }
+
+    @Override
+    public boolean supportsTtl() {
+<span class="nc" id="L135">        return true;</span>
+    }
+
+    @Override
+    public boolean supportsOlapProperties() {
+<span class="nc" id="L140">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

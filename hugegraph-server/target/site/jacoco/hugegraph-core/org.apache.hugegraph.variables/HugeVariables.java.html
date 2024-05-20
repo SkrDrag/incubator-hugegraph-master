@@ -1,0 +1,392 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeVariables.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.variables</a> &gt; <span class="el_source">HugeVariables.java</span></div><h1>HugeVariables.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.variables;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.query.Condition;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Cardinality;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.tinkerpop.gremlin.structure.Graph;
+import org.apache.tinkerpop.gremlin.structure.Graph.Hidden;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.CloseableIterator;
+import org.apache.tinkerpop.gremlin.structure.util.StringFactory;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.util.Log;
+
+public class HugeVariables implements Graph.Variables {
+
+<span class="nc" id="L57">    private static final Logger LOG = Log.logger(HugeVariables.class);</span>
+
+    // Variables vertex label
+    private static final String VARIABLES = &quot;variables&quot;;
+
+    // Variables properties
+    private static final String VARIABLE_KEY = &quot;varKey&quot;;
+    private static final String VARIABLE_TYPE = &quot;varType&quot;;
+
+    private static final String BYTE_VALUE = &quot;B&quot;;
+    private static final String BOOLEAN_VALUE = &quot;Z&quot;;
+    private static final String INTEGER_VALUE = &quot;I&quot;;
+    private static final String LONG_VALUE = &quot;L&quot;;
+    private static final String FLOAT_VALUE = &quot;F&quot;;
+    private static final String DOUBLE_VALUE = &quot;D&quot;;
+    private static final String STRING_VALUE = &quot;S&quot;;
+
+    // Variables properties suffix
+    private static final String LIST = &quot;L&quot;;
+    private static final String SET = &quot;S&quot;;
+
+<span class="nc" id="L78">    private static final String[] TYPES = {</span>
+<span class="nc" id="L79">            Hidden.hide(BYTE_VALUE),</span>
+<span class="nc" id="L80">            Hidden.hide(BOOLEAN_VALUE),</span>
+<span class="nc" id="L81">            Hidden.hide(INTEGER_VALUE),</span>
+<span class="nc" id="L82">            Hidden.hide(LONG_VALUE),</span>
+<span class="nc" id="L83">            Hidden.hide(FLOAT_VALUE),</span>
+<span class="nc" id="L84">            Hidden.hide(DOUBLE_VALUE),</span>
+<span class="nc" id="L85">            Hidden.hide(STRING_VALUE),</span>
+<span class="nc" id="L86">            Hidden.hide(BYTE_VALUE + LIST),</span>
+<span class="nc" id="L87">            Hidden.hide(BOOLEAN_VALUE + LIST),</span>
+<span class="nc" id="L88">            Hidden.hide(INTEGER_VALUE + LIST),</span>
+<span class="nc" id="L89">            Hidden.hide(LONG_VALUE + LIST),</span>
+<span class="nc" id="L90">            Hidden.hide(FLOAT_VALUE + LIST),</span>
+<span class="nc" id="L91">            Hidden.hide(DOUBLE_VALUE + LIST),</span>
+<span class="nc" id="L92">            Hidden.hide(STRING_VALUE + LIST),</span>
+<span class="nc" id="L93">            Hidden.hide(BYTE_VALUE + SET),</span>
+<span class="nc" id="L94">            Hidden.hide(BOOLEAN_VALUE + SET),</span>
+<span class="nc" id="L95">            Hidden.hide(INTEGER_VALUE + SET),</span>
+<span class="nc" id="L96">            Hidden.hide(LONG_VALUE + SET),</span>
+<span class="nc" id="L97">            Hidden.hide(FLOAT_VALUE + SET),</span>
+<span class="nc" id="L98">            Hidden.hide(DOUBLE_VALUE + SET),</span>
+<span class="nc" id="L99">            Hidden.hide(STRING_VALUE + SET)</span>
+    };
+
+    private final HugeGraphParams params;
+
+<span class="nc" id="L104">    public HugeVariables(HugeGraphParams params) {</span>
+<span class="nc" id="L105">        this.params = params;</span>
+<span class="nc" id="L106">    }</span>
+
+    public synchronized void initSchemaIfNeeded() {
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        if (this.params.graph().existsVertexLabel(Hidden.hide(VARIABLES))) {</span>
+            // Ignore if exist
+<span class="nc" id="L111">            return;</span>
+        }
+
+<span class="nc" id="L114">        createPropertyKey(Hidden.hide(VARIABLE_KEY), DataType.TEXT,</span>
+                          Cardinality.SINGLE);
+<span class="nc" id="L116">        createPropertyKey(Hidden.hide(VARIABLE_TYPE), DataType.TEXT,</span>
+                          Cardinality.SINGLE);
+<span class="nc" id="L118">        createPropertyKey(Hidden.hide(BYTE_VALUE), DataType.BYTE,</span>
+                          Cardinality.SINGLE);
+<span class="nc" id="L120">        createPropertyKey(Hidden.hide(BOOLEAN_VALUE), DataType.BOOLEAN,</span>
+                          Cardinality.SINGLE);
+<span class="nc" id="L122">        createPropertyKey(Hidden.hide(INTEGER_VALUE), DataType.INT,</span>
+                          Cardinality.SINGLE);
+<span class="nc" id="L124">        createPropertyKey(Hidden.hide(LONG_VALUE), DataType.LONG,</span>
+                          Cardinality.SINGLE);
+<span class="nc" id="L126">        createPropertyKey(Hidden.hide(FLOAT_VALUE), DataType.FLOAT,</span>
+                          Cardinality.SINGLE);
+<span class="nc" id="L128">        createPropertyKey(Hidden.hide(DOUBLE_VALUE), DataType.DOUBLE,</span>
+                          Cardinality.SINGLE);
+<span class="nc" id="L130">        createPropertyKey(Hidden.hide(STRING_VALUE), DataType.TEXT,</span>
+                          Cardinality.SINGLE);
+<span class="nc" id="L132">        createPropertyKey(Hidden.hide(BYTE_VALUE + LIST),</span>
+                          DataType.BYTE, Cardinality.LIST);
+<span class="nc" id="L134">        createPropertyKey(Hidden.hide(BOOLEAN_VALUE + LIST),</span>
+                          DataType.BOOLEAN, Cardinality.LIST);
+<span class="nc" id="L136">        createPropertyKey(Hidden.hide(INTEGER_VALUE + LIST),</span>
+                          DataType.INT, Cardinality.LIST);
+<span class="nc" id="L138">        createPropertyKey(Hidden.hide(LONG_VALUE + LIST),</span>
+                          DataType.LONG, Cardinality.LIST);
+<span class="nc" id="L140">        createPropertyKey(Hidden.hide(FLOAT_VALUE + LIST),</span>
+                          DataType.FLOAT, Cardinality.LIST);
+<span class="nc" id="L142">        createPropertyKey(Hidden.hide(DOUBLE_VALUE + LIST),</span>
+                          DataType.DOUBLE, Cardinality.LIST);
+<span class="nc" id="L144">        createPropertyKey(Hidden.hide(STRING_VALUE + LIST),</span>
+                          DataType.TEXT, Cardinality.LIST);
+<span class="nc" id="L146">        createPropertyKey(Hidden.hide(BYTE_VALUE + SET),</span>
+                          DataType.BYTE, Cardinality.SET);
+<span class="nc" id="L148">        createPropertyKey(Hidden.hide(BOOLEAN_VALUE + SET),</span>
+                          DataType.BOOLEAN, Cardinality.SET);
+<span class="nc" id="L150">        createPropertyKey(Hidden.hide(INTEGER_VALUE + SET),</span>
+                          DataType.INT, Cardinality.SET);
+<span class="nc" id="L152">        createPropertyKey(Hidden.hide(LONG_VALUE + SET),</span>
+                          DataType.LONG, Cardinality.SET);
+<span class="nc" id="L154">        createPropertyKey(Hidden.hide(FLOAT_VALUE + SET),</span>
+                          DataType.FLOAT, Cardinality.SET);
+<span class="nc" id="L156">        createPropertyKey(Hidden.hide(DOUBLE_VALUE + SET),</span>
+                          DataType.DOUBLE, Cardinality.SET);
+<span class="nc" id="L158">        createPropertyKey(Hidden.hide(STRING_VALUE + SET),</span>
+                          DataType.TEXT, Cardinality.SET);
+
+<span class="nc" id="L161">        String[] properties = {Hidden.hide(VARIABLE_KEY),</span>
+<span class="nc" id="L162">                               Hidden.hide(VARIABLE_TYPE)};</span>
+<span class="nc" id="L163">        properties = ArrayUtils.addAll(properties, TYPES);</span>
+
+<span class="nc" id="L165">        SchemaManager schema = this.params.graph().schema();</span>
+<span class="nc" id="L166">        VertexLabel variables = schema.vertexLabel(Hidden.hide(VARIABLES))</span>
+<span class="nc" id="L167">                                      .properties(properties)</span>
+<span class="nc" id="L168">                                      .usePrimaryKeyId()</span>
+<span class="nc" id="L169">                                      .primaryKeys(Hidden.hide(VARIABLE_KEY))</span>
+<span class="nc" id="L170">                                      .nullableKeys(TYPES)</span>
+<span class="nc" id="L171">                                      .build();</span>
+<span class="nc" id="L172">        this.params.schemaTransaction().addVertexLabel(variables);</span>
+
+<span class="nc" id="L174">        LOG.debug(&quot;Variables schema created&quot;);</span>
+<span class="nc" id="L175">    }</span>
+
+    private void createPropertyKey(String name, DataType dataType,
+                                   Cardinality cardinality) {
+<span class="nc" id="L179">        SchemaManager schema = this.params.graph().schema();</span>
+<span class="nc" id="L180">        PropertyKey propertyKey = schema.propertyKey(name)</span>
+<span class="nc" id="L181">                                        .dataType(dataType)</span>
+<span class="nc" id="L182">                                        .cardinality(cardinality)</span>
+<span class="nc" id="L183">                                        .build();</span>
+<span class="nc" id="L184">        this.params.schemaTransaction().addPropertyKey(propertyKey);</span>
+<span class="nc" id="L185">    }</span>
+
+    @Override
+    public Set&lt;String&gt; keys() {
+<span class="nc" id="L189">        Iterator&lt;Vertex&gt; vertices = this.queryAllVariableVertices();</span>
+        try {
+<span class="nc" id="L191">            Set&lt;String&gt; keys = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">            while (vertices.hasNext()) {</span>
+<span class="nc" id="L193">                keys.add(vertices.next().value(Hidden.hide(VARIABLE_KEY)));</span>
+<span class="nc" id="L194">                Query.checkForceCapacity(keys.size());</span>
+            }
+<span class="nc" id="L196">            return keys;</span>
+        } finally {
+<span class="nc" id="L198">            CloseableIterator.closeIterator(vertices);</span>
+        }
+    }
+
+    @Override
+    public &lt;R&gt; Optional&lt;R&gt; get(String key) {
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (key == null) {</span>
+<span class="nc" id="L205">            throw Graph.Variables.Exceptions.variableKeyCanNotBeNull();</span>
+        }
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        if (key.isEmpty()) {</span>
+<span class="nc" id="L208">            throw Graph.Variables.Exceptions.variableKeyCanNotBeEmpty();</span>
+        }
+
+<span class="nc" id="L211">        Vertex vertex = this.queryVariableVertex(key);</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        if (vertex == null) {</span>
+<span class="nc" id="L213">            return Optional.empty();</span>
+        }
+
+<span class="nc" id="L216">        String type = vertex.value(Hidden.hide(VARIABLE_TYPE));</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">        if (!Arrays.asList(TYPES).contains(Hidden.hide(type))) {</span>
+<span class="nc" id="L218">            throw Graph.Variables.Exceptions</span>
+<span class="nc" id="L219">                       .dataTypeOfVariableValueNotSupported(type);</span>
+        }
+        // The value of key VARIABLE_TYPE is the name of variable value
+<span class="nc" id="L222">        return Optional.of(vertex.value(Hidden.hide(type)));</span>
+    }
+
+    @Override
+    public void set(String key, Object value) {
+<span class="nc bnc" id="L227" title="All 2 branches missed.">        if (key == null) {</span>
+<span class="nc" id="L228">            throw Graph.Variables.Exceptions.variableKeyCanNotBeNull();</span>
+        }
+<span class="nc bnc" id="L230" title="All 2 branches missed.">        if (key.isEmpty()) {</span>
+<span class="nc" id="L231">            throw Graph.Variables.Exceptions.variableKeyCanNotBeEmpty();</span>
+        }
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (value == null) {</span>
+<span class="nc" id="L234">            throw Graph.Variables.Exceptions.variableValueCanNotBeNull();</span>
+        }
+
+<span class="nc" id="L237">        this.createVariableVertex(key, value);</span>
+<span class="nc" id="L238">    }</span>
+
+    @Override
+    public void remove(String key) {
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        if (key == null) {</span>
+<span class="nc" id="L243">            throw Graph.Variables.Exceptions.variableKeyCanNotBeNull();</span>
+        }
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (key.isEmpty()) {</span>
+<span class="nc" id="L246">            throw Graph.Variables.Exceptions.variableKeyCanNotBeEmpty();</span>
+        }
+<span class="nc" id="L248">        HugeVertex vertex = this.queryVariableVertex(key);</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">        if (vertex != null) {</span>
+<span class="nc" id="L250">            this.removeVariableVertex(vertex);</span>
+        }
+<span class="nc" id="L252">    }</span>
+
+    @Override
+    public Map&lt;String, Object&gt; asMap() {
+<span class="nc" id="L256">        Iterator&lt;Vertex&gt; vertices = this.queryAllVariableVertices();</span>
+        try {
+<span class="nc" id="L258">            Map&lt;String, Object&gt; variables = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L259" title="All 2 branches missed.">            while (vertices.hasNext()) {</span>
+<span class="nc" id="L260">                Vertex vertex = vertices.next();</span>
+<span class="nc" id="L261">                String key = vertex.value(Hidden.hide(VARIABLE_KEY));</span>
+<span class="nc" id="L262">                String type = vertex.value(Hidden.hide(VARIABLE_TYPE));</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">                if (!Arrays.asList(TYPES).contains(Hidden.hide(type))) {</span>
+<span class="nc" id="L264">                    throw Graph.Variables.Exceptions</span>
+<span class="nc" id="L265">                               .dataTypeOfVariableValueNotSupported(type);</span>
+                }
+<span class="nc" id="L267">                Object value = vertex.value(Hidden.hide(type));</span>
+<span class="nc" id="L268">                variables.put(key, value);</span>
+<span class="nc" id="L269">                Query.checkForceCapacity(variables.size());</span>
+<span class="nc" id="L270">            }</span>
+<span class="nc" id="L271">            return Collections.unmodifiableMap(variables);</span>
+        } finally {
+<span class="nc" id="L273">            CloseableIterator.closeIterator(vertices);</span>
+        }
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L279">        return StringFactory.graphVariablesString(this);</span>
+    }
+
+    private void setProperty(HugeVertex vertex, String key, Object value) {
+        String suffix;
+<span class="nc bnc" id="L284" title="All 2 branches missed.">        if (value instanceof List) {</span>
+<span class="nc" id="L285">            suffix = LIST;</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">        } else if (value instanceof Set) {</span>
+<span class="nc" id="L287">            suffix = SET;</span>
+        } else {
+<span class="nc" id="L289">            suffix = &quot;&quot;;</span>
+        }
+
+<span class="nc" id="L292">        vertex.property(Hidden.hide(VARIABLE_KEY), key);</span>
+<span class="nc" id="L293">        Object object = HugeVariables.extractSingleObject(value);</span>
+<span class="nc bnc" id="L294" title="All 2 branches missed.">        if (object == null) {</span>
+<span class="nc" id="L295">            vertex.property(Hidden.hide(STRING_VALUE + suffix), value);</span>
+<span class="nc" id="L296">            vertex.property(Hidden.hide(VARIABLE_TYPE), STRING_VALUE + suffix);</span>
+<span class="nc" id="L297">            return;</span>
+        }
+
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        if (object instanceof Byte) {</span>
+<span class="nc" id="L301">            vertex.property(Hidden.hide(BYTE_VALUE + suffix), value);</span>
+<span class="nc" id="L302">            vertex.property(Hidden.hide(VARIABLE_TYPE), BYTE_VALUE + suffix);</span>
+<span class="nc bnc" id="L303" title="All 2 branches missed.">        } else if (object instanceof Boolean) {</span>
+<span class="nc" id="L304">            vertex.property(Hidden.hide(BOOLEAN_VALUE + suffix), value);</span>
+<span class="nc" id="L305">            vertex.property(Hidden.hide(VARIABLE_TYPE),</span>
+                            BOOLEAN_VALUE + suffix);
+<span class="nc bnc" id="L307" title="All 2 branches missed.">        } else if (object instanceof Integer) {</span>
+<span class="nc" id="L308">            vertex.property(Hidden.hide(INTEGER_VALUE + suffix), value);</span>
+<span class="nc" id="L309">            vertex.property(Hidden.hide(VARIABLE_TYPE),</span>
+                            INTEGER_VALUE + suffix);
+<span class="nc bnc" id="L311" title="All 2 branches missed.">        } else if (object instanceof Long) {</span>
+<span class="nc" id="L312">            vertex.property(Hidden.hide(LONG_VALUE + suffix), value);</span>
+<span class="nc" id="L313">            vertex.property(Hidden.hide(VARIABLE_TYPE), LONG_VALUE + suffix);</span>
+<span class="nc bnc" id="L314" title="All 2 branches missed.">        } else if (object instanceof Float) {</span>
+<span class="nc" id="L315">            vertex.property(Hidden.hide(FLOAT_VALUE + suffix), value);</span>
+<span class="nc" id="L316">            vertex.property(Hidden.hide(VARIABLE_TYPE), FLOAT_VALUE + suffix);</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">        } else if (object instanceof Double) {</span>
+<span class="nc" id="L318">            vertex.property(Hidden.hide(DOUBLE_VALUE + suffix), value);</span>
+<span class="nc" id="L319">            vertex.property(Hidden.hide(VARIABLE_TYPE), DOUBLE_VALUE + suffix);</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">        } else if (object instanceof String) {</span>
+<span class="nc" id="L321">            vertex.property(Hidden.hide(STRING_VALUE + suffix), value);</span>
+<span class="nc" id="L322">            vertex.property(Hidden.hide(VARIABLE_TYPE), STRING_VALUE + suffix);</span>
+        } else {
+<span class="nc" id="L324">            throw Graph.Variables.Exceptions</span>
+<span class="nc" id="L325">                       .dataTypeOfVariableValueNotSupported(value);</span>
+        }
+<span class="nc" id="L327">    }</span>
+
+    private void createVariableVertex(String key, Object value) {
+<span class="nc" id="L330">        VertexLabel vl = this.variableVertexLabel();</span>
+<span class="nc" id="L331">        GraphTransaction tx = this.params.graphTransaction();</span>
+
+<span class="nc" id="L333">        HugeVertex vertex = HugeVertex.create(tx, null, vl);</span>
+        try {
+<span class="nc" id="L335">            this.setProperty(vertex, key, value);</span>
+<span class="nc" id="L336">        } catch (IllegalArgumentException e) {</span>
+<span class="nc" id="L337">            throw Graph.Variables.Exceptions</span>
+<span class="nc" id="L338">                       .dataTypeOfVariableValueNotSupported(value, e);</span>
+<span class="nc" id="L339">        }</span>
+        // PrimaryKey id
+<span class="nc" id="L341">        vertex.assignId(null);</span>
+
+<span class="nc" id="L343">        tx.addVertex(vertex);</span>
+<span class="nc" id="L344">    }</span>
+
+    private void removeVariableVertex(HugeVertex vertex) {
+<span class="nc" id="L347">        this.params.graphTransaction().removeVertex(vertex);</span>
+<span class="nc" id="L348">    }</span>
+
+    private HugeVertex queryVariableVertex(String key) {
+<span class="nc" id="L351">        GraphTransaction tx = this.params.graphTransaction();</span>
+<span class="nc" id="L352">        Query query = this.createVariableQuery(key);</span>
+<span class="nc" id="L353">        Iterator&lt;Vertex&gt; vertices = tx.queryVertices(query);</span>
+<span class="nc" id="L354">        return (HugeVertex) QueryResults.one(vertices);</span>
+    }
+
+    private Iterator&lt;Vertex&gt; queryAllVariableVertices() {
+<span class="nc" id="L358">        GraphTransaction tx = this.params.graphTransaction();</span>
+<span class="nc" id="L359">        Query query = this.createVariableQuery(null);</span>
+<span class="nc" id="L360">        Iterator&lt;Vertex&gt; vertices = tx.queryVertices(query);</span>
+<span class="nc" id="L361">        return vertices;</span>
+    }
+
+    private ConditionQuery createVariableQuery(String name) {
+<span class="nc" id="L365">        ConditionQuery query = new ConditionQuery(HugeType.VERTEX);</span>
+<span class="nc" id="L366">        VertexLabel vl = this.variableVertexLabel();</span>
+<span class="nc" id="L367">        query.eq(HugeKeys.LABEL, vl.id());</span>
+<span class="nc bnc" id="L368" title="All 2 branches missed.">        if (name != null) {</span>
+<span class="nc" id="L369">            PropertyKey pkey = this.params.graph().propertyKey(</span>
+<span class="nc" id="L370">                               Hidden.hide(VARIABLE_KEY));</span>
+<span class="nc" id="L371">            query.query(Condition.eq(pkey.id(), name));</span>
+        }
+<span class="nc" id="L373">        query.showHidden(true);</span>
+<span class="nc" id="L374">        return query;</span>
+    }
+
+    private VertexLabel variableVertexLabel() {
+<span class="nc" id="L378">        return this.params.graph().vertexLabel(Hidden.hide(VARIABLES));</span>
+    }
+
+    private static Object extractSingleObject(Object value) {
+<span class="nc bnc" id="L382" title="All 4 branches missed.">        if (value instanceof List || value instanceof Set) {</span>
+<span class="nc" id="L383">            Collection&lt;?&gt; collection = (Collection&lt;?&gt;) value;</span>
+<span class="nc bnc" id="L384" title="All 2 branches missed.">            if (collection.isEmpty()) {</span>
+<span class="nc" id="L385">                return null;</span>
+            }
+<span class="nc" id="L387">            value = collection.iterator().next();</span>
+        }
+<span class="nc" id="L389">        return value;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

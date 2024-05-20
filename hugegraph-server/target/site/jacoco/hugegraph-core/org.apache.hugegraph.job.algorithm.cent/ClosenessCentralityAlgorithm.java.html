@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ClosenessCentralityAlgorithm.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.cent</a> &gt; <span class="el_source">ClosenessCentralityAlgorithm.java</span></div><h1>ClosenessCentralityAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.cent;
+
+import java.util.Map;
+
+import org.apache.tinkerpop.gremlin.process.traversal.Operator;
+import org.apache.tinkerpop.gremlin.process.traversal.P;
+import org.apache.tinkerpop.gremlin.process.traversal.Pop;
+import org.apache.tinkerpop.gremlin.process.traversal.Scope;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.__;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.type.define.Directions;
+
+<span class="nc" id="L33">public class ClosenessCentralityAlgorithm extends AbstractCentAlgorithm {</span>
+
+    public static final long DEFAULT_DEGREE = 100L;
+    public static final long DEFAULT_SAMPLE = 1L;
+
+    @Override
+    public String name() {
+<span class="nc" id="L40">        return &quot;closeness_centrality&quot;;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L45">        depth(parameters);</span>
+<span class="nc" id="L46">    }</span>
+
+    @Override
+    public Object call(UserJob&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L50">        try (Traverser traverser = new Traverser(job)) {</span>
+<span class="nc" id="L51">            return traverser.closenessCentrality(direction(parameters),</span>
+<span class="nc" id="L52">                                                 edgeLabel(parameters),</span>
+<span class="nc" id="L53">                                                 depth(parameters),</span>
+<span class="nc" id="L54">                                                 degree(parameters),</span>
+<span class="nc" id="L55">                                                 sample(parameters),</span>
+<span class="nc" id="L56">                                                 sourceLabel(parameters),</span>
+<span class="nc" id="L57">                                                 sourceSample(parameters),</span>
+<span class="nc" id="L58">                                                 sourceCLabel(parameters),</span>
+<span class="nc" id="L59">                                                 top(parameters));</span>
+        }
+    }
+
+<span class="nc" id="L63">    private static class Traverser extends AbstractCentAlgorithm.Traverser {</span>
+
+        public Traverser(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L66">            super(job);</span>
+<span class="nc" id="L67">        }</span>
+
+        public Object closenessCentrality(Directions direction,
+                                          String label,
+                                          int depth,
+                                          long degree,
+                                          long sample,
+                                          String sourceLabel,
+                                          long sourceSample,
+                                          String sourceCLabel,
+                                          long topN) {
+<span class="nc bnc" id="L78" title="All 2 branches missed.">            assert depth &gt; 0;</span>
+<span class="nc bnc" id="L79" title="All 4 branches missed.">            assert degree &gt; 0L || degree == NO_LIMIT;</span>
+<span class="nc bnc" id="L80" title="All 4 branches missed.">            assert topN &gt;= 0L || topN == NO_LIMIT;</span>
+
+<span class="nc" id="L82">            GraphTraversal&lt;Vertex, Vertex&gt; t = constructSource(sourceLabel,</span>
+                                                               sourceSample,
+                                                               sourceCLabel);
+<span class="nc" id="L85">            t = constructPath(t, direction, label, degree, sample,</span>
+                              sourceLabel, sourceCLabel);
+<span class="nc" id="L87">            t = t.emit().until(__.loops().is(P.gte(depth)));</span>
+<span class="nc" id="L88">            t = filterNonShortestPath(t, true);</span>
+
+            /*
+             * We use Marchiori's algorithm(sum of reciprocal of distances):
+             *  .math(&quot;_-1&quot;).sack(Operator.div).sack().sum()
+             * for Bavelas's algorithm:
+             *  .math(&quot;_-1&quot;).sum().sack(Operator.div).sack()
+             * see https://en.wikipedia.org/wiki/Closeness_centrality
+             */
+            GraphTraversal&lt;Vertex, ?&gt; tg;
+<span class="nc" id="L98">            tg = t.group().by(__.select(Pop.first, &quot;v&quot;).id())</span>
+<span class="nc" id="L99">                          .by(__.select(Pop.all, &quot;v&quot;).count(Scope.local)</span>
+<span class="nc" id="L100">                                .math(&quot;_-1&quot;).sack(Operator.div).sack().sum());</span>
+<span class="nc" id="L101">            GraphTraversal&lt;Vertex, ?&gt; tLimit = topN(tg, topN);</span>
+
+<span class="nc" id="L103">            return this.execute(tLimit, tLimit::next);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeFactoryAuthProxy.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.auth</a> &gt; <span class="el_source">HugeFactoryAuthProxy.java</span></div><h1>HugeFactoryAuthProxy.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.auth;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.configuration2.Configuration;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeFactory;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.StandardHugeGraph;
+import org.apache.hugegraph.backend.cache.CacheManager;
+import org.apache.hugegraph.backend.tx.AbstractTransaction;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.backend.tx.IndexableTransaction;
+import org.apache.hugegraph.concurrent.LockManager;
+import org.apache.hugegraph.metrics.ServerReporter;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.SchemaManager;
+import org.apache.hugegraph.schema.builder.AbstractBuilder;
+import org.apache.hugegraph.schema.builder.EdgeLabelBuilder;
+import org.apache.hugegraph.schema.builder.IndexLabelBuilder;
+import org.apache.hugegraph.schema.builder.PropertyKeyBuilder;
+import org.apache.hugegraph.schema.builder.VertexLabelBuilder;
+import org.apache.hugegraph.serializer.JsonSerializer;
+import org.apache.hugegraph.structure.HugeEdge;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeProperty;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.task.HugeTask;
+import org.apache.hugegraph.task.StandardTaskScheduler;
+import org.apache.hugegraph.task.TaskCallable;
+import org.apache.hugegraph.task.TaskCallable.SysTaskCallable;
+import org.apache.hugegraph.task.TaskManager;
+import org.apache.hugegraph.traversal.optimize.HugeCountStepStrategy;
+import org.apache.hugegraph.traversal.optimize.HugeGraphStepStrategy;
+import org.apache.hugegraph.traversal.optimize.HugeVertexStepStrategy;
+import org.apache.hugegraph.util.Reflection;
+import org.apache.hugegraph.variables.HugeVariables;
+
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L65">public final class HugeFactoryAuthProxy {</span>
+
+    public static final String GRAPH_FACTORY =
+           &quot;gremlin.graph=org.apache.hugegraph.auth.HugeFactoryAuthProxy&quot;;
+
+<span class="nc" id="L70">    private static final Set&lt;String&gt; PROTECT_METHODS = ImmutableSet.of(&quot;instance&quot;);</span>
+
+<span class="nc" id="L72">    private static final Map&lt;HugeGraph, HugeGraph&gt; GRAPHS = new HashMap&lt;&gt;();</span>
+
+    static {
+<span class="nc" id="L75">        HugeGraphAuthProxy.setContext(HugeGraphAuthProxy.Context.admin());</span>
+<span class="nc" id="L76">        HugeFactoryAuthProxy.registerPrivateActions();</span>
+<span class="nc" id="L77">    }</span>
+
+    public static synchronized HugeGraph open(Configuration config) {
+        /*
+         * Inject authentication (replace HugeGraph with HugeGraphAuthProxy)
+         * TODO: Add verify to StandardHugeGraph() to prevent dynamic creation
+         */
+<span class="nc" id="L84">        HugeGraph graph = HugeFactory.open(config);</span>
+<span class="nc" id="L85">        HugeGraph proxy = GRAPHS.get(graph);</span>
+<span class="nc bnc" id="L86" title="All 2 branches missed.">        if (proxy == null) {</span>
+<span class="nc" id="L87">            proxy = new HugeGraphAuthProxy(graph);</span>
+<span class="nc" id="L88">            GRAPHS.put(graph, proxy);</span>
+        }
+<span class="nc" id="L90">        return proxy;</span>
+    }
+
+    private static void registerPrivateActions() {
+        // Thread
+<span class="nc" id="L95">        Reflection.registerFieldsToFilter(java.lang.Thread.class, &quot;name&quot;, &quot;priority&quot;, &quot;threadQ&quot;, &quot;eetop&quot;, &quot;single_step&quot;, &quot;daemon&quot;, &quot;stillborn&quot;, &quot;target&quot;, &quot;group&quot;, &quot;contextClassLoader&quot;, &quot;inheritedAccessControlContext&quot;, &quot;threadInitNumber&quot;, &quot;threadLocals&quot;, &quot;inheritableThreadLocals&quot;, &quot;stackSize&quot;, &quot;nativeParkEventPointer&quot;, &quot;tid&quot;, &quot;threadSeqNumber&quot;, &quot;threadStatus&quot;, &quot;parkBlocker&quot;, &quot;blocker&quot;, &quot;blockerLock&quot;, &quot;EMPTY_STACK_TRACE&quot;, &quot;SUBCLASS_IMPLEMENTATION_PERMISSION&quot;, &quot;uncaughtExceptionHandler&quot;, &quot;defaultUncaughtExceptionHandler&quot;, &quot;threadLocalRandomSeed&quot;, &quot;threadLocalRandomSecondarySeed&quot;);</span>
+<span class="nc" id="L96">        Reflection.registerMethodsToFilter(java.lang.Thread.class, &quot;exit&quot;, &quot;dispatchUncaughtException&quot;, &quot;clone&quot;, &quot;isInterrupted&quot;, &quot;registerNatives&quot;, &quot;init&quot;, &quot;init&quot;, &quot;nextThreadNum&quot;, &quot;nextThreadID&quot;, &quot;blockedOn&quot;, &quot;start0&quot;, &quot;isCCLOverridden&quot;, &quot;auditSubclass&quot;, &quot;dumpThreads&quot;, &quot;getThreads&quot;, &quot;processQueue&quot;, &quot;setPriority0&quot;, &quot;stop0&quot;, &quot;suspend0&quot;, &quot;resume0&quot;, &quot;interrupt0&quot;, &quot;setNativeName&quot;);</span>
+<span class="nc" id="L97">        Reflection.registerFieldsToFilter(java.lang.ThreadLocal.class, &quot;threadLocalHashCode&quot;, &quot;nextHashCode&quot;, &quot;HASH_INCREMENT&quot;);</span>
+<span class="nc" id="L98">        Reflection.registerMethodsToFilter(java.lang.ThreadLocal.class, &quot;access$400&quot;, &quot;createInheritedMap&quot;, &quot;nextHashCode&quot;, &quot;initialValue&quot;, &quot;setInitialValue&quot;, &quot;getMap&quot;, &quot;createMap&quot;, &quot;childValue&quot;);</span>
+<span class="nc" id="L99">        Reflection.registerMethodsToFilter(java.lang.InheritableThreadLocal.class, &quot;getMap&quot;, &quot;createMap&quot;, &quot;childValue&quot;);</span>
+
+        // HugeGraph
+<span class="nc" id="L102">        Reflection.registerFieldsToFilter(StandardAuthenticator.class, &quot;graph&quot;);</span>
+<span class="nc" id="L103">        Reflection.registerMethodsToFilter(StandardAuthenticator.class, &quot;initAdminUser&quot;, &quot;inputPassword&quot;, &quot;graph&quot;);</span>
+<span class="nc" id="L104">        Reflection.registerFieldsToFilter(ConfigAuthenticator.class, &quot;tokens&quot;);</span>
+<span class="nc" id="L105">        Reflection.registerFieldsToFilter(HugeFactoryAuthProxy.class, &quot;PROTECT_METHODS&quot;);</span>
+<span class="nc" id="L106">        Reflection.registerMethodsToFilter(HugeFactoryAuthProxy.class, &quot;genRegisterPrivateActions&quot;, &quot;registerClass&quot;, &quot;registerPrivateActions&quot;, &quot;registerPrivateActions&quot;, &quot;c&quot;);</span>
+<span class="nc" id="L107">        Reflection.registerFieldsToFilter(HugeAuthenticator.User.class, &quot;role&quot;, &quot;client&quot;);</span>
+<span class="nc" id="L108">        Reflection.registerFieldsToFilter(org.apache.tinkerpop.gremlin.server.auth.AuthenticatedUser.class, &quot;name&quot;);</span>
+<span class="nc" id="L109">        Reflection.registerFieldsToFilter(HugeGraphAuthProxy.class, &quot;LOG&quot;, &quot;hugegraph&quot;, &quot;taskScheduler&quot;, &quot;authManager&quot;, &quot;contexts&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L110">        Reflection.registerMethodsToFilter(HugeGraphAuthProxy.class, &quot;lambda$0&quot;, &quot;access$3&quot;, &quot;access$4&quot;, &quot;access$2&quot;, &quot;access$5&quot;, &quot;resetContext&quot;, &quot;logUser&quot;, &quot;verifyAdminPermission&quot;, &quot;verifyStatusPermission&quot;, &quot;verifyPermission&quot;, &quot;verifySchemaPermission&quot;, &quot;verifySchemaPermission&quot;, &quot;verifySchemaPermission&quot;, &quot;verifySchemaPermission&quot;, &quot;verifyNamePermission&quot;, &quot;verifyNameExistsPermission&quot;, &quot;verifyElemPermission&quot;, &quot;verifyElemPermission&quot;, &quot;verifyElemPermission&quot;, &quot;verifyElemPermission&quot;, &quot;verifyResPermission&quot;, &quot;verifyResPermission&quot;, &quot;verifyUserPermission&quot;, &quot;verifyUserPermission&quot;, &quot;verifyUserPermission&quot;, &quot;getContextString&quot;, &quot;access$6&quot;, &quot;access$7&quot;, &quot;lambda$1&quot;, &quot;lambda$2&quot;, &quot;lambda$3&quot;, &quot;lambda$4&quot;, &quot;lambda$5&quot;, &quot;lambda$6&quot;, &quot;lambda$7&quot;, &quot;lambda$8&quot;, &quot;lambda$9&quot;, &quot;lambda$10&quot;, &quot;lambda$11&quot;, &quot;lambda$12&quot;, &quot;lambda$13&quot;, &quot;lambda$14&quot;, &quot;lambda$15&quot;, &quot;lambda$16&quot;, &quot;lambda$17&quot;, &quot;lambda$18&quot;, &quot;lambda$19&quot;, &quot;lambda$20&quot;, &quot;lambda$21&quot;, &quot;lambda$22&quot;, &quot;lambda$23&quot;, &quot;lambda$24&quot;, &quot;access$8&quot;, &quot;access$9&quot;, &quot;access$10&quot;, &quot;setContext&quot;, &quot;getContext&quot;);</span>
+<span class="nc" id="L111">        Reflection.registerFieldsToFilter(HugeGraphAuthProxy.AuthManagerProxy.class, &quot;authManager&quot;, &quot;this$0&quot;);</span>
+<span class="nc" id="L112">        Reflection.registerMethodsToFilter(HugeGraphAuthProxy.AuthManagerProxy.class, &quot;currentUsername&quot;, &quot;updateCreator&quot;);</span>
+<span class="nc" id="L113">        Reflection.registerFieldsToFilter(HugeGraphAuthProxy.TaskSchedulerProxy.class, &quot;taskScheduler&quot;, &quot;this$0&quot;);</span>
+<span class="nc" id="L114">        Reflection.registerMethodsToFilter(HugeGraphAuthProxy.TaskSchedulerProxy.class, &quot;lambda$0&quot;, &quot;lambda$1&quot;, &quot;lambda$2&quot;, &quot;verifyTaskPermission&quot;, &quot;verifyTaskPermission&quot;, &quot;verifyTaskPermission&quot;, &quot;verifyTaskPermission&quot;, &quot;hasTaskPermission&quot;);</span>
+<span class="nc" id="L115">        Reflection.registerFieldsToFilter(HugeGraphAuthProxy.GraphTraversalSourceProxy.class, &quot;this$0&quot;);</span>
+<span class="nc" id="L116">        Reflection.registerFieldsToFilter(org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversalSource.class, &quot;connection&quot;, &quot;graph&quot;, &quot;strategies&quot;, &quot;bytecode&quot;);</span>
+<span class="nc" id="L117">        Reflection.registerFieldsToFilter(HugeGraphAuthProxy.TraversalStrategiesProxy.class, &quot;REST_WOEKER&quot;, &quot;serialVersionUID&quot;, &quot;strategies&quot;, &quot;this$0&quot;);</span>
+<span class="nc" id="L118">        Reflection.registerMethodsToFilter(HugeGraphAuthProxy.TraversalStrategiesProxy.class, &quot;translate&quot;);</span>
+<span class="nc" id="L119">        Reflection.registerFieldsToFilter(HugeGraphAuthProxy.VariablesProxy.class, &quot;variables&quot;, &quot;this$0&quot;);</span>
+<span class="nc" id="L120">        Reflection.registerFieldsToFilter(HugeGraphAuthProxy.Context.class, &quot;ADMIN&quot;, &quot;user&quot;);</span>
+<span class="nc" id="L121">        Reflection.registerFieldsToFilter(HugeGraphAuthProxy.ContextTask.class, &quot;runner&quot;, &quot;context&quot;);</span>
+<span class="nc" id="L122">        Reflection.registerFieldsToFilter(StandardHugeGraph.class, &quot;LOG&quot;, &quot;started&quot;, &quot;closed&quot;, &quot;mode&quot;, &quot;variables&quot;, &quot;name&quot;, &quot;params&quot;, &quot;configuration&quot;, &quot;schemaEventHub&quot;, &quot;graphEventHub&quot;, &quot;indexEventHub&quot;, &quot;writeRateLimiter&quot;, &quot;readRateLimiter&quot;, &quot;taskManager&quot;, &quot;authManager&quot;, &quot;features&quot;, &quot;storeProvider&quot;, &quot;tx&quot;, &quot;ramtable&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L123">        Reflection.registerMethodsToFilter(StandardHugeGraph.class, &quot;lambda$0&quot;, &quot;access$3&quot;, &quot;access$4&quot;, &quot;access$2&quot;, &quot;access$5&quot;, &quot;access$6&quot;, &quot;access$7&quot;, &quot;waitUntilAllTasksCompleted&quot;, &quot;access$8&quot;, &quot;loadStoreProvider&quot;, &quot;graphTransaction&quot;, &quot;schemaTransaction&quot;, &quot;openSchemaTransaction&quot;, &quot;checkGraphNotClosed&quot;, &quot;openSystemTransaction&quot;, &quot;openGraphTransaction&quot;, &quot;systemTransaction&quot;, &quot;access$9&quot;, &quot;access$10&quot;, &quot;access$11&quot;, &quot;access$12&quot;, &quot;access$13&quot;, &quot;access$14&quot;, &quot;access$15&quot;, &quot;access$16&quot;, &quot;access$17&quot;, &quot;access$18&quot;, &quot;serializer&quot;, &quot;loadSchemaStore&quot;, &quot;loadSystemStore&quot;, &quot;loadGraphStore&quot;, &quot;closeTx&quot;, &quot;analyzer&quot;, &quot;serverInfoManager&quot;, &quot;reloadRamtable&quot;, &quot;reloadRamtable&quot;, &quot;access$19&quot;, &quot;access$20&quot;, &quot;access$21&quot;);</span>
+<span class="nc" id="L124">        Reflection.registerFieldsToFilter(loadClass(&quot;org.apache.hugegraph.StandardHugeGraph$StandardHugeGraphParams&quot;), &quot;graph&quot;, &quot;this$0&quot;);</span>
+<span class="nc" id="L125">        Reflection.registerMethodsToFilter(loadClass(&quot;org.apache.hugegraph.StandardHugeGraph$StandardHugeGraphParams&quot;), &quot;access$1&quot;, &quot;graph&quot;);</span>
+<span class="nc" id="L126">        Reflection.registerFieldsToFilter(loadClass(&quot;org.apache.hugegraph.StandardHugeGraph$TinkerPopTransaction&quot;), &quot;refs&quot;, &quot;opened&quot;, &quot;transactions&quot;, &quot;this$0&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L127">        Reflection.registerMethodsToFilter(loadClass(&quot;org.apache.hugegraph.StandardHugeGraph$TinkerPopTransaction&quot;), &quot;lambda$0&quot;, &quot;access$3&quot;, &quot;access$2&quot;, &quot;lambda$1&quot;, &quot;graphTransaction&quot;, &quot;schemaTransaction&quot;, &quot;systemTransaction&quot;, &quot;access$1&quot;, &quot;setOpened&quot;, &quot;doCommit&quot;, &quot;verifyOpened&quot;, &quot;doRollback&quot;, &quot;doClose&quot;, &quot;destroyTransaction&quot;, &quot;doOpen&quot;, &quot;setClosed&quot;, &quot;getOrNewTransaction&quot;, &quot;access$0&quot;, &quot;resetState&quot;);</span>
+<span class="nc" id="L128">        Reflection.registerFieldsToFilter(org.apache.tinkerpop.gremlin.structure.util.AbstractThreadLocalTransaction.class, &quot;readWriteConsumerInternal&quot;, &quot;closeConsumerInternal&quot;, &quot;transactionListeners&quot;);</span>
+<span class="nc" id="L129">        Reflection.registerMethodsToFilter(org.apache.tinkerpop.gremlin.structure.util.AbstractThreadLocalTransaction.class, &quot;doClose&quot;, &quot;fireOnCommit&quot;, &quot;fireOnRollback&quot;, &quot;doReadWrite&quot;, &quot;lambda$fireOnRollback$1&quot;, &quot;lambda$fireOnCommit$0&quot;);</span>
+<span class="nc" id="L130">        Reflection.registerFieldsToFilter(org.apache.tinkerpop.gremlin.structure.util.AbstractTransaction.class, &quot;g&quot;);</span>
+<span class="nc" id="L131">        Reflection.registerMethodsToFilter(org.apache.tinkerpop.gremlin.structure.util.AbstractTransaction.class, &quot;doCommit&quot;, &quot;doRollback&quot;, &quot;doClose&quot;, &quot;doOpen&quot;, &quot;fireOnCommit&quot;, &quot;fireOnRollback&quot;, &quot;doReadWrite&quot;);</span>
+<span class="nc" id="L132">        Reflection.registerFieldsToFilter(loadClass(&quot;org.apache.hugegraph.StandardHugeGraph$Txs&quot;), &quot;schemaTx&quot;, &quot;systemTx&quot;, &quot;graphTx&quot;, &quot;openedTime&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L133">        Reflection.registerMethodsToFilter(loadClass(&quot;org.apache.hugegraph.StandardHugeGraph$Txs&quot;), &quot;access$2&quot;, &quot;access$1&quot;, &quot;access$0&quot;);</span>
+<span class="nc" id="L134">        Reflection.registerFieldsToFilter(GraphTransaction.class, &quot;indexTx&quot;, &quot;addedVertices&quot;, &quot;removedVertices&quot;, &quot;addedEdges&quot;, &quot;removedEdges&quot;, &quot;addedProps&quot;, &quot;removedProps&quot;, &quot;updatedVertices&quot;, &quot;updatedEdges&quot;, &quot;updatedOldestProps&quot;, &quot;locksTable&quot;, &quot;checkCustomVertexExist&quot;, &quot;checkAdjacentVertexExist&quot;, &quot;lazyLoadAdjacentVertex&quot;, &quot;ignoreInvalidEntry&quot;, &quot;commitPartOfAdjacentEdges&quot;, &quot;batchSize&quot;, &quot;pageSize&quot;, &quot;verticesCapacity&quot;, &quot;edgesCapacity&quot;, &quot;$assertionsDisabled&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$IdStrategy&quot;);</span>
+<span class="nc" id="L135">        Reflection.registerMethodsToFilter(GraphTransaction.class, &quot;lambda$0&quot;, &quot;lambda$1&quot;, &quot;lambda$2&quot;, &quot;lambda$3&quot;, &quot;lambda$4&quot;, &quot;lambda$5&quot;, &quot;lambda$6&quot;, &quot;lambda$7&quot;, &quot;lambda$8&quot;, &quot;lambda$9&quot;, &quot;lambda$10&quot;, &quot;lambda$11&quot;, &quot;lambda$12&quot;, &quot;lambda$13&quot;, &quot;lambda$14&quot;, &quot;lambda$15&quot;, &quot;lambda$16&quot;, &quot;lambda$17&quot;, &quot;lambda$18&quot;, &quot;lambda$19&quot;, &quot;access$1&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$IdStrategy&quot;, &quot;indexTransaction&quot;, &quot;indexTransaction&quot;, &quot;beforeWrite&quot;, &quot;prepareCommit&quot;, &quot;verticesInTxSize&quot;, &quot;edgesInTxSize&quot;, &quot;checkTxVerticesCapacity&quot;, &quot;checkTxEdgesCapacity&quot;, &quot;verticesInTxUpdated&quot;, &quot;verticesInTxRemoved&quot;, &quot;removingEdgeOwner&quot;, &quot;prepareDeletions&quot;, &quot;prepareDeletions&quot;, &quot;prepareUpdates&quot;, &quot;prepareAdditions&quot;, &quot;checkVertexExistIfCustomizedId&quot;, &quot;checkAggregateProperty&quot;, &quot;checkAggregateProperty&quot;, &quot;checkNonnullProperty&quot;, &quot;queryEdgesFromBackend&quot;, &quot;commitPartOfEdgeDeletions&quot;, &quot;optimizeQueries&quot;, &quot;checkVertexLabel&quot;, &quot;checkId&quot;, &quot;queryVerticesFromBackend&quot;, &quot;joinTxVertices&quot;, &quot;joinTxEdges&quot;, &quot;lockForUpdateProperty&quot;, &quot;optimizeQuery&quot;, &quot;verifyVerticesConditionQuery&quot;, &quot;verifyEdgesConditionQuery&quot;, &quot;indexQuery&quot;, &quot;joinTxRecords&quot;, &quot;propertyUpdated&quot;, &quot;parseEntry&quot;, &quot;traverseByLabel&quot;, &quot;reset&quot;, &quot;queryVerticesByIds&quot;, &quot;filterUnmatchedRecords&quot;, &quot;skipOffsetOrStopLimit&quot;, &quot;filterExpiredResultFromFromBackend&quot;, &quot;queryEdgesByIds&quot;, &quot;matchEdgeSortKeys&quot;, &quot;rightResultFromIndexQuery&quot;);</span>
+<span class="nc" id="L136">        Reflection.registerFieldsToFilter(IndexableTransaction.class, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L137">        Reflection.registerMethodsToFilter(IndexableTransaction.class, &quot;indexTransaction&quot;, &quot;commit2Backend&quot;, &quot;reset&quot;);</span>
+<span class="nc" id="L138">        Reflection.registerFieldsToFilter(AbstractTransaction.class, &quot;LOG&quot;, &quot;ownerThread&quot;, &quot;autoCommit&quot;, &quot;closed&quot;, &quot;committing&quot;, &quot;committing2Backend&quot;, &quot;graph&quot;, &quot;store&quot;, &quot;mutation&quot;, &quot;serializer&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L139">        Reflection.registerMethodsToFilter(AbstractTransaction.class, &quot;beforeWrite&quot;, &quot;prepareCommit&quot;, &quot;params&quot;, &quot;mutation&quot;, &quot;commit2Backend&quot;, &quot;autoCommit&quot;, &quot;beforeRead&quot;, &quot;afterWrite&quot;, &quot;afterRead&quot;, &quot;commitMutation2Backend&quot;, &quot;checkOwnerThread&quot;, &quot;doAction&quot;, &quot;store&quot;, &quot;reset&quot;);</span>
+<span class="nc" id="L140">        Reflection.registerFieldsToFilter(HugeFactory.class, &quot;LOG&quot;, &quot;NAME_REGEX&quot;, &quot;graphs&quot;);</span>
+<span class="nc" id="L141">        Reflection.registerMethodsToFilter(HugeFactory.class, &quot;lambda$0&quot;);</span>
+<span class="nc" id="L142">        Reflection.registerFieldsToFilter(SchemaElement.class, &quot;graph&quot;, &quot;id&quot;, &quot;name&quot;, &quot;userdata&quot;, &quot;status&quot;);</span>
+<span class="nc" id="L143">        Reflection.registerFieldsToFilter(HugeVertex.class, &quot;EMPTY_SET&quot;, &quot;id&quot;, &quot;label&quot;, &quot;edges&quot;, &quot;$assertionsDisabled&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$IdStrategy&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$HugeKeys&quot;);</span>
+<span class="nc" id="L144">        Reflection.registerMethodsToFilter(HugeVertex.class, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$IdStrategy&quot;, &quot;newProperty&quot;, &quot;newProperty&quot;, &quot;tx&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$HugeKeys&quot;, &quot;checkIdLength&quot;, &quot;onUpdateProperty&quot;, &quot;ensureFilledProperties&quot;, &quot;clone&quot;, &quot;clone&quot;);</span>
+<span class="nc" id="L145">        Reflection.registerFieldsToFilter(HugeElement.class, &quot;EMPTY_MAP&quot;, &quot;MAX_PROPERTIES&quot;, &quot;graph&quot;, &quot;properties&quot;, &quot;expiredTime&quot;, &quot;removed&quot;, &quot;fresh&quot;, &quot;propLoaded&quot;, &quot;defaultValueUpdated&quot;, &quot;$assertionsDisabled&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$Cardinality&quot;);</span>
+<span class="nc" id="L146">        Reflection.registerMethodsToFilter(HugeElement.class, &quot;removed&quot;, &quot;addProperty&quot;, &quot;newProperty&quot;, &quot;tx&quot;, &quot;onUpdateProperty&quot;, &quot;ensureFilledProperties&quot;, &quot;propLoaded&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$Cardinality&quot;, &quot;getIdValue&quot;, &quot;fresh&quot;, &quot;updateToDefaultValueIfNone&quot;, &quot;copyProperties&quot;);</span>
+<span class="nc" id="L147">        Reflection.registerFieldsToFilter(HugeEdge.class, &quot;id&quot;, &quot;label&quot;, &quot;name&quot;, &quot;sourceVertex&quot;, &quot;targetVertex&quot;, &quot;isOutEdge&quot;, &quot;$assertionsDisabled&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$HugeKeys&quot;, &quot;$SWITCH_TABLE$org$apache$tinkerpop$gremlin$structure$Direction&quot;);</span>
+<span class="nc" id="L148">        Reflection.registerMethodsToFilter(HugeEdge.class, &quot;checkAdjacentVertexExist&quot;, &quot;newProperty&quot;, &quot;newProperty&quot;, &quot;tx&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$HugeKeys&quot;, &quot;onUpdateProperty&quot;, &quot;ensureFilledProperties&quot;, &quot;$SWITCH_TABLE$org$apache$tinkerpop$gremlin$structure$Direction&quot;, &quot;clone&quot;, &quot;clone&quot;);</span>
+<span class="nc" id="L149">        Reflection.registerFieldsToFilter(HugeProperty.class, &quot;owner&quot;, &quot;pkey&quot;, &quot;value&quot;);</span>
+<span class="nc" id="L150">        Reflection.registerFieldsToFilter(HugeVariables.class, &quot;LOG&quot;, &quot;VARIABLES&quot;, &quot;VARIABLE_KEY&quot;, &quot;VARIABLE_TYPE&quot;, &quot;BYTE_VALUE&quot;, &quot;BOOLEAN_VALUE&quot;, &quot;INTEGER_VALUE&quot;, &quot;LONG_VALUE&quot;, &quot;FLOAT_VALUE&quot;, &quot;DOUBLE_VALUE&quot;, &quot;STRING_VALUE&quot;, &quot;LIST&quot;, &quot;SET&quot;, &quot;TYPES&quot;, &quot;params&quot;, &quot;graph&quot;);</span>
+<span class="nc" id="L151">        Reflection.registerMethodsToFilter(HugeVariables.class, &quot;createPropertyKey&quot;, &quot;queryAllVariableVertices&quot;, &quot;queryVariableVertex&quot;, &quot;createVariableVertex&quot;, &quot;removeVariableVertex&quot;, &quot;extractSingleObject&quot;, &quot;setProperty&quot;);</span>
+<span class="nc" id="L152">        Reflection.registerFieldsToFilter(SchemaManager.class, &quot;transaction&quot;, &quot;graph&quot;);</span>
+<span class="nc" id="L153">        Reflection.registerMethodsToFilter(SchemaManager.class, &quot;lambda$0&quot;, &quot;lambda$1&quot;, &quot;lambda$2&quot;, &quot;lambda$3&quot;, &quot;checkExists&quot;);</span>
+<span class="nc" id="L154">        Reflection.registerFieldsToFilter(PropertyKeyBuilder.class, &quot;id&quot;, &quot;name&quot;, &quot;dataType&quot;, &quot;cardinality&quot;, &quot;aggregateType&quot;, &quot;checkExist&quot;, &quot;userdata&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L155">        Reflection.registerMethodsToFilter(PropertyKeyBuilder.class, &quot;lambda$0&quot;, &quot;checkStableVars&quot;, &quot;checkAggregateType&quot;, &quot;hasSameProperties&quot;);</span>
+<span class="nc" id="L156">        Reflection.registerFieldsToFilter(AbstractBuilder.class, &quot;transaction&quot;, &quot;graph&quot;);</span>
+<span class="nc" id="L157">        Reflection.registerMethodsToFilter(AbstractBuilder.class, &quot;rebuildIndex&quot;, &quot;graph&quot;, &quot;checkSchemaName&quot;, &quot;validOrGenerateId&quot;, &quot;lockCheckAndCreateSchema&quot;, &quot;propertyKeyOrNull&quot;, &quot;checkSchemaIdIfRestoringMode&quot;, &quot;vertexLabelOrNull&quot;, &quot;edgeLabelOrNull&quot;, &quot;indexLabelOrNull&quot;, &quot;updateSchemaStatus&quot;);</span>
+<span class="nc" id="L158">        Reflection.registerFieldsToFilter(VertexLabelBuilder.class, &quot;id&quot;, &quot;name&quot;, &quot;idStrategy&quot;, &quot;properties&quot;, &quot;primaryKeys&quot;, &quot;nullableKeys&quot;, &quot;ttl&quot;, &quot;ttlStartTime&quot;, &quot;enableLabelIndex&quot;, &quot;userdata&quot;, &quot;checkExist&quot;, &quot;$assertionsDisabled&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$Action&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$IdStrategy&quot;);</span>
+<span class="nc" id="L159">        Reflection.registerMethodsToFilter(VertexLabelBuilder.class, &quot;lambda$0&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$IdStrategy&quot;, &quot;checkStableVars&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$Action&quot;, &quot;checkProperties&quot;, &quot;checkNullableKeys&quot;, &quot;checkIdStrategy&quot;, &quot;checkPrimaryKeys&quot;, &quot;hasSameProperties&quot;, &quot;checkTtl&quot;, &quot;checkUserdata&quot;, &quot;mapPkId2Name&quot;, &quot;mapPkId2Name&quot;);</span>
+<span class="nc" id="L160">        Reflection.registerFieldsToFilter(EdgeLabelBuilder.class, &quot;id&quot;, &quot;name&quot;, &quot;sourceLabel&quot;, &quot;targetLabel&quot;, &quot;frequency&quot;, &quot;properties&quot;, &quot;sortKeys&quot;, &quot;nullableKeys&quot;, &quot;ttl&quot;, &quot;ttlStartTime&quot;, &quot;enableLabelIndex&quot;, &quot;userdata&quot;, &quot;checkExist&quot;, &quot;$assertionsDisabled&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$Action&quot;);</span>
+<span class="nc" id="L161">        Reflection.registerMethodsToFilter(EdgeLabelBuilder.class, &quot;lambda$0&quot;, &quot;checkStableVars&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$Action&quot;, &quot;checkProperties&quot;, &quot;checkNullableKeys&quot;, &quot;checkSortKeys&quot;, &quot;checkRelation&quot;, &quot;hasSameProperties&quot;, &quot;checkTtl&quot;, &quot;checkUserdata&quot;, &quot;mapPkId2Name&quot;, &quot;mapPkId2Name&quot;);</span>
+<span class="nc" id="L162">        Reflection.registerFieldsToFilter(IndexLabelBuilder.class, &quot;id&quot;, &quot;name&quot;, &quot;baseType&quot;, &quot;baseValue&quot;, &quot;indexType&quot;, &quot;indexFields&quot;, &quot;userdata&quot;, &quot;checkExist&quot;, &quot;rebuild&quot;, &quot;$assertionsDisabled&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$DataType&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$IndexType&quot;);</span>
+<span class="nc" id="L163">        Reflection.registerMethodsToFilter(IndexLabelBuilder.class, &quot;lambda$0&quot;, &quot;checkStableVars&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$DataType&quot;, &quot;$SWITCH_TABLE$com$baidu$hugegraph$type$define$IndexType&quot;, &quot;checkBaseType&quot;, &quot;checkIndexType&quot;, &quot;checkFields4Range&quot;, &quot;loadElement&quot;, &quot;checkFields&quot;, &quot;checkRepeatIndex&quot;, &quot;checkRepeatIndex&quot;, &quot;checkRepeatIndex&quot;, &quot;checkPrimaryKeyIndex&quot;, &quot;checkRepeatRangeIndex&quot;, &quot;checkRepeatSearchIndex&quot;, &quot;checkRepeatSecondaryIndex&quot;, &quot;checkRepeatShardIndex&quot;, &quot;checkRepeatUniqueIndex&quot;, &quot;removeSubIndex&quot;, &quot;hasSubIndex&quot;, &quot;allStringIndex&quot;, &quot;oneNumericField&quot;, &quot;hasSameProperties&quot;);</span>
+<span class="nc" id="L164">        Reflection.registerFieldsToFilter(TaskManager.class, &quot;LOG&quot;, &quot;SCHEDULE_PERIOD&quot;, &quot;THREADS&quot;, &quot;MANAGER&quot;, &quot;schedulers&quot;, &quot;taskExecutor&quot;, &quot;taskDbExecutor&quot;, &quot;serverInfoDbExecutor&quot;, &quot;schedulerExecutor&quot;, &quot;contexts&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L165">        Reflection.registerMethodsToFilter(TaskManager.class, &quot;lambda$0&quot;, &quot;resetContext&quot;, &quot;closeTaskTx&quot;, &quot;setContext&quot;, &quot;instance&quot;, &quot;closeSchedulerTx&quot;, &quot;notifyNewTask&quot;, &quot;scheduleOrExecuteJob&quot;, &quot;scheduleOrExecuteJobForGraph&quot;);</span>
+<span class="nc" id="L166">        Reflection.registerFieldsToFilter(StandardTaskScheduler.class, &quot;LOG&quot;, &quot;graph&quot;, &quot;serverManager&quot;, &quot;taskExecutor&quot;, &quot;taskDbExecutor&quot;, &quot;eventListener&quot;, &quot;tasks&quot;, &quot;taskTx&quot;, &quot;NO_LIMIT&quot;, &quot;PAGE_SIZE&quot;, &quot;QUERY_INTERVAL&quot;, &quot;MAX_PENDING_TASKS&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L167">        Reflection.registerMethodsToFilter(StandardTaskScheduler.class, &quot;lambda$0&quot;, &quot;lambda$1&quot;, &quot;lambda$2&quot;, &quot;lambda$3&quot;, &quot;lambda$4&quot;, &quot;lambda$5&quot;, &quot;lambda$6&quot;, &quot;lambda$7&quot;, &quot;tx&quot;, &quot;listenChanges&quot;, &quot;unlistenChanges&quot;, &quot;submitTask&quot;, &quot;queryTask&quot;, &quot;queryTask&quot;, &quot;queryTask&quot;, &quot;call&quot;, &quot;call&quot;, &quot;remove&quot;, &quot;sleep&quot;, &quot;taskDone&quot;, &quot;serverManager&quot;, &quot;supportsPaging&quot;, &quot;restore&quot;, &quot;checkOnMasterNode&quot;, &quot;waitUntilTaskCompleted&quot;, &quot;scheduleTasks&quot;, &quot;executeTasksOnWorker&quot;, &quot;cancelTasksOnWorker&quot;);</span>
+<span class="nc" id="L168">        Reflection.registerFieldsToFilter(HugeTask.class, &quot;LOG&quot;, &quot;DECOMPRESS_RATIO&quot;, &quot;scheduler&quot;, &quot;callable&quot;, &quot;type&quot;, &quot;name&quot;, &quot;id&quot;, &quot;parent&quot;, &quot;dependencies&quot;, &quot;description&quot;, &quot;context&quot;, &quot;create&quot;, &quot;server&quot;, &quot;load&quot;, &quot;status&quot;, &quot;progress&quot;, &quot;update&quot;, &quot;retries&quot;, &quot;input&quot;, &quot;result&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L169">        Reflection.registerMethodsToFilter(HugeTask.class, &quot;property&quot;, &quot;scheduler&quot;, &quot;scheduler&quot;, &quot;asArray&quot;, &quot;checkPropertySize&quot;, &quot;checkPropertySize&quot;, &quot;checkDependenciesSuccess&quot;, &quot;toOrderSet&quot;, &quot;done&quot;, &quot;callable&quot;, &quot;setException&quot;, &quot;set&quot;, &quot;result&quot;, &quot;status&quot;);</span>
+<span class="nc" id="L170">        Reflection.registerFieldsToFilter(TaskCallable.class, &quot;LOG&quot;, &quot;ERROR_COMMIT&quot;, &quot;ERROR_MESSAGES&quot;, &quot;task&quot;, &quot;graph&quot;, &quot;lastSaveTime&quot;, &quot;saveInterval&quot;);</span>
+<span class="nc" id="L171">        Reflection.registerMethodsToFilter(TaskCallable.class, &quot;graph&quot;, &quot;closeTx&quot;, &quot;cancelled&quot;, &quot;done&quot;, &quot;task&quot;, &quot;save&quot;, &quot;needSaveWithEx&quot;);</span>
+<span class="nc" id="L172">        Reflection.registerFieldsToFilter(TaskCallable.SysTaskCallable.class, &quot;params&quot;);</span>
+<span class="nc" id="L173">        Reflection.registerMethodsToFilter(TaskCallable.SysTaskCallable.class, &quot;params&quot;, &quot;params&quot;);</span>
+<span class="nc" id="L174">        Reflection.registerFieldsToFilter(StandardAuthManager.class, &quot;CACHE_EXPIRE&quot;, &quot;graph&quot;, &quot;eventListener&quot;, &quot;usersCache&quot;, &quot;users&quot;, &quot;groups&quot;, &quot;targets&quot;, &quot;belong&quot;, &quot;access&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L175">        Reflection.registerMethodsToFilter(StandardAuthManager.class, &quot;lambda$0&quot;, &quot;listenChanges&quot;, &quot;unlistenChanges&quot;, &quot;invalidCache&quot;, &quot;initSchemaIfNeeded&quot;, &quot;rolePermission&quot;, &quot;rolePermission&quot;, &quot;rolePermission&quot;, &quot;cache&quot;);</span>
+<span class="nc" id="L176">        Reflection.registerFieldsToFilter(SchemaDefine.class, &quot;graph&quot;, &quot;label&quot;);</span>
+<span class="nc" id="L177">        Reflection.registerMethodsToFilter(SchemaDefine.class, &quot;schema&quot;, &quot;createPropertyKey&quot;, &quot;createPropertyKey&quot;, &quot;createPropertyKey&quot;, &quot;existEdgeLabel&quot;, &quot;createRangeIndex&quot;, &quot;unhideField&quot;, &quot;hideField&quot;, &quot;existVertexLabel&quot;, &quot;initProperties&quot;);</span>
+<span class="nc" id="L178">        Reflection.registerFieldsToFilter(EntityManager.class, &quot;graph&quot;, &quot;label&quot;, &quot;deser&quot;, &quot;NO_LIMIT&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L179">        Reflection.registerMethodsToFilter(EntityManager.class, &quot;toList&quot;, &quot;graph&quot;, &quot;tx&quot;, &quot;commitOrRollback&quot;, &quot;unhideLabel&quot;, &quot;queryById&quot;, &quot;queryEntity&quot;, &quot;constructVertex&quot;, &quot;save&quot;, &quot;query&quot;);</span>
+<span class="nc" id="L180">        Reflection.registerFieldsToFilter(RelationshipManager.class, &quot;graph&quot;, &quot;label&quot;, &quot;deser&quot;, &quot;NO_LIMIT&quot;, &quot;$assertionsDisabled&quot;);</span>
+<span class="nc" id="L181">        Reflection.registerMethodsToFilter(RelationshipManager.class, &quot;lambda$0&quot;, &quot;toList&quot;, &quot;graph&quot;, &quot;tx&quot;, &quot;commitOrRollback&quot;, &quot;unhideLabel&quot;, &quot;queryById&quot;, &quot;queryRelationship&quot;, &quot;newVertex&quot;, &quot;save&quot;);</span>
+<span class="nc" id="L182">        Reflection.registerFieldsToFilter(CacheManager.class, &quot;LOG&quot;, &quot;INSTANCE&quot;, &quot;TIMER_TICK_PERIOD&quot;, &quot;LOG_TICK_COST_TIME&quot;, &quot;caches&quot;, &quot;timer&quot;);</span>
+<span class="nc" id="L183">        Reflection.registerMethodsToFilter(CacheManager.class, &quot;access$0&quot;, &quot;scheduleTimer&quot;, &quot;instance&quot;);</span>
+<span class="nc" id="L184">        Reflection.registerFieldsToFilter(org.apache.hugegraph.concurrent.LockManager.class, &quot;INSTANCE&quot;, &quot;lockGroupMap&quot;);</span>
+<span class="nc" id="L185">        Reflection.registerMethodsToFilter(org.apache.hugegraph.concurrent.LockManager.class, &quot;instance&quot;);</span>
+<span class="nc" id="L186">        Reflection.registerFieldsToFilter(ServerReporter.class, &quot;instance&quot;, &quot;gauges&quot;, &quot;counters&quot;, &quot;histograms&quot;, &quot;meters&quot;, &quot;timers&quot;);</span>
+<span class="nc" id="L187">        Reflection.registerMethodsToFilter(ServerReporter.class, &quot;instance&quot;, &quot;instance&quot;);</span>
+<span class="nc" id="L188">        Reflection.registerFieldsToFilter(com.codahale.metrics.ScheduledReporter.class, &quot;LOG&quot;, &quot;FACTORY_ID&quot;, &quot;registry&quot;, &quot;executor&quot;, &quot;shutdownExecutorOnStop&quot;, &quot;disabledMetricAttributes&quot;, &quot;scheduledFuture&quot;, &quot;filter&quot;, &quot;durationFactor&quot;, &quot;durationUnit&quot;, &quot;rateFactor&quot;, &quot;rateUnit&quot;);</span>
+<span class="nc" id="L189">        Reflection.registerMethodsToFilter(com.codahale.metrics.ScheduledReporter.class, &quot;convertDuration&quot;, &quot;convertRate&quot;, &quot;getRateUnit&quot;, &quot;getDurationUnit&quot;, &quot;isShutdownExecutorOnStop&quot;, &quot;getDisabledMetricAttributes&quot;, &quot;calculateRateUnit&quot;, &quot;createDefaultExecutor&quot;, &quot;lambda$start$0&quot;, &quot;start&quot;);</span>
+<span class="nc" id="L190">        Reflection.registerFieldsToFilter(JsonSerializer.class, &quot;LBUF_SIZE&quot;, &quot;INSTANCE&quot;);</span>
+<span class="nc" id="L191">        Reflection.registerMethodsToFilter(JsonSerializer.class, &quot;writeIterator&quot;, &quot;instance&quot;);</span>
+<span class="nc" id="L192">        Reflection.registerFieldsToFilter(HugeVertexStepStrategy.class, &quot;serialVersionUID&quot;, &quot;INSTANCE&quot;);</span>
+<span class="nc" id="L193">        Reflection.registerMethodsToFilter(HugeVertexStepStrategy.class, &quot;instance&quot;);</span>
+<span class="nc" id="L194">        Reflection.registerFieldsToFilter(HugeGraphStepStrategy.class, &quot;serialVersionUID&quot;, &quot;INSTANCE&quot;);</span>
+<span class="nc" id="L195">        Reflection.registerMethodsToFilter(HugeGraphStepStrategy.class, &quot;instance&quot;);</span>
+<span class="nc" id="L196">        Reflection.registerFieldsToFilter(HugeCountStepStrategy.class, &quot;serialVersionUID&quot;, &quot;INSTANCE&quot;);</span>
+<span class="nc" id="L197">        Reflection.registerMethodsToFilter(HugeCountStepStrategy.class, &quot;lambda$0&quot;, &quot;instance&quot;);</span>
+
+        // Enable this line to generate registration statement
+        //genRegisterPrivateActions();
+<span class="nc" id="L201">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    private static void genRegisterPrivateActions() {
+<span class="nc" id="L205">        registerPrivateActions(Thread.class);</span>
+<span class="nc" id="L206">        registerPrivateActions(ThreadLocal.class);</span>
+<span class="nc" id="L207">        registerPrivateActions(InheritableThreadLocal.class);</span>
+
+<span class="nc" id="L209">        registerPrivateActions(StandardAuthenticator.class);</span>
+<span class="nc" id="L210">        registerPrivateActions(ConfigAuthenticator.class);</span>
+<span class="nc" id="L211">        registerPrivateActions(HugeFactoryAuthProxy.class);</span>
+<span class="nc" id="L212">        registerPrivateActions(HugeAuthenticator.User.class);</span>
+
+<span class="nc" id="L214">        registerPrivateActions(HugeGraphAuthProxy.class);</span>
+<span class="nc" id="L215">        registerPrivateActions(HugeGraphAuthProxy.AuthManagerProxy.class);</span>
+<span class="nc" id="L216">        registerPrivateActions(HugeGraphAuthProxy.TaskSchedulerProxy.class);</span>
+<span class="nc" id="L217">        registerPrivateActions(HugeGraphAuthProxy.GraphTraversalSourceProxy.class);</span>
+<span class="nc" id="L218">        registerPrivateActions(HugeGraphAuthProxy.TraversalStrategiesProxy.class);</span>
+<span class="nc" id="L219">        registerPrivateActions(HugeGraphAuthProxy.VariablesProxy.class);</span>
+<span class="nc" id="L220">        registerPrivateActions(HugeGraphAuthProxy.Context.class);</span>
+<span class="nc" id="L221">        registerPrivateActions(HugeGraphAuthProxy.ContextThreadPoolExecutor.class);</span>
+<span class="nc" id="L222">        registerPrivateActions(HugeGraphAuthProxy.ContextTask.class);</span>
+
+<span class="nc bnc" id="L224" title="All 2 branches missed.">        for (Class&lt;?&gt; clazz : StandardHugeGraph.PROTECT_CLASSES) {</span>
+<span class="nc" id="L225">            registerPrivateActions(clazz);</span>
+        }
+
+<span class="nc" id="L228">        registerPrivateActions(HugeFactory.class);</span>
+<span class="nc" id="L229">        registerPrivateActions(AbstractTransaction.class);</span>
+
+<span class="nc" id="L231">        registerPrivateActions(SchemaElement.class);</span>
+<span class="nc" id="L232">        registerPrivateActions(HugeVertex.class);</span>
+<span class="nc" id="L233">        registerPrivateActions(HugeEdge.class);</span>
+<span class="nc" id="L234">        registerPrivateActions(HugeProperty.class);</span>
+<span class="nc" id="L235">        registerPrivateActions(HugeVariables.class);</span>
+
+<span class="nc" id="L237">        registerPrivateActions(SchemaManager.class);</span>
+<span class="nc" id="L238">        registerPrivateActions(PropertyKeyBuilder.class);</span>
+<span class="nc" id="L239">        registerPrivateActions(VertexLabelBuilder.class);</span>
+<span class="nc" id="L240">        registerPrivateActions(EdgeLabelBuilder.class);</span>
+<span class="nc" id="L241">        registerPrivateActions(IndexLabelBuilder.class);</span>
+
+<span class="nc" id="L243">        registerPrivateActions(TaskManager.class);</span>
+<span class="nc" id="L244">        registerPrivateActions(StandardTaskScheduler.class);</span>
+<span class="nc" id="L245">        registerPrivateActions(HugeTask.class);</span>
+<span class="nc" id="L246">        registerPrivateActions(TaskCallable.class);</span>
+<span class="nc" id="L247">        registerPrivateActions(SysTaskCallable.class);</span>
+
+<span class="nc" id="L249">        registerPrivateActions(StandardAuthManager.class);</span>
+<span class="nc" id="L250">        registerPrivateActions(SchemaDefine.class);</span>
+<span class="nc" id="L251">        registerPrivateActions(EntityManager.class);</span>
+<span class="nc" id="L252">        registerPrivateActions(RelationshipManager.class);</span>
+
+        // Don't shield them because need to access by auth RPC
+        //registerPrivateActions(HugeUser.class);
+        //registerPrivateActions(RolePermission.class);
+        //registerPrivateActions(HugeResource.class);
+
+<span class="nc" id="L259">        registerPrivateActions(CacheManager.class);</span>
+<span class="nc" id="L260">        registerPrivateActions(LockManager.class);</span>
+<span class="nc" id="L261">        registerPrivateActions(ServerReporter.class);</span>
+<span class="nc" id="L262">        registerPrivateActions(JsonSerializer.class);</span>
+<span class="nc" id="L263">        registerPrivateActions(HugeVertexStepStrategy.class);</span>
+<span class="nc" id="L264">        registerPrivateActions(HugeGraphStepStrategy.class);</span>
+<span class="nc" id="L265">        registerPrivateActions(HugeCountStepStrategy.class);</span>
+<span class="nc" id="L266">    }</span>
+
+    private static void registerPrivateActions(Class&lt;?&gt; clazz) {
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        while (clazz != Object.class) {</span>
+<span class="nc" id="L270">            List&lt;String&gt; fields = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L271" title="All 2 branches missed.">            for (Field field : clazz.getDeclaredFields()) {</span>
+<span class="nc bnc" id="L272" title="All 2 branches missed.">                if (!Modifier.isPublic(field.getModifiers())) {</span>
+<span class="nc" id="L273">                    fields.add(field.getName());</span>
+                }
+            }
+<span class="nc" id="L276">            List&lt;String&gt; methods = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L277" title="All 2 branches missed.">            for (Method method : clazz.getDeclaredMethods()) {</span>
+<span class="nc bnc" id="L278" title="All 2 branches missed.">                if (!Modifier.isPublic(method.getModifiers()) ||</span>
+<span class="nc bnc" id="L279" title="All 2 branches missed.">                    PROTECT_METHODS.contains(method.getName())) {</span>
+<span class="nc" id="L280">                    methods.add(method.getName());</span>
+                }
+            }
+<span class="nc" id="L283">            registerClass(clazz, fields, methods);</span>
+<span class="nc" id="L284">            clazz = clazz.getSuperclass();</span>
+<span class="nc" id="L285">        }</span>
+<span class="nc" id="L286">    }</span>
+
+    private static boolean registerClass(Class&lt;?&gt; clazz,
+                                         List&lt;String&gt; fields,
+                                         List&lt;String&gt; methods) {
+<span class="nc bnc" id="L291" title="All 2 branches missed.">        if (clazz.getName().startsWith(&quot;java&quot;) ||</span>
+<span class="nc bnc" id="L292" title="All 4 branches missed.">            fields.isEmpty() &amp;&amp; methods.isEmpty()) {</span>
+<span class="nc" id="L293">            return false;</span>
+        }
+<span class="nc" id="L295">        final String[] array = new String[fields.size()];</span>
+        try {
+<span class="nc" id="L297">            Reflection.registerFieldsToFilter(clazz, fields.toArray(array));</span>
+<span class="nc" id="L298">            Reflection.registerMethodsToFilter(clazz, methods.toArray(array));</span>
+<span class="nc" id="L299">        } catch (IllegalArgumentException e) {</span>
+<span class="nc bnc" id="L300" title="All 2 branches missed.">            if (e.getMessage().contains(&quot;Filter already registered: class&quot;)) {</span>
+<span class="nc" id="L301">                return false;</span>
+            }
+<span class="nc" id="L303">            throw e;</span>
+<span class="nc" id="L304">        }</span>
+
+        String code;
+<span class="nc" id="L307">        code = String.format(&quot;Reflection.registerFieldsToFilter(%s.class, \&quot;%s\&quot;);&quot;,</span>
+<span class="nc" id="L308">                             clazz.getCanonicalName(), String.join(&quot;\&quot;, \&quot;&quot;, fields));</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">        if (!fields.isEmpty()) {</span>
+            // CHECKSTYLE:OFF
+<span class="nc" id="L311">            System.out.println(code);</span>
+            // CHECKSTYLE:ON
+        }
+
+<span class="nc" id="L315">        code = String.format(&quot;Reflection.registerMethodsToFilter(%s.class, \&quot;%s\&quot;);&quot;,</span>
+<span class="nc" id="L316">                             clazz.getCanonicalName(), String.join(&quot;\&quot;, \&quot;&quot;, methods));</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">        if (!methods.isEmpty()) {</span>
+            // CHECKSTYLE:OFF
+<span class="nc" id="L319">            System.out.println(code);</span>
+            // CHECKSTYLE:ON
+        }
+
+<span class="nc" id="L323">        return true;</span>
+    }
+
+    private static Class&lt;?&gt; loadClass(String clazz) {
+        try {
+<span class="nc" id="L328">            return Class.forName(clazz);</span>
+<span class="nc" id="L329">        } catch (ClassNotFoundException e) {</span>
+<span class="nc" id="L330">            throw new HugeException(e.getMessage(), e);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

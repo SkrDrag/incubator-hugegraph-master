@@ -1,0 +1,604 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>VertexLabelBuilder.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.schema.builder</a> &gt; <span class="el_source">VertexLabelBuilder.java</span></div><h1>VertexLabelBuilder.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.schema.builder;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.collections.CollectionUtils;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.schema.Userdata;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.exception.ExistedException;
+import org.apache.hugegraph.exception.NotAllowException;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Action;
+import org.apache.hugegraph.type.define.IdStrategy;
+import org.apache.hugegraph.util.CollectionUtil;
+import org.apache.hugegraph.util.E;
+import com.google.common.collect.ImmutableList;
+
+<span class="nc" id="L47">public class VertexLabelBuilder extends AbstractBuilder</span>
+                                implements VertexLabel.Builder {
+
+    private Id id;
+    private String name;
+    private IdStrategy idStrategy;
+    private Set&lt;String&gt; properties;
+    private List&lt;String&gt; primaryKeys;
+    private Set&lt;String&gt; nullableKeys;
+    private long ttl;
+    private String ttlStartTime;
+    private Boolean enableLabelIndex;
+    private Userdata userdata;
+    private boolean checkExist;
+
+    public VertexLabelBuilder(SchemaTransaction transaction,
+                              HugeGraph graph, String name) {
+<span class="nc" id="L64">        super(transaction, graph);</span>
+<span class="nc" id="L65">        E.checkNotNull(name, &quot;name&quot;);</span>
+<span class="nc" id="L66">        this.id = null;</span>
+<span class="nc" id="L67">        this.name = name;</span>
+<span class="nc" id="L68">        this.idStrategy = IdStrategy.DEFAULT;</span>
+<span class="nc" id="L69">        this.properties = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L70">        this.primaryKeys = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L71">        this.nullableKeys = new HashSet&lt;&gt;();</span>
+<span class="nc" id="L72">        this.ttl = 0L;</span>
+<span class="nc" id="L73">        this.ttlStartTime = null;</span>
+<span class="nc" id="L74">        this.enableLabelIndex = null;</span>
+<span class="nc" id="L75">        this.userdata = new Userdata();</span>
+<span class="nc" id="L76">        this.checkExist = true;</span>
+<span class="nc" id="L77">    }</span>
+
+    public VertexLabelBuilder(SchemaTransaction transaction,
+                              HugeGraph graph, VertexLabel copy) {
+<span class="nc" id="L81">        super(transaction, graph);</span>
+<span class="nc" id="L82">        E.checkNotNull(copy, &quot;copy&quot;);</span>
+<span class="nc" id="L83">        HugeGraph origin = copy.graph();</span>
+<span class="nc" id="L84">        this.id = null;</span>
+<span class="nc" id="L85">        this.name = copy.name();</span>
+<span class="nc" id="L86">        this.idStrategy = copy.idStrategy();</span>
+<span class="nc" id="L87">        this.properties = mapPkId2Name(origin, copy.properties());</span>
+<span class="nc" id="L88">        this.primaryKeys = mapPkId2Name(origin, copy.primaryKeys());</span>
+<span class="nc" id="L89">        this.nullableKeys = mapPkId2Name(origin, copy.nullableKeys());</span>
+<span class="nc" id="L90">        this.ttl = copy.ttl();</span>
+<span class="nc" id="L91">        this.ttlStartTime = copy.ttlStartTimeName();</span>
+<span class="nc" id="L92">        this.enableLabelIndex = copy.enableLabelIndex();</span>
+<span class="nc" id="L93">        this.userdata = new Userdata(copy.userdata());</span>
+<span class="nc" id="L94">        this.checkExist = false;</span>
+<span class="nc" id="L95">    }</span>
+
+    @Override
+    public VertexLabel build() {
+<span class="nc" id="L99">        Id id = this.validOrGenerateId(HugeType.VERTEX_LABEL,</span>
+                                       this.id, this.name);
+<span class="nc" id="L101">        VertexLabel vertexLabel = new VertexLabel(this.graph(), id, this.name);</span>
+<span class="nc" id="L102">        vertexLabel.idStrategy(this.idStrategy);</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">        vertexLabel.enableLabelIndex(this.enableLabelIndex == null ||</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">                                     this.enableLabelIndex);</span>
+<span class="nc" id="L105">        vertexLabel.ttl(this.ttl);</span>
+<span class="nc bnc" id="L106" title="All 2 branches missed.">        if (this.ttlStartTime != null) {</span>
+<span class="nc" id="L107">            vertexLabel.ttlStartTime(this.graph().propertyKey(</span>
+<span class="nc" id="L108">                                     this.ttlStartTime).id());</span>
+        }
+        // Assign properties
+<span class="nc bnc" id="L111" title="All 2 branches missed.">        for (String key : this.properties) {</span>
+<span class="nc" id="L112">            PropertyKey propertyKey = this.graph().propertyKey(key);</span>
+<span class="nc" id="L113">            vertexLabel.property(propertyKey.id());</span>
+<span class="nc" id="L114">        }</span>
+<span class="nc bnc" id="L115" title="All 2 branches missed.">        for (String key : this.primaryKeys) {</span>
+<span class="nc" id="L116">            PropertyKey propertyKey = this.graph().propertyKey(key);</span>
+<span class="nc" id="L117">            vertexLabel.primaryKey(propertyKey.id());</span>
+<span class="nc" id="L118">        }</span>
+<span class="nc bnc" id="L119" title="All 2 branches missed.">        for (String key : this.nullableKeys) {</span>
+<span class="nc" id="L120">            PropertyKey propertyKey = this.graph().propertyKey(key);</span>
+<span class="nc" id="L121">            vertexLabel.nullableKey(propertyKey.id());</span>
+<span class="nc" id="L122">        }</span>
+<span class="nc" id="L123">        vertexLabel.userdata(this.userdata);</span>
+<span class="nc" id="L124">        return vertexLabel;</span>
+    }
+
+    @Override
+    public VertexLabel create() {
+<span class="nc" id="L129">        HugeType type = HugeType.VERTEX_LABEL;</span>
+<span class="nc" id="L130">        this.checkSchemaName(this.name);</span>
+
+<span class="nc" id="L132">        return this.lockCheckAndCreateSchema(type, this.name, name -&gt; {</span>
+<span class="nc" id="L133">            VertexLabel vertexLabel = this.vertexLabelOrNull(name);</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">            if (vertexLabel != null) {</span>
+<span class="nc bnc" id="L135" title="All 4 branches missed.">                if (this.checkExist || !hasSameProperties(vertexLabel)) {</span>
+<span class="nc" id="L136">                    throw new ExistedException(type, name);</span>
+                }
+<span class="nc" id="L138">                return vertexLabel;</span>
+            }
+<span class="nc" id="L140">            this.checkSchemaIdIfRestoringMode(type, this.id);</span>
+
+<span class="nc" id="L142">            this.checkProperties(Action.INSERT);</span>
+<span class="nc" id="L143">            this.checkIdStrategy();</span>
+<span class="nc" id="L144">            this.checkNullableKeys(Action.INSERT);</span>
+<span class="nc" id="L145">            Userdata.check(this.userdata, Action.INSERT);</span>
+<span class="nc" id="L146">            this.checkTtl();</span>
+<span class="nc" id="L147">            this.checkUserdata(Action.INSERT);</span>
+
+<span class="nc" id="L149">            vertexLabel = this.build();</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">            assert vertexLabel.name().equals(name);</span>
+<span class="nc" id="L151">            this.graph().addVertexLabel(vertexLabel);</span>
+<span class="nc" id="L152">            return vertexLabel;</span>
+        });
+    }
+
+    /**
+     * Check whether this has same properties with existedVertexLabel.
+     * Only properties, primaryKeys, nullableKeys, enableLabelIndex are checked.
+     * The id, idStrategy, checkExist, userdata are not checked.
+     * @param existedVertexLabel to be compared with
+     * @return true if this has same properties with existedVertexLabel
+     */
+    private boolean hasSameProperties(VertexLabel existedVertexLabel) {
+<span class="nc" id="L164">        HugeGraph graph = this.graph();</span>
+
+<span class="nc" id="L166">        Set&lt;Id&gt; existedProperties = existedVertexLabel.properties();</span>
+<span class="nc bnc" id="L167" title="All 2 branches missed.">        if (this.properties.size() != existedProperties.size()) {</span>
+<span class="nc" id="L168">            return false;</span>
+        }
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        for (String propertyName : this.properties) {</span>
+<span class="nc" id="L171">            PropertyKey propertyKey = graph.propertyKey(propertyName);</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">            if (!existedProperties.contains(propertyKey.id())) {</span>
+<span class="nc" id="L173">                return false;</span>
+            }
+<span class="nc" id="L175">        }</span>
+
+<span class="nc" id="L177">        List&lt;Id&gt; existedPrimaryKeys = existedVertexLabel.primaryKeys();</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">        if (this.primaryKeys.size() != existedPrimaryKeys.size()) {</span>
+<span class="nc" id="L179">            return false;</span>
+        }
+<span class="nc bnc" id="L181" title="All 2 branches missed.">        for (String primaryKeyName : this.primaryKeys) {</span>
+<span class="nc" id="L182">            PropertyKey primaryKey = graph.propertyKey(primaryKeyName);</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">            if (!existedPrimaryKeys.contains(primaryKey.id())) {</span>
+<span class="nc" id="L184">                return false;</span>
+            }
+<span class="nc" id="L186">        }</span>
+
+<span class="nc" id="L188">        Set&lt;Id&gt; existedNullableKeys = existedVertexLabel.nullableKeys();</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        if (this.nullableKeys.size() != existedNullableKeys.size()) {</span>
+<span class="nc" id="L190">            return false;</span>
+        }
+<span class="nc bnc" id="L192" title="All 2 branches missed.">        for (String nullableKeyName : this.nullableKeys) {</span>
+<span class="nc" id="L193">            PropertyKey nullableKey = graph.propertyKey(nullableKeyName);</span>
+<span class="nc bnc" id="L194" title="All 2 branches missed.">            if (!existedNullableKeys.contains(nullableKey.id())) {</span>
+<span class="nc" id="L195">                return false;</span>
+            }
+<span class="nc" id="L197">        }</span>
+
+        // this.enableLabelIndex == null, it means true.
+<span class="nc bnc" id="L200" title="All 4 branches missed.">        if (this.enableLabelIndex == null || this.enableLabelIndex) {</span>
+<span class="nc" id="L201">            return existedVertexLabel.enableLabelIndex();</span>
+        } else { // this.enableLabelIndex is false
+<span class="nc bnc" id="L203" title="All 2 branches missed.">            return !existedVertexLabel.enableLabelIndex();</span>
+        }
+    }
+
+    @Override
+    public VertexLabel append() {
+<span class="nc" id="L209">        VertexLabel vertexLabel = this.vertexLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">        if (vertexLabel == null) {</span>
+<span class="nc" id="L211">            throw new NotFoundException(&quot;Can't update vertex label '%s' &quot; +</span>
+                                        &quot;since it doesn't exist&quot;, this.name);
+        }
+
+<span class="nc" id="L215">        this.checkStableVars();</span>
+<span class="nc" id="L216">        this.checkProperties(Action.APPEND);</span>
+<span class="nc" id="L217">        this.checkNullableKeys(Action.APPEND);</span>
+<span class="nc" id="L218">        Userdata.check(this.userdata, Action.APPEND);</span>
+
+<span class="nc bnc" id="L220" title="All 2 branches missed.">        for (String key : this.properties) {</span>
+<span class="nc" id="L221">            PropertyKey propertyKey = this.graph().propertyKey(key);</span>
+<span class="nc" id="L222">            vertexLabel.property(propertyKey.id());</span>
+<span class="nc" id="L223">        }</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">        for (String key : this.nullableKeys) {</span>
+<span class="nc" id="L225">            PropertyKey propertyKey = this.graph().propertyKey(key);</span>
+<span class="nc" id="L226">            vertexLabel.nullableKey(propertyKey.id());</span>
+<span class="nc" id="L227">        }</span>
+<span class="nc" id="L228">        vertexLabel.userdata(this.userdata);</span>
+<span class="nc" id="L229">        this.graph().updateVertexLabel(vertexLabel);</span>
+<span class="nc" id="L230">        return vertexLabel;</span>
+    }
+
+    @Override
+    public VertexLabel eliminate() {
+<span class="nc" id="L235">        VertexLabel vertexLabel = this.vertexLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L236" title="All 2 branches missed.">        if (vertexLabel == null) {</span>
+<span class="nc" id="L237">            throw new NotFoundException(&quot;Can't update vertex label '%s' &quot; +</span>
+                                        &quot;since it doesn't exist&quot;, this.name);
+        }
+        // Only allowed to eliminate user data
+<span class="nc" id="L241">        this.checkStableVars();</span>
+<span class="nc" id="L242">        this.checkProperties(Action.ELIMINATE);</span>
+<span class="nc" id="L243">        this.checkNullableKeys(Action.ELIMINATE);</span>
+<span class="nc" id="L244">        Userdata.check(this.userdata, Action.ELIMINATE);</span>
+
+<span class="nc" id="L246">        vertexLabel.removeUserdata(this.userdata);</span>
+<span class="nc" id="L247">        this.graph().updateVertexLabel(vertexLabel);</span>
+<span class="nc" id="L248">        return vertexLabel;</span>
+    }
+
+    @Override
+    public Id remove() {
+<span class="nc" id="L253">        VertexLabel vertexLabel = this.vertexLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L254" title="All 2 branches missed.">        if (vertexLabel == null) {</span>
+<span class="nc" id="L255">            return null;</span>
+        }
+<span class="nc" id="L257">        return this.graph().removeVertexLabel(vertexLabel.id());</span>
+    }
+
+    @Override
+    public Id rebuildIndex() {
+<span class="nc" id="L262">        VertexLabel vertexLabel = this.vertexLabelOrNull(this.name);</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (vertexLabel == null) {</span>
+<span class="nc" id="L264">            return null;</span>
+        }
+<span class="nc" id="L266">        return this.graph().rebuildIndex(vertexLabel);</span>
+    }
+
+    @Override
+    public VertexLabelBuilder id(long id) {
+<span class="nc bnc" id="L271" title="All 2 branches missed.">        E.checkArgument(id != 0L,</span>
+                        &quot;Not allowed to assign 0 as vertex label id&quot;);
+<span class="nc" id="L273">        this.id = IdGenerator.of(id);</span>
+<span class="nc" id="L274">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder idStrategy(IdStrategy idStrategy) {
+<span class="nc bnc" id="L279" title="All 4 branches missed.">        E.checkArgument(this.idStrategy == IdStrategy.DEFAULT ||</span>
+                        this.idStrategy == idStrategy,
+                        &quot;Not allowed to change id strategy for &quot; +
+                        &quot;vertex label '%s'&quot;, this.name);
+<span class="nc" id="L283">        this.idStrategy = idStrategy;</span>
+<span class="nc" id="L284">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder useAutomaticId() {
+<span class="nc bnc" id="L289" title="All 4 branches missed.">        E.checkArgument(this.idStrategy == IdStrategy.DEFAULT ||</span>
+                        this.idStrategy == IdStrategy.AUTOMATIC,
+                        &quot;Not allowed to change id strategy for &quot; +
+                        &quot;vertex label '%s'&quot;, this.name);
+<span class="nc" id="L293">        this.idStrategy = IdStrategy.AUTOMATIC;</span>
+<span class="nc" id="L294">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder usePrimaryKeyId() {
+<span class="nc bnc" id="L299" title="All 4 branches missed.">        E.checkArgument(this.idStrategy == IdStrategy.DEFAULT ||</span>
+                        this.idStrategy == IdStrategy.PRIMARY_KEY,
+                        &quot;Not allowed to change id strategy for &quot; +
+                        &quot;vertex label '%s'&quot;, this.name);
+<span class="nc" id="L303">        this.idStrategy = IdStrategy.PRIMARY_KEY;</span>
+<span class="nc" id="L304">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder useCustomizeStringId() {
+<span class="nc bnc" id="L309" title="All 4 branches missed.">        E.checkArgument(this.idStrategy == IdStrategy.DEFAULT ||</span>
+                        this.idStrategy == IdStrategy.CUSTOMIZE_STRING,
+                        &quot;Not allowed to change id strategy for &quot; +
+                        &quot;vertex label '%s'&quot;, this.name);
+<span class="nc" id="L313">        this.idStrategy = IdStrategy.CUSTOMIZE_STRING;</span>
+<span class="nc" id="L314">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder useCustomizeNumberId() {
+<span class="nc bnc" id="L319" title="All 4 branches missed.">        E.checkArgument(this.idStrategy == IdStrategy.DEFAULT ||</span>
+                        this.idStrategy == IdStrategy.CUSTOMIZE_NUMBER,
+                        &quot;Not allowed to change id strategy for &quot; +
+                        &quot;vertex label '%s'&quot;, this.name);
+<span class="nc" id="L323">        this.idStrategy = IdStrategy.CUSTOMIZE_NUMBER;</span>
+<span class="nc" id="L324">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder useCustomizeUuidId() {
+<span class="nc bnc" id="L329" title="All 4 branches missed.">        E.checkArgument(this.idStrategy == IdStrategy.DEFAULT ||</span>
+                        this.idStrategy == IdStrategy.CUSTOMIZE_UUID,
+                        &quot;Not allowed to change id strategy for &quot; +
+                        &quot;vertex label '%s'&quot;, this.name);
+<span class="nc" id="L333">        this.idStrategy = IdStrategy.CUSTOMIZE_UUID;</span>
+<span class="nc" id="L334">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder properties(String... properties) {
+<span class="nc" id="L339">        this.properties.addAll(Arrays.asList(properties));</span>
+<span class="nc" id="L340">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder primaryKeys(String... keys) {
+<span class="nc bnc" id="L345" title="All 2 branches missed.">        if (keys.length == 0) {</span>
+<span class="nc" id="L346">            return this;</span>
+        }
+
+<span class="nc" id="L349">        E.checkArgument(this.primaryKeys.isEmpty(),</span>
+                        &quot;Not allowed to assign primary keys multitimes&quot;);
+
+<span class="nc" id="L352">        List&lt;String&gt; primaryKeys = Arrays.asList(keys);</span>
+<span class="nc" id="L353">        E.checkArgument(CollectionUtil.allUnique(primaryKeys),</span>
+                        &quot;Invalid primary keys %s, which contains some &quot; +
+                        &quot;duplicate properties&quot;, primaryKeys);
+<span class="nc" id="L356">        this.primaryKeys.addAll(primaryKeys);</span>
+<span class="nc" id="L357">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder nullableKeys(String... keys) {
+<span class="nc" id="L362">        this.nullableKeys.addAll(Arrays.asList(keys));</span>
+<span class="nc" id="L363">        return this;</span>
+    }
+
+    @Override
+    public VertexLabel.Builder ttl(long ttl) {
+<span class="nc" id="L368">        this.ttl = ttl;</span>
+<span class="nc" id="L369">        return this;</span>
+    }
+
+    @Override
+    public VertexLabel.Builder ttlStartTime(String ttlStartTime) {
+<span class="nc" id="L374">        this.ttlStartTime = ttlStartTime;</span>
+<span class="nc" id="L375">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder enableLabelIndex(boolean enable) {
+<span class="nc" id="L380">        this.enableLabelIndex = enable;</span>
+<span class="nc" id="L381">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder userdata(String key, Object value) {
+<span class="nc" id="L386">        this.userdata.put(key, value);</span>
+<span class="nc" id="L387">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder userdata(Map&lt;String, Object&gt; userdata) {
+<span class="nc" id="L392">        this.userdata.putAll(userdata);</span>
+<span class="nc" id="L393">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder ifNotExist() {
+<span class="nc" id="L398">        this.checkExist = false;</span>
+<span class="nc" id="L399">        return this;</span>
+    }
+
+    @Override
+    public VertexLabelBuilder checkExist(boolean checkExist) {
+<span class="nc" id="L404">        this.checkExist = checkExist;</span>
+<span class="nc" id="L405">        return this;</span>
+    }
+
+    private void checkProperties(Action action) {
+<span class="nc bnc" id="L409" title="All 4 branches missed.">        switch (action) {</span>
+            case INSERT:
+            case APPEND:
+<span class="nc bnc" id="L412" title="All 2 branches missed.">                for (String key : this.properties) {</span>
+<span class="nc" id="L413">                    this.graph().propertyKey(key);</span>
+<span class="nc" id="L414">                }</span>
+<span class="nc" id="L415">                break;</span>
+            case ELIMINATE:
+<span class="nc bnc" id="L417" title="All 2 branches missed.">                if (!this.properties.isEmpty()) {</span>
+<span class="nc" id="L418">                    throw new NotAllowException(</span>
+                              &quot;Not support to eliminate properties &quot; +
+                              &quot;for vertex label currently&quot;);
+                }
+                break;
+            case DELETE:
+<span class="nc" id="L424">                break;</span>
+            default:
+<span class="nc" id="L426">                throw new AssertionError(String.format(</span>
+                          &quot;Unknown schema action '%s'&quot;, action));
+        }
+<span class="nc" id="L429">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    private void checkNullableKeys(Action action) {
+        // Not using switch-case to avoid indent too much
+<span class="nc bnc" id="L434" title="All 2 branches missed.">        if (action == Action.ELIMINATE) {</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">            if (!this.nullableKeys.isEmpty()) {</span>
+<span class="nc" id="L436">                throw new NotAllowException(</span>
+                          &quot;Not support to eliminate nullableKeys &quot; +
+                          &quot;for vertex label currently&quot;);
+            }
+<span class="nc" id="L440">            return;</span>
+        }
+
+<span class="nc" id="L443">        VertexLabel vertexLabel = this.vertexLabelOrNull(this.name);</span>
+        // The originProps is empty when firstly create vertex label
+<span class="nc bnc" id="L445" title="All 2 branches missed.">        List&lt;String&gt; originProps = vertexLabel == null ?</span>
+<span class="nc" id="L446">                                   ImmutableList.of() :</span>
+<span class="nc" id="L447">                                   this.graph()</span>
+<span class="nc" id="L448">                                       .mapPkId2Name(vertexLabel.properties());</span>
+<span class="nc" id="L449">        Set&lt;String&gt; appendProps = this.properties;</span>
+
+<span class="nc" id="L451">        E.checkArgument(CollectionUtil.union(originProps, appendProps)</span>
+<span class="nc" id="L452">                                      .containsAll(this.nullableKeys),</span>
+                        &quot;The nullableKeys: %s to be created or appended &quot; +
+                        &quot;must belong to the origin/new properties: %s/%s&quot;,
+                        this.nullableKeys, originProps, appendProps);
+
+<span class="nc bnc" id="L457" title="All 2 branches missed.">        List&lt;String&gt; primaryKeys = vertexLabel == null ?</span>
+<span class="nc" id="L458">                                   this.primaryKeys :</span>
+<span class="nc" id="L459">                                   this.graph()</span>
+<span class="nc" id="L460">                                       .mapPkId2Name(vertexLabel.primaryKeys());</span>
+<span class="nc bnc" id="L461" title="All 2 branches missed.">        E.checkArgument(!CollectionUtil.hasIntersection(primaryKeys,</span>
+                                                        this.nullableKeys),
+                        &quot;The nullableKeys: %s are not allowed to &quot; +
+                        &quot;belong to primaryKeys: %s of vertex label '%s'&quot;,
+                        this.nullableKeys, primaryKeys, this.name);
+
+<span class="nc bnc" id="L467" title="All 2 branches missed.">        if (action == Action.APPEND) {</span>
+<span class="nc" id="L468">            Collection&lt;String&gt; newAddedProps = CollectionUtils.subtract(</span>
+                                               appendProps, originProps);
+<span class="nc" id="L470">            E.checkArgument(this.nullableKeys.containsAll(newAddedProps),</span>
+                            &quot;The new added properties: %s must be nullable&quot;,
+                            newAddedProps);
+        }
+<span class="nc" id="L474">    }</span>
+
+    private void checkIdStrategy() {
+<span class="nc" id="L477">        IdStrategy strategy = this.idStrategy;</span>
+<span class="nc bnc" id="L478" title="All 2 branches missed.">        boolean hasPrimaryKey = this.primaryKeys.size() &gt; 0;</span>
+<span class="nc bnc" id="L479" title="All 4 branches missed.">        switch (strategy) {</span>
+            case DEFAULT:
+<span class="nc bnc" id="L481" title="All 2 branches missed.">                if (hasPrimaryKey) {</span>
+<span class="nc" id="L482">                    this.idStrategy = IdStrategy.PRIMARY_KEY;</span>
+                } else {
+<span class="nc" id="L484">                    this.idStrategy = IdStrategy.AUTOMATIC;</span>
+                }
+<span class="nc" id="L486">                break;</span>
+            case AUTOMATIC:
+            case CUSTOMIZE_STRING:
+            case CUSTOMIZE_NUMBER:
+            case CUSTOMIZE_UUID:
+<span class="nc bnc" id="L491" title="All 2 branches missed.">                E.checkArgument(!hasPrimaryKey,</span>
+                                &quot;Not allowed to assign primary keys &quot; +
+                                &quot;when using '%s' id strategy&quot;, strategy);
+<span class="nc" id="L494">                break;</span>
+            case PRIMARY_KEY:
+<span class="nc" id="L496">                E.checkArgument(hasPrimaryKey,</span>
+                                &quot;Must assign some primary keys &quot; +
+                                &quot;when using '%s' id strategy&quot;, strategy);
+<span class="nc" id="L499">                break;</span>
+            default:
+<span class="nc" id="L501">                throw new AssertionError(String.format(</span>
+                          &quot;Unknown id strategy '%s'&quot;, strategy));
+        }
+<span class="nc bnc" id="L504" title="All 2 branches missed.">        if (this.idStrategy == IdStrategy.PRIMARY_KEY) {</span>
+<span class="nc" id="L505">            this.checkPrimaryKeys();</span>
+        }
+<span class="nc" id="L507">    }</span>
+
+    private void checkPrimaryKeys() {
+<span class="nc bnc" id="L510" title="All 4 branches missed.">        E.checkArgument(this.idStrategy == IdStrategy.DEFAULT ||</span>
+                        this.idStrategy == IdStrategy.PRIMARY_KEY,
+                        &quot;Not allowed to use id strategy '%s' and assign &quot; +
+                        &quot;primary keys at the same time for vertex label '%s'&quot;,
+                        this.idStrategy, this.name);
+
+<span class="nc bnc" id="L516" title="All 2 branches missed.">        E.checkArgument(!this.properties.isEmpty(),</span>
+                        &quot;The properties of vertex label '%s' &quot; +
+                        &quot;can't be empty when id strategy is '%s'&quot;,
+                        this.name, IdStrategy.PRIMARY_KEY);
+
+<span class="nc" id="L521">        E.checkNotEmpty(this.primaryKeys, &quot;primary keys&quot;, this.name);</span>
+        // Use loop instead containAll for more detailed exception info.
+<span class="nc bnc" id="L523" title="All 2 branches missed.">        for (String key : this.primaryKeys) {</span>
+<span class="nc" id="L524">            E.checkArgument(this.properties.contains(key),</span>
+                            &quot;The primary key '%s' of vertex label '%s' &quot; +
+                            &quot;must be contained in properties: %s&quot;,
+                            key, this.name, this.properties);
+<span class="nc" id="L528">        }</span>
+<span class="nc" id="L529">    }</span>
+
+    private void checkStableVars() {
+<span class="nc bnc" id="L532" title="All 2 branches missed.">        if (!this.primaryKeys.isEmpty()) {</span>
+<span class="nc" id="L533">            throw new NotAllowException(</span>
+                      &quot;Not allowed to update primary keys &quot; +
+                      &quot;for vertex label '%s'&quot;, this.name);
+        }
+<span class="nc bnc" id="L537" title="All 2 branches missed.">        if (this.idStrategy != IdStrategy.DEFAULT) {</span>
+<span class="nc" id="L538">            throw new NotAllowException(</span>
+                      &quot;Not allowed to update id strategy &quot; +
+                      &quot;for vertex label '%s'&quot;, this.name);
+        }
+<span class="nc bnc" id="L542" title="All 2 branches missed.">        if (this.enableLabelIndex != null) {</span>
+<span class="nc" id="L543">            throw new NotAllowException(</span>
+                      &quot;Not allowed to update enable_label_index &quot; +
+                      &quot;for vertex label '%s'&quot;, this.name);
+        }
+<span class="nc" id="L547">    }</span>
+
+    private void checkTtl() {
+<span class="nc bnc" id="L550" title="All 2 branches missed.">        E.checkArgument(this.ttl &gt;= 0,</span>
+<span class="nc" id="L551">                        &quot;The ttl must be &gt;= 0, but got: %s&quot;, this.ttl);</span>
+<span class="nc bnc" id="L552" title="All 2 branches missed.">        if (this.ttl == 0L) {</span>
+<span class="nc bnc" id="L553" title="All 2 branches missed.">            E.checkArgument(this.ttlStartTime == null,</span>
+                            &quot;Can't set ttl start time if ttl is not set&quot;);
+<span class="nc" id="L555">            return;</span>
+        }
+<span class="nc bnc" id="L557" title="All 2 branches missed.">        if (this.ttlStartTime == null) {</span>
+<span class="nc" id="L558">            return;</span>
+        }
+        // Check whether the properties contains the specified keys
+<span class="nc bnc" id="L561" title="All 2 branches missed.">        E.checkArgument(!this.properties.isEmpty(),</span>
+                        &quot;The properties can't be empty when exist &quot; +
+                        &quot;ttl start time for edge label '%s'&quot;, this.name);
+<span class="nc" id="L564">        E.checkArgument(this.properties.contains(this.ttlStartTime),</span>
+                        &quot;The ttl start time '%s' must be contained in &quot; +
+                        &quot;properties '%s' for vertex label '%s'&quot;,
+                        this.ttlStartTime, this.name, this.properties);
+<span class="nc" id="L568">        PropertyKey pkey = this.graph().propertyKey(this.ttlStartTime);</span>
+<span class="nc" id="L569">        E.checkArgument(pkey.dataType().isDate(),</span>
+                        &quot;The ttl start time property must be date type,&quot; +
+<span class="nc" id="L571">                        &quot;but got '%s(%s)'&quot;, this.ttlStartTime, pkey.dataType());</span>
+<span class="nc" id="L572">    }</span>
+
+    private void checkUserdata(Action action) {
+<span class="nc bnc" id="L575" title="All 3 branches missed.">        switch (action) {</span>
+            case INSERT:
+            case APPEND:
+<span class="nc bnc" id="L578" title="All 2 branches missed.">                for (Map.Entry&lt;String, Object&gt; e : this.userdata.entrySet()) {</span>
+<span class="nc bnc" id="L579" title="All 2 branches missed.">                    if (e.getValue() == null) {</span>
+<span class="nc" id="L580">                        throw new NotAllowException(</span>
+                                  &quot;Not allowed pass null userdata value when &quot; +
+                                  &quot;create or append edge label&quot;);
+                    }
+<span class="nc" id="L584">                }</span>
+<span class="nc" id="L585">                break;</span>
+            case ELIMINATE:
+            case DELETE:
+                // pass
+<span class="nc" id="L589">                break;</span>
+            default:
+<span class="nc" id="L591">                throw new AssertionError(String.format(</span>
+                          &quot;Unknown schema action '%s'&quot;, action));
+        }
+<span class="nc" id="L594">    }</span>
+
+    private static Set&lt;String&gt; mapPkId2Name(HugeGraph graph, Set&lt;Id&gt; ids) {
+<span class="nc" id="L597">        return new HashSet&lt;&gt;(graph.mapPkId2Name(ids));</span>
+    }
+
+    private static List&lt;String&gt; mapPkId2Name(HugeGraph graph, List&lt;Id&gt; ids) {
+<span class="nc" id="L601">        return graph.mapPkId2Name(ids);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

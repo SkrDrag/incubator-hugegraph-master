@@ -1,0 +1,507 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeSecurityManager.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.security</a> &gt; <span class="el_source">HugeSecurityManager.java</span></div><h1>HugeSecurityManager.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.security;
+
+import java.io.FileDescriptor;
+import java.net.InetAddress;
+import java.security.Permission;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArraySet;
+
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.util.Log;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L33">public class HugeSecurityManager extends SecurityManager {</span>
+
+<span class="nc" id="L35">    private static final String USER_DIR = System.getProperty(&quot;user.dir&quot;);</span>
+
+    private static final String USER_DIR_IDE =
+<span class="nc bnc" id="L38" title="All 2 branches missed.">                                USER_DIR.endsWith(&quot;hugegraph-dist&quot;) ?</span>
+<span class="nc" id="L39">                                USER_DIR.substring(0, USER_DIR.length() - 15) :</span>
+<span class="nc" id="L40">                                null;</span>
+
+    private static final String GREMLIN_SERVER_WORKER = &quot;gremlin-server-exec&quot;;
+    private static final String TASK_WORKER = &quot;task-worker&quot;;
+<span class="nc" id="L44">    private static final Set&lt;String&gt; GREMLIN_EXECUTOR_CLASS = ImmutableSet.of(</span>
+            &quot;org.apache.tinkerpop.gremlin.groovy.jsr223.GremlinGroovyScriptEngine&quot;
+    );
+
+    // TODO: add &quot;suppressAccessChecks&quot;
+<span class="nc" id="L49">    private static final Set&lt;String&gt; DENIED_PERMISSIONS = ImmutableSet.of(&quot;setSecurityManager&quot;);</span>
+
+
+
+<span class="nc" id="L53">    private static final Set&lt;String&gt; ACCEPT_CLASS_LOADERS = ImmutableSet.of(</span>
+            &quot;groovy.lang.GroovyClassLoader&quot;,
+            &quot;sun.reflect.DelegatingClassLoader&quot;,
+            &quot;jdk.internal.reflect.DelegatingClassLoader&quot;,
+            &quot;org.codehaus.groovy.reflection.SunClassLoader&quot;,
+            &quot;org.codehaus.groovy.runtime.callsite.CallSiteClassLoader&quot;,
+            &quot;org.apache.hadoop.hbase.util.DynamicClassLoader&quot;,
+            &quot;org.apache.tinkerpop.gremlin.groovy.loaders.GremlinLoader&quot;
+    );
+
+<span class="nc" id="L63">    private static final Set&lt;String&gt; CAFFEINE_CLASSES = ImmutableSet.of(</span>
+            &quot;com.github.benmanes.caffeine.cache.BoundedLocalCache&quot;
+    );
+
+<span class="nc" id="L67">    private static final Set&lt;String&gt; WHITE_SYSTEM_PROPERTIES = ImmutableSet.of(</span>
+            &quot;line.separator&quot;,
+            &quot;file.separator&quot;,
+            &quot;java.specification.version&quot;, // Sofa
+            &quot;socksProxyHost&quot;, // MySQL
+            &quot;file.encoding&quot; // PostgreSQL
+    );
+
+<span class="nc" id="L75">    private static final Map&lt;String, Set&lt;String&gt;&gt; ASYNC_TASKS = ImmutableMap.of(</span>
+            // Fixed https://github.com/apache/hugegraph/pull/892#issue-387202362
+            &quot;org.apache.hugegraph.backend.tx.SchemaTransaction&quot;,
+<span class="nc" id="L78">            ImmutableSet.of(&quot;removeVertexLabel&quot;, &quot;removeEdgeLabel&quot;,</span>
+                            &quot;removeIndexLabel&quot;, &quot;rebuildIndex&quot;),
+            &quot;org.apache.hugegraph.backend.tx.GraphIndexTransaction&quot;,
+<span class="nc" id="L81">            ImmutableSet.of(&quot;asyncRemoveIndexLeft&quot;)</span>
+    );
+
+<span class="nc" id="L84">    private static final Map&lt;String, Set&lt;String&gt;&gt; BACKEND_SOCKET = ImmutableMap.of(</span>
+            // Fixed #758
+            &quot;org.apache.hugegraph.backend.store.mysql.MysqlStore&quot;,
+<span class="nc" id="L87">            ImmutableSet.of(&quot;open&quot;, &quot;init&quot;, &quot;clear&quot;, &quot;opened&quot;, &quot;initialized&quot;)</span>
+    );
+
+<span class="nc" id="L90">    private static final Map&lt;String, Set&lt;String&gt;&gt; BACKEND_THREAD = ImmutableMap.of(</span>
+            // Fixed #758
+            &quot;org.apache.hugegraph.backend.store.cassandra.CassandraStore&quot;,
+<span class="nc" id="L93">            ImmutableSet.of(&quot;open&quot;, &quot;opened&quot;, &quot;init&quot;),</span>
+            // Fixed https://github.com/apache/hugegraph/pull/892#issuecomment-598545072
+            &quot;com.datastax.driver.core.AbstractSession&quot;,
+<span class="nc" id="L96">            ImmutableSet.of(&quot;execute&quot;)</span>
+    );
+
+<span class="nc" id="L99">    private static final Map&lt;String, Set&lt;String&gt;&gt; BACKEND_SNAPSHOT = ImmutableMap.of(</span>
+            &quot;org.apache.hugegraph.backend.store.AbstractBackendStoreProvider&quot;,
+<span class="nc" id="L101">            ImmutableSet.of(&quot;createSnapshot&quot;, &quot;resumeSnapshot&quot;),</span>
+            &quot;org.apache.hugegraph.backend.store.raft.RaftBackendStoreProvider&quot;,
+<span class="nc" id="L103">            ImmutableSet.of(&quot;createSnapshot&quot;, &quot;resumeSnapshot&quot;)</span>
+    );
+
+<span class="nc" id="L106">    private static final Set&lt;String&gt; HBASE_CLASSES = ImmutableSet.of(</span>
+            // Fixed #758
+            &quot;org.apache.hugegraph.backend.store.hbase.HbaseStore&quot;,
+            &quot;org.apache.hugegraph.backend.store.hbase.HbaseStore$HbaseSchemaStore&quot;,
+            &quot;org.apache.hugegraph.backend.store.hbase.HbaseStore$HbaseGraphStore&quot;,
+            &quot;org.apache.hugegraph.backend.store.hbase.HbaseSessions$RowIterator&quot;
+    );
+
+<span class="nc" id="L114">    private static final Set&lt;String&gt; RAFT_CLASSES = ImmutableSet.of(</span>
+            &quot;org.apache.hugegraph.backend.store.raft.RaftNode&quot;,
+            &quot;org.apache.hugegraph.backend.store.raft.StoreStateMachine&quot;,
+            &quot;org.apache.hugegraph.backend.store.raft.rpc.RpcForwarder&quot;
+    );
+
+<span class="nc" id="L120">    private static final Set&lt;String&gt; SOFA_RPC_CLASSES = ImmutableSet.of(</span>
+            &quot;com.alipay.sofa.rpc.tracer.sofatracer.RpcSofaTracer&quot;,
+            &quot;com.alipay.sofa.rpc.client.AbstractCluster&quot;
+    );
+
+<span class="nc" id="L125">    private static final Map&lt;String, Set&lt;String&gt;&gt; NEW_SECURITY_EXCEPTION = ImmutableMap.of(</span>
+            &quot;org.apache.hugegraph.security.HugeSecurityManager&quot;,
+<span class="nc" id="L127">            ImmutableSet.of(&quot;newSecurityException&quot;)</span>
+    );
+
+<span class="nc" id="L130">    private static final Set&lt;String&gt; IGNORE_CHECKED_CLASSES = new CopyOnWriteArraySet&lt;&gt;();</span>
+
+    public static void ignoreCheckedClass(String clazz) {
+<span class="nc bnc" id="L133" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L134">            throw newSecurityException(</span>
+                  &quot;Not allowed to add ignore check via Gremlin&quot;);
+        }
+
+<span class="nc" id="L138">        IGNORE_CHECKED_CLASSES.add(clazz);</span>
+<span class="nc" id="L139">    }</span>
+
+    @Override
+    public void checkPermission(Permission permission) {
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        if (DENIED_PERMISSIONS.contains(permission.getName()) &amp;&amp;</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">            callFromGremlin()) {</span>
+<span class="nc" id="L145">            throw newSecurityException(</span>
+                  &quot;Not allowed to access denied permission via Gremlin&quot;);
+        }
+<span class="nc" id="L148">    }</span>
+
+    @Override
+    public void checkPermission(Permission permission, Object context) {
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (DENIED_PERMISSIONS.contains(permission.getName()) &amp;&amp;</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">            callFromGremlin()) {</span>
+<span class="nc" id="L154">            throw newSecurityException(</span>
+                  &quot;Not allowed to access denied permission via Gremlin&quot;);
+        }
+<span class="nc" id="L157">    }</span>
+
+    @Override
+    public void checkCreateClassLoader() {
+<span class="nc bnc" id="L161" title="All 4 branches missed.">        if (!callFromAcceptClassLoaders() &amp;&amp; callFromGremlin()) {</span>
+<span class="nc" id="L162">            throw newSecurityException(</span>
+                  &quot;Not allowed to create class loader via Gremlin&quot;);
+        }
+<span class="nc" id="L165">        super.checkCreateClassLoader();</span>
+<span class="nc" id="L166">    }</span>
+
+    @Override
+    public void checkLink(String lib) {
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L171">            throw newSecurityException(</span>
+                  &quot;Not allowed to link library via Gremlin&quot;);
+        }
+<span class="nc" id="L174">        super.checkLink(lib);</span>
+<span class="nc" id="L175">    }</span>
+
+    @Override
+    public void checkAccess(Thread thread) {
+<span class="nc bnc" id="L179" title="All 4 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromCaffeine() &amp;&amp;</span>
+<span class="nc bnc" id="L180" title="All 4 branches missed.">            !callFromAsyncTasks() &amp;&amp; !callFromEventHubNotify() &amp;&amp;</span>
+<span class="nc bnc" id="L181" title="All 4 branches missed.">            !callFromBackendThread() &amp;&amp; !callFromBackendHbase() &amp;&amp;</span>
+<span class="nc bnc" id="L182" title="All 6 branches missed.">            !callFromRaft() &amp;&amp; !callFromSofaRpc() &amp;&amp; !callFromIgnoreCheckedClass()) {</span>
+<span class="nc" id="L183">            throw newSecurityException(</span>
+                  &quot;Not allowed to access thread via Gremlin&quot;);
+        }
+<span class="nc" id="L186">        super.checkAccess(thread);</span>
+<span class="nc" id="L187">    }</span>
+
+    @Override
+    public void checkAccess(ThreadGroup threadGroup) {
+<span class="nc bnc" id="L191" title="All 4 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromCaffeine() &amp;&amp;</span>
+<span class="nc bnc" id="L192" title="All 4 branches missed.">            !callFromAsyncTasks() &amp;&amp; !callFromEventHubNotify() &amp;&amp;</span>
+<span class="nc bnc" id="L193" title="All 4 branches missed.">            !callFromBackendThread() &amp;&amp; !callFromBackendHbase() &amp;&amp;</span>
+<span class="nc bnc" id="L194" title="All 4 branches missed.">            !callFromRaft() &amp;&amp; !callFromSofaRpc() &amp;&amp;</span>
+<span class="nc bnc" id="L195" title="All 2 branches missed.">            !callFromIgnoreCheckedClass()) {</span>
+<span class="nc" id="L196">            throw newSecurityException(</span>
+                  &quot;Not allowed to access thread group via Gremlin&quot;);
+        }
+<span class="nc" id="L199">        super.checkAccess(threadGroup);</span>
+<span class="nc" id="L200">    }</span>
+
+    @Override
+    public void checkExit(int status) {
+<span class="nc bnc" id="L204" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L205">            throw newSecurityException(</span>
+                  &quot;Not allowed to call System.exit() via Gremlin&quot;);
+        }
+<span class="nc" id="L208">        super.checkExit(status);</span>
+<span class="nc" id="L209">    }</span>
+
+    @Override
+    public void checkExec(String cmd) {
+<span class="nc bnc" id="L213" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L214">            throw newSecurityException(</span>
+                  &quot;Not allowed to execute command via Gremlin&quot;);
+        }
+<span class="nc" id="L217">        super.checkExec(cmd);</span>
+<span class="nc" id="L218">    }</span>
+
+    @Override
+    public void checkRead(FileDescriptor fd) {
+<span class="nc bnc" id="L222" title="All 4 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromBackendSocket() &amp;&amp;</span>
+<span class="nc bnc" id="L223" title="All 4 branches missed.">            !callFromRaft() &amp;&amp; !callFromSofaRpc()) {</span>
+<span class="nc" id="L224">            throw newSecurityException(&quot;Not allowed to read fd via Gremlin&quot;);</span>
+        }
+<span class="nc" id="L226">        super.checkRead(fd);</span>
+<span class="nc" id="L227">    }</span>
+
+    @Override
+    public void checkRead(String file) {
+<span class="nc bnc" id="L231" title="All 4 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromCaffeine() &amp;&amp;</span>
+<span class="nc bnc" id="L232" title="All 4 branches missed.">            !readGroovyInCurrentDir(file) &amp;&amp; !callFromBackendHbase() &amp;&amp;</span>
+<span class="nc bnc" id="L233" title="All 4 branches missed.">            !callFromSnapshot() &amp;&amp; !callFromRaft() &amp;&amp;</span>
+<span class="nc bnc" id="L234" title="All 2 branches missed.">            !callFromSofaRpc()) {</span>
+<span class="nc" id="L235">            throw newSecurityException(</span>
+                  &quot;Not allowed to read file via Gremlin: %s&quot;, file);
+        }
+<span class="nc" id="L238">        super.checkRead(file);</span>
+<span class="nc" id="L239">    }</span>
+
+    @Override
+    public void checkRead(String file, Object context) {
+<span class="nc bnc" id="L243" title="All 6 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromRaft() &amp;&amp; !callFromSofaRpc()) {</span>
+<span class="nc" id="L244">            throw newSecurityException(</span>
+                  &quot;Not allowed to read file via Gremlin: %s&quot;, file);
+        }
+<span class="nc" id="L247">        super.checkRead(file, context);</span>
+<span class="nc" id="L248">    }</span>
+
+    @Override
+    public void checkWrite(FileDescriptor fd) {
+<span class="nc bnc" id="L252" title="All 4 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromBackendSocket() &amp;&amp;</span>
+<span class="nc bnc" id="L253" title="All 4 branches missed.">            !callFromRaft() &amp;&amp; !callFromSofaRpc()) {</span>
+<span class="nc" id="L254">            throw newSecurityException(&quot;Not allowed to write fd via Gremlin&quot;);</span>
+        }
+<span class="nc" id="L256">        super.checkWrite(fd);</span>
+<span class="nc" id="L257">    }</span>
+
+    @Override
+    public void checkWrite(String file) {
+<span class="nc bnc" id="L261" title="All 4 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromSnapshot() &amp;&amp;</span>
+<span class="nc bnc" id="L262" title="All 4 branches missed.">            !callFromRaft() &amp;&amp; !callFromSofaRpc()) {</span>
+<span class="nc" id="L263">            throw newSecurityException(&quot;Not allowed to write file via Gremlin&quot;);</span>
+        }
+<span class="nc" id="L265">        super.checkWrite(file);</span>
+<span class="nc" id="L266">    }</span>
+
+    @Override
+    public void checkDelete(String file) {
+<span class="nc bnc" id="L270" title="All 4 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromSnapshot()) {</span>
+<span class="nc" id="L271">            throw newSecurityException(</span>
+                  &quot;Not allowed to delete file via Gremlin&quot;);
+        }
+<span class="nc" id="L274">        super.checkDelete(file);</span>
+<span class="nc" id="L275">    }</span>
+
+    @Override
+    public void checkListen(int port) {
+<span class="nc bnc" id="L279" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L280">            throw newSecurityException(</span>
+                  &quot;Not allowed to listen socket via Gremlin&quot;);
+        }
+<span class="nc" id="L283">        super.checkListen(port);</span>
+<span class="nc" id="L284">    }</span>
+
+    @Override
+    public void checkAccept(String host, int port) {
+<span class="nc bnc" id="L288" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L289">            throw newSecurityException(</span>
+                  &quot;Not allowed to accept socket via Gremlin&quot;);
+        }
+<span class="nc" id="L292">        super.checkAccept(host, port);</span>
+<span class="nc" id="L293">    }</span>
+
+    @Override
+    public void checkConnect(String host, int port) {
+<span class="nc bnc" id="L297" title="All 4 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromBackendSocket() &amp;&amp;</span>
+<span class="nc bnc" id="L298" title="All 6 branches missed.">            !callFromBackendHbase() &amp;&amp; !callFromRaft() &amp;&amp; !callFromSofaRpc()) {</span>
+<span class="nc" id="L299">            throw newSecurityException(</span>
+                  &quot;Not allowed to connect socket via Gremlin&quot;);
+        }
+<span class="nc" id="L302">        super.checkConnect(host, port);</span>
+<span class="nc" id="L303">    }</span>
+
+    @Override
+    public void checkConnect(String host, int port, Object context) {
+<span class="nc bnc" id="L307" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L308">            throw newSecurityException(</span>
+                  &quot;Not allowed to connect socket via Gremlin&quot;);
+        }
+<span class="nc" id="L311">        super.checkConnect(host, port, context);</span>
+<span class="nc" id="L312">    }</span>
+
+    @Override
+    public void checkMulticast(InetAddress maddr) {
+<span class="nc bnc" id="L316" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L317">            throw newSecurityException(&quot;Not allowed to multicast via Gremlin&quot;);</span>
+        }
+<span class="nc" id="L319">        super.checkMulticast(maddr);</span>
+<span class="nc" id="L320">    }</span>
+
+    @Override
+    @SuppressWarnings(&quot;deprecation&quot;)
+    public void checkMulticast(InetAddress maddr, byte ttl) {
+<span class="nc bnc" id="L325" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L326">            throw newSecurityException(&quot;Not allowed to multicast via Gremlin&quot;);</span>
+        }
+<span class="nc" id="L328">        super.checkMulticast(maddr, ttl);</span>
+<span class="nc" id="L329">    }</span>
+
+    @Override
+    public void checkSetFactory() {
+<span class="nc bnc" id="L333" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L334">            throw newSecurityException(</span>
+                  &quot;Not allowed to set socket factory via Gremlin&quot;);
+        }
+<span class="nc" id="L337">        super.checkSetFactory();</span>
+<span class="nc" id="L338">    }</span>
+
+    @Override
+    public void checkPropertiesAccess() {
+<span class="nc bnc" id="L342" title="All 4 branches missed.">        if (callFromGremlin() &amp;&amp; !callFromSofaRpc() &amp;&amp;</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">            !callFromNewSecurityException()) {</span>
+<span class="nc" id="L344">            throw newSecurityException(</span>
+                  &quot;Not allowed to access system properties via Gremlin&quot;);
+        }
+<span class="nc" id="L347">        super.checkPropertiesAccess();</span>
+<span class="nc" id="L348">    }</span>
+
+    @Override
+    public void checkPropertyAccess(String key) {
+<span class="nc bnc" id="L352" title="All 4 branches missed.">        if (!callFromAcceptClassLoaders() &amp;&amp; callFromGremlin() &amp;&amp;</span>
+<span class="nc bnc" id="L353" title="All 4 branches missed.">            !WHITE_SYSTEM_PROPERTIES.contains(key) &amp;&amp; !callFromBackendHbase() &amp;&amp;</span>
+<span class="nc bnc" id="L354" title="All 4 branches missed.">            !callFromSnapshot() &amp;&amp; !callFromRaft() &amp;&amp;</span>
+<span class="nc bnc" id="L355" title="All 2 branches missed.">            !callFromSofaRpc()) {</span>
+<span class="nc" id="L356">            throw newSecurityException(</span>
+                  &quot;Not allowed to access system property(%s) via Gremlin&quot;, key);
+        }
+<span class="nc" id="L359">        super.checkPropertyAccess(key);</span>
+<span class="nc" id="L360">    }</span>
+
+    @Override
+    public void checkPrintJobAccess() {
+<span class="nc bnc" id="L364" title="All 2 branches missed.">        if (callFromGremlin()) {</span>
+<span class="nc" id="L365">            throw newSecurityException(&quot;Not allowed to print job via Gremlin&quot;);</span>
+        }
+<span class="nc" id="L367">        super.checkPrintJobAccess();</span>
+<span class="nc" id="L368">    }</span>
+
+    @Override
+    public void checkPackageAccess(String pkg) {
+<span class="nc" id="L372">        super.checkPackageAccess(pkg);</span>
+<span class="nc" id="L373">    }</span>
+
+    @Override
+    public void checkPackageDefinition(String pkg) {
+<span class="nc" id="L377">        super.checkPackageDefinition(pkg);</span>
+<span class="nc" id="L378">    }</span>
+
+    @Override
+    public void checkSecurityAccess(String target) {
+<span class="nc" id="L382">        super.checkSecurityAccess(target);</span>
+<span class="nc" id="L383">    }</span>
+
+    private static SecurityException newSecurityException(String message,
+                                                          Object... args) {
+<span class="nc bnc" id="L387" title="All 2 branches missed.">        if (args.length &gt; 0) {</span>
+<span class="nc" id="L388">            message = String.format(message, args);</span>
+        }
+        /*
+         * use dynamic logger here because &quot;static final logger&quot; can't be
+         * initialized: the logger is not initialized when HugeSecurityManager
+         * class is loaded
+         */
+<span class="nc" id="L395">        Logger log = Log.logger(HugeSecurityManager.class);</span>
+<span class="nc" id="L396">        log.warn(&quot;SecurityException: {}&quot;, message);</span>
+<span class="nc" id="L397">        return new SecurityException(message);</span>
+    }
+
+    private static boolean readGroovyInCurrentDir(String file) {
+<span class="nc bnc" id="L401" title="All 8 branches missed.">        if (file != null &amp;&amp; (USER_DIR != null &amp;&amp; file.startsWith(USER_DIR) ||</span>
+<span class="nc bnc" id="L402" title="All 2 branches missed.">            USER_DIR_IDE != null &amp;&amp; file.startsWith(USER_DIR_IDE)) &amp;&amp;</span>
+<span class="nc bnc" id="L403" title="All 4 branches missed.">            (file.endsWith(&quot;.class&quot;) || file.endsWith(&quot;.groovy&quot;))) {</span>
+<span class="nc" id="L404">            return true;</span>
+        }
+<span class="nc" id="L406">        return false;</span>
+    }
+
+    private static boolean callFromGremlin() {
+<span class="nc" id="L410">        return callFromWorkerWithClass(GREMLIN_EXECUTOR_CLASS);</span>
+    }
+
+    private static boolean callFromAcceptClassLoaders() {
+<span class="nc" id="L414">        return callFromWorkerWithClass(ACCEPT_CLASS_LOADERS);</span>
+    }
+
+    private static boolean callFromCaffeine() {
+<span class="nc" id="L418">        return callFromWorkerWithClass(CAFFEINE_CLASSES);</span>
+    }
+
+    private static boolean callFromBackendSocket() {
+        // Fixed issue #758
+<span class="nc" id="L423">        return callFromMethods(BACKEND_SOCKET);</span>
+    }
+
+    private static boolean callFromBackendThread() {
+        // Fixed issue #758
+<span class="nc" id="L428">        return callFromMethods(BACKEND_THREAD);</span>
+    }
+
+    private static boolean callFromEventHubNotify() {
+        // Fixed issue #758
+        // notify() will create thread when submit task to executor
+<span class="nc" id="L434">        return callFromMethod(&quot;org.apache.hugegraph.event.EventHub&quot;, &quot;notify&quot;);</span>
+    }
+
+    private static boolean callFromAsyncTasks() {
+        // Async tasks will create thread when submitted to executor
+<span class="nc" id="L439">        return callFromMethods(ASYNC_TASKS);</span>
+    }
+
+    private static boolean callFromBackendHbase() {
+        // TODO: remove this unsafe entrance
+<span class="nc" id="L444">        return callFromWorkerWithClass(HBASE_CLASSES);</span>
+    }
+
+    private static boolean callFromSnapshot() {
+<span class="nc" id="L448">        return callFromMethods(BACKEND_SNAPSHOT);</span>
+    }
+
+    private static boolean callFromRaft() {
+<span class="nc" id="L452">        return callFromWorkerWithClass(RAFT_CLASSES);</span>
+    }
+
+    private static boolean callFromSofaRpc() {
+<span class="nc" id="L456">        return callFromWorkerWithClass(SOFA_RPC_CLASSES);</span>
+    }
+
+    private static boolean callFromNewSecurityException() {
+<span class="nc" id="L460">        return callFromMethods(NEW_SECURITY_EXCEPTION);</span>
+    }
+
+    private static boolean callFromIgnoreCheckedClass() {
+<span class="nc" id="L464">        return callFromWorkerWithClass(IGNORE_CHECKED_CLASSES);</span>
+    }
+
+    private static boolean callFromWorkerWithClass(Set&lt;String&gt; classes) {
+<span class="nc" id="L468">        Thread curThread = Thread.currentThread();</span>
+<span class="nc bnc" id="L469" title="All 2 branches missed.">        if (curThread.getName().startsWith(GREMLIN_SERVER_WORKER) ||</span>
+<span class="nc bnc" id="L470" title="All 2 branches missed.">            curThread.getName().startsWith(TASK_WORKER)) {</span>
+<span class="nc" id="L471">            StackTraceElement[] elements = curThread.getStackTrace();</span>
+<span class="nc bnc" id="L472" title="All 2 branches missed.">            for (StackTraceElement element : elements) {</span>
+<span class="nc" id="L473">                String className = element.getClassName();</span>
+<span class="nc bnc" id="L474" title="All 2 branches missed.">                if (classes.contains(className)) {</span>
+<span class="nc" id="L475">                    return true;</span>
+                }
+            }
+        }
+<span class="nc" id="L479">        return false;</span>
+    }
+
+    private static boolean callFromMethods(Map&lt;String, Set&lt;String&gt;&gt; methods) {
+<span class="nc" id="L483">        Thread curThread = Thread.currentThread();</span>
+<span class="nc" id="L484">        StackTraceElement[] elements = curThread.getStackTrace();</span>
+<span class="nc bnc" id="L485" title="All 2 branches missed.">        for (StackTraceElement element : elements) {</span>
+<span class="nc" id="L486">            Set&lt;String&gt; clazzMethods = methods.get(element.getClassName());</span>
+<span class="nc bnc" id="L487" title="All 2 branches missed.">            if (clazzMethods != null &amp;&amp;</span>
+<span class="nc bnc" id="L488" title="All 2 branches missed.">                clazzMethods.contains(element.getMethodName())) {</span>
+<span class="nc" id="L489">                return true;</span>
+            }
+        }
+<span class="nc" id="L492">        return false;</span>
+    }
+
+    private static boolean callFromMethod(String clazz, String method) {
+<span class="nc" id="L496">        Thread curThread = Thread.currentThread();</span>
+<span class="nc" id="L497">        StackTraceElement[] elements = curThread.getStackTrace();</span>
+<span class="nc bnc" id="L498" title="All 2 branches missed.">        for (StackTraceElement element : elements) {</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">            if (clazz.equals(element.getClassName()) &amp;&amp;</span>
+<span class="nc bnc" id="L500" title="All 2 branches missed.">                method.equals(element.getMethodName())) {</span>
+<span class="nc" id="L501">                return true;</span>
+            }
+        }
+<span class="nc" id="L504">        return false;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RocksDBStoreProvider.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-rocksdb</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.rocksdb</a> &gt; <span class="el_source">RocksDBStoreProvider.java</span></div><h1>RocksDBStoreProvider.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.rocksdb;
+
+import java.io.File;
+
+import org.apache.hugegraph.backend.store.AbstractBackendStoreProvider;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.util.ConfigUtil;
+
+<span class="nc" id="L27">public class RocksDBStoreProvider extends AbstractBackendStoreProvider {</span>
+
+    protected String database() {
+<span class="nc" id="L30">        return this.graph().toLowerCase();</span>
+    }
+
+    @Override
+    protected BackendStore newSchemaStore(HugeConfig config, String store) {
+<span class="nc" id="L35">        return new RocksDBStore.RocksDBSchemaStore(this, this.database(), store);</span>
+    }
+
+    @Override
+    protected BackendStore newGraphStore(HugeConfig config, String store) {
+<span class="nc" id="L40">        return new RocksDBStore.RocksDBGraphStore(this, this.database(), store);</span>
+    }
+
+    @Override
+    public void onCloneConfig(HugeConfig config, String newGraph) {
+<span class="nc" id="L45">        super.onCloneConfig(config, newGraph);</span>
+
+        // NOTE: rocksdb can't use same data path for different graph
+<span class="nc" id="L48">        String suffix = &quot;_&quot; + newGraph;</span>
+<span class="nc" id="L49">        String dataPath = config.get(RocksDBOptions.DATA_PATH);</span>
+<span class="nc" id="L50">        config.setProperty(RocksDBOptions.DATA_PATH.name(), dataPath + suffix);</span>
+
+<span class="nc" id="L52">        String walPath = config.get(RocksDBOptions.WAL_PATH);</span>
+<span class="nc" id="L53">        config.setProperty(RocksDBOptions.WAL_PATH.name(), walPath + suffix);</span>
+<span class="nc" id="L54">    }</span>
+
+    @Override
+    public void onDeleteConfig(HugeConfig config) {
+<span class="nc" id="L58">        super.onDeleteConfig(config);</span>
+
+<span class="nc" id="L60">        String dataPath = config.get(RocksDBOptions.DATA_PATH);</span>
+<span class="nc" id="L61">        String walPath = config.get(RocksDBOptions.WAL_PATH);</span>
+<span class="nc" id="L62">        ConfigUtil.deleteFile(new File(dataPath));</span>
+<span class="nc" id="L63">        ConfigUtil.deleteFile(new File(walPath));</span>
+<span class="nc" id="L64">    }</span>
+
+    @Override
+    protected BackendStore newSystemStore(HugeConfig config, String store) {
+<span class="nc" id="L68">        return new RocksDBStore.RocksDBSystemStore(this, this.database(), store);</span>
+    }
+
+    @Override
+    public String type() {
+<span class="nc" id="L73">        return &quot;rocksdb&quot;;</span>
+    }
+
+    @Override
+    public String driverVersion() {
+        /*
+         * Versions history:
+         * [1.0] HugeGraph-1328: supports backend table version checking
+         * [1.1] HugeGraph-1322: add support for full-text search
+         * [1.2] #296: support range sortKey feature
+         * [1.3] #270 &amp; #398: support shard-index and vertex + sortkey prefix,
+         *                    also split range table to rangeInt, rangeFloat,
+         *                    rangeLong and rangeDouble
+         * [1.4] #633: support unique index
+         * [1.5] #680: update index element-id to bin format
+         * [1.6] #746: support userdata for indexlabel
+         * [1.7] #820: store vertex properties in one column
+         * [1.8] #894: encode label id in string index
+         * [1.9] #295: support ttl for vertex and edge
+         * [1.10] #1333: support read frequency for property key
+         * [1.11] #1506: support olap properties
+         * [1.11] #1533: add meta table in system store
+         */
+<span class="nc" id="L96">        return &quot;1.11&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeVertexStep.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.optimize</a> &gt; <span class="el_source">HugeVertexStep.java</span></div><h1>HugeVertexStep.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.optimize;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.ConditionQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.tinkerpop.gremlin.process.traversal.Traverser;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.VertexStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.util.HasContainer;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Element;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.apache.tinkerpop.gremlin.structure.util.StringFactory;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.util.Log;
+
+public class HugeVertexStep&lt;E extends Element&gt;
+       extends VertexStep&lt;E&gt; implements QueryHolder {
+
+    private static final long serialVersionUID = -7850636388424382454L;
+
+<span class="nc" id="L49">    private static final Logger LOG = Log.logger(HugeVertexStep.class);</span>
+
+<span class="nc" id="L51">    private final List&lt;HasContainer&gt; hasContainers = new ArrayList&lt;&gt;();</span>
+
+    // Store limit/order-by
+<span class="nc" id="L54">    private final Query queryInfo = new Query(null);</span>
+
+<span class="nc" id="L56">    private Iterator&lt;E&gt; iterator = QueryResults.emptyIterator();</span>
+
+    public HugeVertexStep(final VertexStep&lt;E&gt; originVertexStep) {
+<span class="nc" id="L59">        super(originVertexStep.getTraversal(),</span>
+<span class="nc" id="L60">              originVertexStep.getReturnClass(),</span>
+<span class="nc" id="L61">              originVertexStep.getDirection(),</span>
+<span class="nc" id="L62">              originVertexStep.getEdgeLabels());</span>
+<span class="nc" id="L63">        originVertexStep.getLabels().forEach(this::addLabel);</span>
+<span class="nc" id="L64">    }</span>
+
+    @SuppressWarnings(&quot;unchecked&quot;)
+    @Override
+    protected Iterator&lt;E&gt; flatMap(final Traverser.Admin&lt;Vertex&gt; traverser) {
+<span class="nc" id="L69">        boolean queryVertex = this.returnsVertex();</span>
+<span class="nc" id="L70">        boolean queryEdge = this.returnsEdge();</span>
+<span class="nc bnc" id="L71" title="All 4 branches missed.">        assert queryVertex || queryEdge;</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        if (queryVertex) {</span>
+<span class="nc" id="L73">            this.iterator = (Iterator&lt;E&gt;) this.vertices(traverser);</span>
+        } else {
+<span class="nc bnc" id="L75" title="All 2 branches missed.">            assert queryEdge;</span>
+<span class="nc" id="L76">            this.iterator = (Iterator&lt;E&gt;) this.edges(traverser);</span>
+        }
+<span class="nc" id="L78">        return this.iterator;</span>
+    }
+
+    private Iterator&lt;Vertex&gt; vertices(Traverser.Admin&lt;Vertex&gt; traverser) {
+<span class="nc" id="L82">        Iterator&lt;Edge&gt; edges = this.edges(traverser);</span>
+<span class="nc" id="L83">        Iterator&lt;Vertex&gt; vertices = this.queryAdjacentVertices(edges);</span>
+
+<span class="nc bnc" id="L85" title="All 2 branches missed.">        if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L86">            Vertex vertex = traverser.get();</span>
+<span class="nc" id="L87">            LOG.debug(&quot;HugeVertexStep.vertices(): is there adjacent &quot; +</span>
+                      &quot;vertices of {}: {}, has={}&quot;,
+<span class="nc" id="L89">                      vertex.id(), vertices.hasNext(), this.hasContainers);</span>
+        }
+
+<span class="nc" id="L92">        return vertices;</span>
+    }
+
+    private Iterator&lt;Edge&gt; edges(Traverser.Admin&lt;Vertex&gt; traverser) {
+<span class="nc" id="L96">        Query query = this.constructEdgesQuery(traverser);</span>
+<span class="nc" id="L97">        return this.queryEdges(query);</span>
+    }
+
+    protected Iterator&lt;Vertex&gt; queryAdjacentVertices(Iterator&lt;Edge&gt; edges) {
+<span class="nc" id="L101">        HugeGraph graph = TraversalUtil.getGraph(this);</span>
+<span class="nc" id="L102">        Iterator&lt;Vertex&gt; vertices = graph.adjacentVertices(edges);</span>
+
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        if (!this.withVertexCondition()) {</span>
+<span class="nc" id="L105">            return vertices;</span>
+        }
+
+        // TODO: query by vertex index to optimize
+<span class="nc" id="L109">        return TraversalUtil.filterResult(this.hasContainers, vertices);</span>
+    }
+
+    protected Iterator&lt;Edge&gt; queryEdges(Query query) {
+<span class="nc" id="L113">        HugeGraph graph = TraversalUtil.getGraph(this);</span>
+
+        // Do query
+<span class="nc" id="L116">        Iterator&lt;Edge&gt; edges = graph.edges(query);</span>
+
+<span class="nc bnc" id="L118" title="All 2 branches missed.">        if (!this.withEdgeCondition()) {</span>
+<span class="nc" id="L119">            return edges;</span>
+        }
+
+        // Do filter by edge conditions
+<span class="nc" id="L123">        return TraversalUtil.filterResult(this.hasContainers, edges);</span>
+    }
+
+    protected ConditionQuery constructEdgesQuery(
+                             Traverser.Admin&lt;Vertex&gt; traverser) {
+<span class="nc" id="L128">        HugeGraph graph = TraversalUtil.getGraph(this);</span>
+
+        // Query for edge with conditions(else conditions for vertex)
+<span class="nc" id="L131">        boolean withEdgeCond = this.withEdgeCondition();</span>
+<span class="nc" id="L132">        boolean withVertexCond = this.withVertexCondition();</span>
+
+<span class="nc" id="L134">        Id vertex = (Id) traverser.get().id();</span>
+<span class="nc" id="L135">        Directions direction = Directions.convert(this.getDirection());</span>
+<span class="nc" id="L136">        Id[] edgeLabels = graph.mapElName2Id(this.getEdgeLabels());</span>
+
+<span class="nc" id="L138">        LOG.debug(&quot;HugeVertexStep.edges(): vertex={}, direction={}, &quot; +</span>
+                  &quot;edgeLabels={}, has={}&quot;,
+                  vertex, direction, edgeLabels, this.hasContainers);
+
+<span class="nc" id="L142">        ConditionQuery query = GraphTransaction.constructEdgesQuery(</span>
+                               vertex, direction, edgeLabels);
+        // Query by sort-keys
+<span class="nc bnc" id="L145" title="All 4 branches missed.">        if (withEdgeCond &amp;&amp; edgeLabels.length == 1) {</span>
+<span class="nc" id="L146">            TraversalUtil.fillConditionQuery(query, this.hasContainers, graph);</span>
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            if (!GraphTransaction.matchPartialEdgeSortKeys(query, graph)) {</span>
+                // Can't query by sysprop and by index (HugeGraph-749)
+<span class="nc" id="L149">                query.resetUserpropConditions();</span>
+<span class="nc bnc" id="L150" title="All 2 branches missed.">            } else if (GraphTransaction.matchFullEdgeSortKeys(query, graph)) {</span>
+                // All sysprop conditions are in sort-keys
+<span class="nc" id="L152">                withEdgeCond = false;</span>
+            } else {
+                // Partial sysprop conditions are in sort-keys
+<span class="nc bnc" id="L155" title="All 2 branches missed.">                assert query.userpropKeys().size() &gt; 0;</span>
+            }
+        }
+
+        // Query by has(id)
+<span class="nc bnc" id="L160" title="All 2 branches missed.">        if (query.idsSize() &gt; 0) {</span>
+            // Ignore conditions if query by edge id in has-containers
+            // FIXME: should check that the edge id matches the `vertex`
+<span class="nc" id="L163">            query.resetConditions();</span>
+<span class="nc" id="L164">            LOG.warn(&quot;It's not recommended to query by has(id)&quot;);</span>
+        }
+
+        /*
+         * Unset limit when needed to filter property after store query
+         * like query: outE().has(k,v).limit(n)
+         * NOTE: outE().limit(m).has(k,v).limit(n) will also be unset limit,
+         * Can't unset limit if query by paging due to page position will be
+         * exceeded when reaching the limit in tinkerpop layer
+         */
+<span class="nc bnc" id="L174" title="All 4 branches missed.">        if (withEdgeCond || withVertexCond) {</span>
+<span class="nc bnc" id="L175" title="All 2 branches missed.">            org.apache.hugegraph.util.E.checkArgument(!this.queryInfo().paging(),</span>
+                                                     &quot;Can't query by paging &quot; +
+                                                     &quot;and filtering&quot;);
+<span class="nc" id="L178">            this.queryInfo().limit(Query.NO_LIMIT);</span>
+        }
+
+<span class="nc" id="L181">        query = this.injectQueryInfo(query);</span>
+
+<span class="nc" id="L183">        return query;</span>
+    }
+
+    protected boolean withVertexCondition() {
+<span class="nc bnc" id="L187" title="All 4 branches missed.">        return this.returnsVertex() &amp;&amp; !this.hasContainers.isEmpty();</span>
+    }
+
+    protected boolean withEdgeCondition() {
+<span class="nc bnc" id="L191" title="All 4 branches missed.">        return this.returnsEdge() &amp;&amp; !this.hasContainers.isEmpty();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc bnc" id="L196" title="All 2 branches missed.">        if (this.hasContainers.isEmpty()) {</span>
+<span class="nc" id="L197">            return super.toString();</span>
+        }
+
+<span class="nc" id="L200">        return StringFactory.stepString(</span>
+               this,
+<span class="nc" id="L202">               getDirection(),</span>
+<span class="nc" id="L203">               Arrays.asList(getEdgeLabels()),</span>
+<span class="nc" id="L204">               getReturnClass().getSimpleName(),</span>
+               this.hasContainers);
+    }
+
+    @Override
+    public List&lt;HasContainer&gt; getHasContainers() {
+<span class="nc" id="L210">        return Collections.unmodifiableList(this.hasContainers);</span>
+    }
+
+    @Override
+    public void addHasContainer(final HasContainer has) {
+<span class="nc bnc" id="L215" title="All 2 branches missed.">        if (SYSPROP_PAGE.equals(has.getKey())) {</span>
+<span class="nc" id="L216">            this.setPage((String) has.getValue());</span>
+<span class="nc" id="L217">            return;</span>
+        }
+<span class="nc" id="L219">        this.hasContainers.add(has);</span>
+<span class="nc" id="L220">    }</span>
+
+    @Override
+    public Query queryInfo() {
+<span class="nc" id="L224">        return this.queryInfo;</span>
+    }
+
+    @Override
+    public Iterator&lt;?&gt; lastTimeResults() {
+<span class="nc" id="L229">        return this.iterator;</span>
+    }
+
+    public boolean equals(Object obj) {
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (!(obj instanceof HugeVertexStep)) {</span>
+<span class="nc" id="L234">            return false;</span>
+        }
+
+<span class="nc bnc" id="L237" title="All 2 branches missed.">        if (!super.equals(obj)) {</span>
+<span class="nc" id="L238">            return false;</span>
+        }
+
+<span class="nc" id="L241">        HugeVertexStep other = (HugeVertexStep) obj;</span>
+<span class="nc bnc" id="L242" title="All 2 branches missed.">        return this.hasContainers.equals(other.hasContainers) &amp;&amp;</span>
+<span class="nc bnc" id="L243" title="All 2 branches missed.">               this.queryInfo.equals(other.queryInfo) &amp;&amp;</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">               this.iterator.equals(other.iterator);</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc" id="L249">        return super.hashCode() ^</span>
+<span class="nc" id="L250">               this.queryInfo.hashCode() ^</span>
+<span class="nc" id="L251">               this.hasContainers.hashCode();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

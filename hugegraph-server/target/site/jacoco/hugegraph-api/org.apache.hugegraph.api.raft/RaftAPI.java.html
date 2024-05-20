@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RaftAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.raft</a> &gt; <span class="el_source">RaftAPI.java</span></div><h1>RaftAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.raft;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+import org.apache.hugegraph.api.filter.RedirectFilter;
+import org.apache.hugegraph.core.GraphManager;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.store.raft.RaftAddPeerJob;
+import org.apache.hugegraph.backend.store.raft.RaftGroupManager;
+import org.apache.hugegraph.backend.store.raft.RaftRemovePeerJob;
+import org.apache.hugegraph.job.JobBuilder;
+import org.apache.hugegraph.util.DateUtil;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.google.common.collect.ImmutableMap;
+
+@Path(&quot;graphs/{graph}/raft&quot;)
+@Singleton
+@Tag(name = &quot;RaftAPI&quot;)
+<span class="nc" id="L59">public class RaftAPI extends API {</span>
+
+<span class="nc" id="L61">    private static final Logger LOG = Log.logger(RaftAPI.class);</span>
+
+    @GET
+    @Timed
+    @Path(&quot;list_peers&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;})
+    public Map&lt;String, List&lt;String&gt;&gt; listPeers(@Context GraphManager manager,
+                                               @PathParam(&quot;graph&quot;) String graph,
+                                               @QueryParam(&quot;group&quot;)
+                                               @DefaultValue(&quot;default&quot;)
+                                               String group) {
+<span class="nc" id="L74">        LOG.debug(&quot;Graph [{}] prepare to get leader&quot;, graph);</span>
+
+<span class="nc" id="L76">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L77">        RaftGroupManager raftManager = raftGroupManager(g, group, &quot;list_peers&quot;);</span>
+<span class="nc" id="L78">        List&lt;String&gt; peers = raftManager.listPeers();</span>
+<span class="nc" id="L79">        return ImmutableMap.of(raftManager.group(), peers);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;get_leader&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;})
+    public Map&lt;String, String&gt; getLeader(@Context GraphManager manager,
+                                         @PathParam(&quot;graph&quot;) String graph,
+                                         @QueryParam(&quot;group&quot;)
+                                         @DefaultValue(&quot;default&quot;)
+                                         String group) {
+<span class="nc" id="L93">        LOG.debug(&quot;Graph [{}] prepare to get leader&quot;, graph);</span>
+
+<span class="nc" id="L95">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L96">        RaftGroupManager raftManager = raftGroupManager(g, group, &quot;get_leader&quot;);</span>
+<span class="nc" id="L97">        String leaderId = raftManager.getLeader();</span>
+<span class="nc" id="L98">        return ImmutableMap.of(raftManager.group(), leaderId);</span>
+    }
+
+    @POST
+    @Timed
+    @Status(Status.OK)
+    @Path(&quot;transfer_leader&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;})
+    public Map&lt;String, String&gt; transferLeader(@Context GraphManager manager,
+                                              @PathParam(&quot;graph&quot;) String graph,
+                                              @QueryParam(&quot;group&quot;)
+                                              @DefaultValue(&quot;default&quot;)
+                                              String group,
+                                              @QueryParam(&quot;endpoint&quot;)
+                                              String endpoint) {
+<span class="nc" id="L115">        LOG.debug(&quot;Graph [{}] prepare to transfer leader to: {}&quot;,</span>
+                  graph, endpoint);
+
+<span class="nc" id="L118">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L119">        RaftGroupManager raftManager = raftGroupManager(g, group,</span>
+                                                        &quot;transfer_leader&quot;);
+<span class="nc" id="L121">        String leaderId = raftManager.transferLeaderTo(endpoint);</span>
+<span class="nc" id="L122">        return ImmutableMap.of(raftManager.group(), leaderId);</span>
+    }
+
+    @POST
+    @Timed
+    @Status(Status.OK)
+    @Path(&quot;set_leader&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;})
+    public Map&lt;String, String&gt; setLeader(@Context GraphManager manager,
+                                         @PathParam(&quot;graph&quot;) String graph,
+                                         @QueryParam(&quot;group&quot;)
+                                         @DefaultValue(&quot;default&quot;)
+                                         String group,
+                                         @QueryParam(&quot;endpoint&quot;)
+                                         String endpoint) {
+<span class="nc" id="L139">        LOG.debug(&quot;Graph [{}] prepare to set leader to: {}&quot;,</span>
+                  graph, endpoint);
+
+<span class="nc" id="L142">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L143">        RaftGroupManager raftManager = raftGroupManager(g, group, &quot;set_leader&quot;);</span>
+<span class="nc" id="L144">        String leaderId = raftManager.setLeader(endpoint);</span>
+<span class="nc" id="L145">        return ImmutableMap.of(raftManager.group(), leaderId);</span>
+    }
+
+    @POST
+    @Timed
+    @Status(Status.OK)
+    @Path(&quot;add_peer&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public Map&lt;String, Id&gt; addPeer(@Context GraphManager manager,
+                                   @PathParam(&quot;graph&quot;) String graph,
+                                   @QueryParam(&quot;group&quot;) @DefaultValue(&quot;default&quot;)
+                                   String group,
+                                   @QueryParam(&quot;endpoint&quot;) String endpoint) {
+<span class="nc" id="L161">        LOG.debug(&quot;Graph [{}] prepare to add peer: {}&quot;, graph, endpoint);</span>
+
+<span class="nc" id="L163">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L164">        RaftGroupManager raftManager = raftGroupManager(g, group, &quot;add_peer&quot;);</span>
+
+<span class="nc" id="L166">        JobBuilder&lt;String&gt; builder = JobBuilder.of(g);</span>
+<span class="nc" id="L167">        String name = String.format(&quot;raft-group-[%s]-add-peer-[%s]-at-[%s]&quot;,</span>
+<span class="nc" id="L168">                                    raftManager.group(), endpoint,</span>
+<span class="nc" id="L169">                                    DateUtil.now());</span>
+<span class="nc" id="L170">        Map&lt;String, String&gt; inputs = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L171">        inputs.put(&quot;endpoint&quot;, endpoint);</span>
+<span class="nc" id="L172">        builder.name(name)</span>
+<span class="nc" id="L173">               .input(JsonUtil.toJson(inputs))</span>
+<span class="nc" id="L174">               .job(new RaftAddPeerJob());</span>
+<span class="nc" id="L175">        return ImmutableMap.of(&quot;task_id&quot;, builder.schedule().id());</span>
+    }
+
+    @POST
+    @Timed
+    @Status(Status.OK)
+    @Path(&quot;remove_peer&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;})
+    @RedirectFilter.RedirectMasterRole
+    public Map&lt;String, Id&gt; removePeer(@Context GraphManager manager,
+                                      @PathParam(&quot;graph&quot;) String graph,
+                                      @QueryParam(&quot;group&quot;)
+                                      @DefaultValue(&quot;default&quot;) String group,
+                                      @QueryParam(&quot;endpoint&quot;) String endpoint) {
+<span class="nc" id="L191">        LOG.debug(&quot;Graph [{}] prepare to remove peer: {}&quot;, graph, endpoint);</span>
+
+<span class="nc" id="L193">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L194">        RaftGroupManager raftManager = raftGroupManager(g, group,</span>
+                                                        &quot;remove_peer&quot;);
+<span class="nc" id="L196">        JobBuilder&lt;String&gt; builder = JobBuilder.of(g);</span>
+<span class="nc" id="L197">        String name = String.format(&quot;raft-group-[%s]-remove-peer-[%s]-at-[%s]&quot;,</span>
+<span class="nc" id="L198">                                    raftManager.group(), endpoint,</span>
+<span class="nc" id="L199">                                    DateUtil.now());</span>
+<span class="nc" id="L200">        Map&lt;String, String&gt; inputs = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L201">        inputs.put(&quot;endpoint&quot;, endpoint);</span>
+<span class="nc" id="L202">        builder.name(name)</span>
+<span class="nc" id="L203">               .input(JsonUtil.toJson(inputs))</span>
+<span class="nc" id="L204">               .job(new RaftRemovePeerJob());</span>
+<span class="nc" id="L205">        return ImmutableMap.of(&quot;task_id&quot;, builder.schedule().id());</span>
+    }
+
+    private static RaftGroupManager raftGroupManager(HugeGraph graph,
+                                                     String group,
+                                                     String operation) {
+<span class="nc" id="L211">        RaftGroupManager raftManager = graph.raftGroupManager();</span>
+<span class="nc bnc" id="L212" title="All 2 branches missed.">        if (raftManager == null) {</span>
+<span class="nc" id="L213">            throw new HugeException(&quot;Allowed %s operation only when &quot; +</span>
+                                    &quot;working on raft mode&quot;, operation);
+        }
+<span class="nc" id="L216">        return raftManager;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

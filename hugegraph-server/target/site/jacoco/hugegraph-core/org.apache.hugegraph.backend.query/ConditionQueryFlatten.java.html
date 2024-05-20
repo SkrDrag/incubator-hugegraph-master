@@ -1,0 +1,535 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>ConditionQueryFlatten.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.query</a> &gt; <span class="el_source">ConditionQueryFlatten.java</span></div><h1>ConditionQueryFlatten.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.query;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Date;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Condition.Relation;
+import org.apache.hugegraph.backend.query.Condition.SyspropRelation;
+import org.apache.hugegraph.type.define.HugeKeys;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.NumericUtil;
+
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L40">public final class ConditionQueryFlatten {</span>
+
+<span class="nc" id="L42">    private static final Set&lt;HugeKeys&gt; SPECIAL_KEYS = ImmutableSet.of(</span>
+        HugeKeys.LABEL
+    );
+
+    public static List&lt;ConditionQuery&gt; flatten(ConditionQuery query) {
+<span class="nc" id="L47">        return flatten(query, false);</span>
+    }
+
+    public static List&lt;ConditionQuery&gt; flatten(ConditionQuery query,
+                                               boolean supportIn) {
+<span class="nc bnc" id="L52" title="All 4 branches missed.">        if (query.isFlattened() &amp;&amp; !query.mayHasDupKeys(SPECIAL_KEYS)) {</span>
+<span class="nc" id="L53">            return flattenRelations(query);</span>
+        }
+
+<span class="nc" id="L56">        List&lt;ConditionQuery&gt; queries = new ArrayList&lt;&gt;();</span>
+
+        // Flatten IN/NOT_IN if needed
+<span class="nc" id="L59">        List&lt;Condition&gt; conditions = InsertionOrderUtil.newList();</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">        for (Condition condition : query.conditions()) {</span>
+<span class="nc" id="L61">            Condition cond = flattenIn(condition, supportIn);</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">            if (cond == null) {</span>
+                // Process 'XX in []'
+<span class="nc" id="L64">                return ImmutableList.of();</span>
+            }
+<span class="nc" id="L66">            conditions.add(cond);</span>
+<span class="nc" id="L67">        }</span>
+<span class="nc" id="L68">        query = query.copyAndResetUnshared();</span>
+<span class="nc" id="L69">        query.resetConditions(conditions);</span>
+
+        // Flatten OR if needed
+<span class="nc" id="L72">        Set&lt;Relations&gt; results = null;</span>
+<span class="nc bnc" id="L73" title="All 2 branches missed.">        for (Condition condition : query.conditions()) {</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">            if (results == null) {</span>
+<span class="nc" id="L75">                results = flattenAndOr(condition);</span>
+            } else {
+<span class="nc" id="L77">                results = and(results, flattenAndOr(condition));</span>
+            }
+<span class="nc" id="L79">        }</span>
+
+        // Optimize useless condition
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        assert results != null;</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        for (Relations relations : results) {</span>
+<span class="nc" id="L84">            relations = optimizeRelations(relations);</span>
+            /*
+             * Relations may be null after optimize, for example:
+             * age &gt; 10 and age == 9
+             */
+<span class="nc bnc" id="L89" title="All 2 branches missed.">            if (relations == null) {</span>
+<span class="nc" id="L90">                continue;</span>
+            }
+<span class="nc" id="L92">            ConditionQuery cq = newQueryFromRelations(query, relations);</span>
+<span class="nc" id="L93">            queries.add(cq);</span>
+<span class="nc" id="L94">        }</span>
+
+<span class="nc" id="L96">        return queries;</span>
+    }
+
+    private static Condition flattenIn(Condition condition, boolean supportIn) {
+<span class="nc bnc" id="L100" title="All 4 branches missed.">        switch (condition.type()) {</span>
+            case RELATION:
+<span class="nc" id="L102">                Relation relation = (Relation) condition;</span>
+<span class="nc bnc" id="L103" title="All 4 branches missed.">                switch (relation.relation()) {</span>
+                    case IN:
+                        // Flatten IN if needed
+<span class="nc" id="L106">                        return convIn2Or(relation, supportIn);</span>
+                    case NOT_IN:
+                        // Flatten NOT_IN if needed
+<span class="nc" id="L109">                        return convNotin2And(relation);</span>
+                    case TEXT_CONTAINS_ANY:
+                        // Flatten TEXT_CONTAINS_ANY if needed
+<span class="nc" id="L112">                        return convTextContainsAny2Or(relation);</span>
+                    default:
+<span class="nc" id="L114">                        return condition;</span>
+                }
+            case AND:
+<span class="nc" id="L117">                Condition.And and = (Condition.And) condition;</span>
+<span class="nc" id="L118">                return new Condition.And(flattenIn(and.left(), supportIn),</span>
+<span class="nc" id="L119">                                         flattenIn(and.right(), supportIn));</span>
+            case OR:
+<span class="nc" id="L121">                Condition.Or or = (Condition.Or) condition;</span>
+<span class="nc" id="L122">                return new Condition.Or(flattenIn(or.left(), supportIn),</span>
+<span class="nc" id="L123">                                        flattenIn(or.right(), supportIn));</span>
+            default:
+<span class="nc" id="L125">                throw new AssertionError(String.format(&quot;Wrong condition type: '%s'&quot;,</span>
+<span class="nc" id="L126">                                                       condition.type()));</span>
+        }
+    }
+
+    private static Condition convIn2Or(Relation relation, boolean supportIn) {
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        assert relation.relation() == Condition.RelationType.IN;</span>
+<span class="nc" id="L132">        Object key = relation.key();</span>
+<span class="nc" id="L133">        Object valueObject = relation.value();</span>
+<span class="nc" id="L134">        E.checkArgument(valueObject instanceof List,</span>
+                        &quot;Expect list value for IN condition: %s&quot;, relation);
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L137">        List&lt;Object&gt; values = (List&lt;Object&gt;) valueObject;</span>
+<span class="nc bnc" id="L138" title="All 2 branches missed.">        E.checkArgument(values.size() &lt;= Query.QUERY_BATCH,</span>
+<span class="nc" id="L139">                        &quot;Too many conditions(%s) each query&quot;, values.size());</span>
+
+        // Keep IN condition if IN query is supported and necessary
+<span class="nc bnc" id="L142" title="All 10 branches missed.">        if (supportIn &amp;&amp; relation.isSysprop() &amp;&amp; values.size() &gt; 1 &amp;&amp;</span>
+            (key == HugeKeys.OWNER_VERTEX || key == HugeKeys.ID)) {
+            // TODO: Should not rely on HugeKeys here, improve key judgment
+            // Just mark flatten
+<span class="nc" id="L146">            return new Condition.FlattenSyspropRelation((SyspropRelation) relation);</span>
+        }
+
+        // Do IN flatten, return null if values.size() == 0
+<span class="nc" id="L150">        Condition conds = null;</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        for (Object value : values) {</span>
+            Condition cond;
+            // Convert IN to EQ
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            if (key instanceof HugeKeys) {</span>
+<span class="nc" id="L155">                cond = Condition.eq((HugeKeys) key, value);</span>
+            } else {
+<span class="nc" id="L157">                cond = Condition.eq((Id) key, value);</span>
+            }
+            // Join EQ with OR
+<span class="nc bnc" id="L160" title="All 2 branches missed.">            conds = conds == null ? cond : Condition.or(conds, cond);</span>
+<span class="nc" id="L161">        }</span>
+<span class="nc" id="L162">        return conds;</span>
+    }
+
+    private static Condition convNotin2And(Relation relation) {
+<span class="nc bnc" id="L166" title="All 2 branches missed.">        assert relation.relation() == Condition.RelationType.NOT_IN;</span>
+<span class="nc" id="L167">        Object key = relation.key();</span>
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L169">        List&lt;Object&gt; values = (List&lt;Object&gt;) relation.value();</span>
+        Condition cond;
+<span class="nc" id="L171">        Condition conds = null;</span>
+<span class="nc bnc" id="L172" title="All 2 branches missed.">        for (Object value : values) {</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">            if (key instanceof HugeKeys) {</span>
+<span class="nc" id="L174">                cond = Condition.neq((HugeKeys) key, value);</span>
+            } else {
+<span class="nc" id="L176">                cond = Condition.neq((Id) key, value);</span>
+            }
+<span class="nc bnc" id="L178" title="All 2 branches missed.">            conds = conds == null ? cond : Condition.and(conds, cond);</span>
+<span class="nc" id="L179">        }</span>
+<span class="nc" id="L180">        return conds;</span>
+    }
+
+    private static Condition convTextContainsAny2Or(Relation relation) {
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        assert relation.relation() == Condition.RelationType.TEXT_CONTAINS_ANY;</span>
+        @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L186">        Collection&lt;String&gt; words = (Collection&lt;String&gt;) relation.value();</span>
+        Condition cond;
+<span class="nc" id="L188">        Condition conds = null;</span>
+<span class="nc bnc" id="L189" title="All 2 branches missed.">        for (String word : words) {</span>
+<span class="nc bnc" id="L190" title="All 2 branches missed.">            assert relation.key() instanceof Id;</span>
+<span class="nc" id="L191">            cond = Condition.textContains((Id) relation.key(), word);</span>
+<span class="nc bnc" id="L192" title="All 2 branches missed.">            conds = conds == null ? cond : Condition.or(conds, cond);</span>
+<span class="nc" id="L193">        }</span>
+<span class="nc" id="L194">        return conds;</span>
+    }
+
+    private static Set&lt;Relations&gt; flattenAndOr(Condition condition) {
+<span class="nc" id="L198">        Set&lt;Relations&gt; result = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L199" title="All 4 branches missed.">        switch (condition.type()) {</span>
+            case RELATION:
+<span class="nc" id="L201">                Relation relation = (Relation) condition;</span>
+<span class="nc" id="L202">                result.add(Relations.of(relation));</span>
+<span class="nc" id="L203">                break;</span>
+            case AND:
+<span class="nc" id="L205">                Condition.And and = (Condition.And) condition;</span>
+<span class="nc" id="L206">                result = and(flattenAndOr(and.left()),</span>
+<span class="nc" id="L207">                             flattenAndOr(and.right()));</span>
+<span class="nc" id="L208">                break;</span>
+            case OR:
+<span class="nc" id="L210">                Condition.Or or = (Condition.Or) condition;</span>
+<span class="nc" id="L211">                result = or(flattenAndOr(or.left()),</span>
+<span class="nc" id="L212">                            flattenAndOr(or.right()));</span>
+<span class="nc" id="L213">                break;</span>
+            default:
+<span class="nc" id="L215">                throw new AssertionError(String.format(&quot;Wrong condition type: '%s'&quot;,</span>
+<span class="nc" id="L216">                                                       condition.type()));</span>
+        }
+<span class="nc" id="L218">        return result;</span>
+    }
+
+    private static Set&lt;Relations&gt; and(Set&lt;Relations&gt; left,
+                                      Set&lt;Relations&gt; right) {
+<span class="nc" id="L223">        Set&lt;Relations&gt; result = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L224" title="All 2 branches missed.">        for (Relations leftRelations : left) {</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">            for (Relations rightRelations : right) {</span>
+<span class="nc" id="L226">                Relations relations = new Relations();</span>
+<span class="nc" id="L227">                relations.addAll(leftRelations);</span>
+<span class="nc" id="L228">                relations.addAll(rightRelations);</span>
+<span class="nc" id="L229">                result.add(relations);</span>
+<span class="nc" id="L230">            }</span>
+<span class="nc" id="L231">        }</span>
+<span class="nc" id="L232">        return result;</span>
+    }
+
+    private static Set&lt;Relations&gt; or(Set&lt;Relations&gt; left,
+                                     Set&lt;Relations&gt; right) {
+<span class="nc" id="L237">        Set&lt;Relations&gt; result = InsertionOrderUtil.newSet(left);</span>
+<span class="nc" id="L238">        result.addAll(right);</span>
+<span class="nc" id="L239">        return result;</span>
+    }
+
+    private static ConditionQuery newQueryFromRelations(ConditionQuery query,
+                                                        Relations relations) {
+<span class="nc" id="L244">        ConditionQuery cq = query.copyAndResetUnshared();</span>
+<span class="nc" id="L245">        cq.resetConditions();</span>
+<span class="nc bnc" id="L246" title="All 2 branches missed.">        for (Relation relation : relations) {</span>
+<span class="nc" id="L247">            cq.query(relation);</span>
+<span class="nc" id="L248">        }</span>
+<span class="nc" id="L249">        return cq;</span>
+    }
+
+    private static List&lt;ConditionQuery&gt; flattenRelations(ConditionQuery query) {
+<span class="nc" id="L253">        Relations relations = new Relations();</span>
+<span class="nc" id="L254">        List&lt;Condition&gt; nonRelations = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        for (Condition condition : query.conditions()) {</span>
+<span class="nc bnc" id="L256" title="All 2 branches missed.">            if (condition.isRelation()) {</span>
+<span class="nc" id="L257">                relations.add((Relation) condition);</span>
+            } else {
+<span class="nc" id="L259">                nonRelations.add(condition);</span>
+            }
+<span class="nc" id="L261">        }</span>
+<span class="nc" id="L262">        relations = optimizeRelations(relations);</span>
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (relations != null) {</span>
+<span class="nc" id="L264">            ConditionQuery cq = newQueryFromRelations(query, relations);</span>
+<span class="nc" id="L265">            cq.query(nonRelations);</span>
+<span class="nc" id="L266">            return ImmutableList.of(cq);</span>
+        }
+<span class="nc" id="L268">        return ImmutableList.of(query);</span>
+    }
+
+    private static Relations optimizeRelations(Relations relations) {
+        // Optimize and-relations in one query
+        // e.g. (age&gt;1 and age&gt;2) -&gt; (age&gt;2)
+<span class="nc" id="L274">        Set&lt;Object&gt; keys = relations.stream().map(Relation::key)</span>
+<span class="nc" id="L275">                                    .collect(Collectors.toSet());</span>
+
+        // No duplicated keys
+<span class="nc bnc" id="L278" title="All 2 branches missed.">        if (keys.size() == relations.size()) {</span>
+<span class="nc" id="L279">            return relations;</span>
+        }
+
+<span class="nc bnc" id="L282" title="All 2 branches missed.">        for (Object key : keys) {</span>
+            // Get same key relations
+<span class="nc" id="L284">            Relations rs = new Relations();</span>
+<span class="nc bnc" id="L285" title="All 2 branches missed.">            for (Relation relation : relations) {</span>
+<span class="nc bnc" id="L286" title="All 2 branches missed.">                if (relation.key().equals(key)) {</span>
+<span class="nc" id="L287">                    rs.add(relation);</span>
+                }
+<span class="nc" id="L289">            }</span>
+            // Same key relation number is 1, needn't merge
+<span class="nc bnc" id="L291" title="All 2 branches missed.">            if (rs.size() == 1) {</span>
+<span class="nc" id="L292">                continue;</span>
+            }
+            // Relations in rs having same key might need merge
+<span class="nc" id="L295">            relations.removeAll(rs);</span>
+<span class="nc" id="L296">            rs = mergeRelations(rs);</span>
+            // Conditions are mutually exclusive(e.g. age&gt;10 and age==9)
+<span class="nc bnc" id="L298" title="All 2 branches missed.">            if (rs.isEmpty()) {</span>
+<span class="nc" id="L299">                return null;</span>
+            }
+<span class="nc" id="L301">            relations.addAll(rs);</span>
+<span class="nc" id="L302">        }</span>
+
+<span class="nc" id="L304">        return relations;</span>
+    }
+
+    /**
+     * Reduce and merge relations linked with 'AND' for same key
+     *
+     * @param relations linked with 'AND' having same key, may contain 'in', 'not in',
+     *                  '&gt;', '&lt;', '&gt;=', '&lt;=', '==', '!='
+     * @return merged relations
+     */
+    private static Relations mergeRelations(Relations relations) {
+<span class="nc" id="L315">        Relations result = new Relations();</span>
+<span class="nc" id="L316">        boolean isNum = false;</span>
+
+<span class="nc" id="L318">        Relation gt = null;</span>
+<span class="nc" id="L319">        Relation gte = null;</span>
+<span class="nc" id="L320">        Relation eq = null;</span>
+<span class="nc" id="L321">        Relation lt = null;</span>
+<span class="nc" id="L322">        Relation lte = null;</span>
+
+<span class="nc bnc" id="L324" title="All 2 branches missed.">        for (Relation relation : relations) {</span>
+<span class="nc bnc" id="L325" title="All 6 branches missed.">            switch (relation.relation()) {</span>
+                case GT:
+<span class="nc" id="L327">                    isNum = true;</span>
+<span class="nc bnc" id="L328" title="All 4 branches missed.">                    if (gt == null || compare(relation, gt) &gt; 0) {</span>
+<span class="nc" id="L329">                        gt = relation;</span>
+                    }
+                    break;
+                case GTE:
+<span class="nc" id="L333">                    isNum = true;</span>
+<span class="nc bnc" id="L334" title="All 4 branches missed.">                    if (gte == null || compare(relation, gte) &gt; 0) {</span>
+<span class="nc" id="L335">                        gte = relation;</span>
+                    }
+                    break;
+                case EQ:
+<span class="nc bnc" id="L339" title="All 2 branches missed.">                    if (eq == null) {</span>
+<span class="nc" id="L340">                        eq = relation;</span>
+<span class="nc bnc" id="L341" title="All 2 branches missed.">                        if (eq.value() instanceof Number) {</span>
+<span class="nc" id="L342">                            isNum = true;</span>
+                        }
+                        break;
+<span class="nc bnc" id="L345" title="All 2 branches missed.">                    } else if (!relation.value().equals(eq.value())) {</span>
+<span class="nc" id="L346">                        return Relations.of();</span>
+                    }
+                    break;
+                case LT:
+<span class="nc" id="L350">                    isNum = true;</span>
+<span class="nc bnc" id="L351" title="All 4 branches missed.">                    if (lt == null || compare(lt, relation) &gt; 0) {</span>
+<span class="nc" id="L352">                        lt = relation;</span>
+                    }
+                    break;
+                case LTE:
+<span class="nc" id="L356">                    isNum = true;</span>
+<span class="nc bnc" id="L357" title="All 4 branches missed.">                    if (lte == null || compare(lte, relation) &gt; 0) {</span>
+<span class="nc" id="L358">                        lte = relation;</span>
+                    }
+                    break;
+                default: // NEQ, IN, NOT_IN, CONTAINS, CONTAINS_KEY, SCAN
+<span class="nc" id="L362">                    result.add(relation);</span>
+                    break;
+            }
+<span class="nc" id="L365">        }</span>
+
+<span class="nc bnc" id="L367" title="All 2 branches missed.">        if (!isNum) {</span>
+            // Not number, only may have equal relation
+<span class="nc bnc" id="L369" title="All 2 branches missed.">            if (eq != null) {</span>
+<span class="nc" id="L370">                result.add(eq);</span>
+            }
+        } else {
+            // At most have 1 eq, 1 lt, 1 lte, 1 gt, 1 gte
+<span class="nc" id="L374">            result.addAll(calcValidRange(gte, gt, eq, lte, lt));</span>
+        }
+<span class="nc" id="L376">        return result;</span>
+    }
+
+    private static Relations calcValidRange(Relation gte, Relation gt,
+                                            Relation eq, Relation lte,
+                                            Relation lt) {
+<span class="nc" id="L382">        Relations result = new Relations();</span>
+<span class="nc" id="L383">        Relation lower = null;</span>
+<span class="nc" id="L384">        Relation upper = null;</span>
+
+<span class="nc bnc" id="L386" title="All 2 branches missed.">        if (gte != null) {</span>
+<span class="nc" id="L387">            lower = gte;</span>
+        }
+<span class="nc bnc" id="L389" title="All 2 branches missed.">        if (gt != null) {</span>
+            // Select bigger one in (gt, gte) as lower limit
+<span class="nc" id="L391">            lower = highRelation(gte, gt);</span>
+        }
+<span class="nc bnc" id="L393" title="All 2 branches missed.">        if (lt != null) {</span>
+<span class="nc" id="L394">            upper = lt;</span>
+        }
+<span class="nc bnc" id="L396" title="All 2 branches missed.">        if (lte != null) {</span>
+            // Select smaller one in (lt, lte) as upper limit
+<span class="nc" id="L398">            upper = lowRelation(lte, lt);</span>
+        }
+        // Ensure low &lt; high
+<span class="nc bnc" id="L401" title="All 2 branches missed.">        if (!validRange(lower, upper)) {</span>
+<span class="nc" id="L402">            return Relations.of();</span>
+        }
+
+        // Handle eq
+<span class="nc bnc" id="L406" title="All 2 branches missed.">        if (eq != null) {</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">            if (!validEq(eq, lower, upper)) {</span>
+<span class="nc" id="L408">                return Relations.of();</span>
+            }
+<span class="nc" id="L410">            result.add(eq);</span>
+<span class="nc" id="L411">            return result;</span>
+        }
+
+        // No eq if come here
+<span class="nc bnc" id="L415" title="All 4 branches missed.">        assert lower != null || upper != null;</span>
+<span class="nc bnc" id="L416" title="All 2 branches missed.">        if (lower != null) {</span>
+<span class="nc" id="L417">            result.add(lower);</span>
+        }
+<span class="nc bnc" id="L419" title="All 2 branches missed.">        if (upper != null) {</span>
+<span class="nc" id="L420">            result.add(upper);</span>
+        }
+
+<span class="nc" id="L423">        return result;</span>
+    }
+
+    private static boolean validRange(Relation low, Relation high) {
+<span class="nc bnc" id="L427" title="All 4 branches missed.">        if (low == null || high == null) {</span>
+<span class="nc" id="L428">            return true;</span>
+        }
+<span class="nc bnc" id="L430" title="All 4 branches missed.">        return compare(low, high) &lt; 0 || compare(low, high) == 0 &amp;&amp;</span>
+<span class="nc bnc" id="L431" title="All 2 branches missed.">                                         low.relation() == Condition.RelationType.GTE &amp;&amp;</span>
+<span class="nc bnc" id="L432" title="All 2 branches missed.">                                         high.relation() == Condition.RelationType.LTE;</span>
+    }
+
+    private static boolean validEq(Relation eq, Relation low, Relation high) {
+        // Ensure equalValue &gt; lowValue
+<span class="nc bnc" id="L437" title="All 2 branches missed.">        if (low != null) {</span>
+<span class="nc bnc" id="L438" title="All 3 branches missed.">            switch (low.relation()) {</span>
+                case GTE:
+<span class="nc bnc" id="L440" title="All 2 branches missed.">                    if (compare(eq, low) &lt; 0) {</span>
+<span class="nc" id="L441">                        return false;</span>
+                    }
+                    break;
+                case GT:
+<span class="nc bnc" id="L445" title="All 2 branches missed.">                    if (compare(eq, low) &lt;= 0) {</span>
+<span class="nc" id="L446">                        return false;</span>
+                    }
+                    break;
+                default:
+<span class="nc" id="L450">                    throw new AssertionError(&quot;Must be GTE or GT&quot;);</span>
+            }
+        }
+        // Ensure equalValue &lt; highValue
+<span class="nc bnc" id="L454" title="All 2 branches missed.">        if (high != null) {</span>
+<span class="nc bnc" id="L455" title="All 3 branches missed.">            switch (high.relation()) {</span>
+                case LTE:
+<span class="nc bnc" id="L457" title="All 2 branches missed.">                    if (compare(eq, high) &gt; 0) {</span>
+<span class="nc" id="L458">                        return false;</span>
+                    }
+                    break;
+                case LT:
+<span class="nc bnc" id="L462" title="All 2 branches missed.">                    if (compare(eq, high) &gt;= 0) {</span>
+<span class="nc" id="L463">                        return false;</span>
+                    }
+                    break;
+                default:
+<span class="nc" id="L467">                    throw new AssertionError(&quot;Must be LTE or LT&quot;);</span>
+            }
+        }
+<span class="nc" id="L470">        return true;</span>
+    }
+
+    private static Relation highRelation(Relation first, Relation second) {
+<span class="nc" id="L474">        return selectRelation(first, second, true);</span>
+    }
+
+    private static Relation lowRelation(Relation first, Relation second) {
+<span class="nc" id="L478">        return selectRelation(first, second, false);</span>
+    }
+
+    private static Relation selectRelation(Relation first, Relation second, boolean high) {
+<span class="nc bnc" id="L482" title="All 2 branches missed.">        if (first == null) {</span>
+<span class="nc" id="L483">            return second;</span>
+        }
+<span class="nc bnc" id="L485" title="All 2 branches missed.">        if (second == null) {</span>
+<span class="nc" id="L486">            return first;</span>
+        }
+<span class="nc bnc" id="L488" title="All 2 branches missed.">        if (high) {</span>
+<span class="nc bnc" id="L489" title="All 2 branches missed.">            if (compare(first, second) &gt; 0) {</span>
+<span class="nc" id="L490">                return first;</span>
+            } else {
+<span class="nc" id="L492">                return second;</span>
+            }
+        } else {
+<span class="nc bnc" id="L495" title="All 2 branches missed.">            if (compare(first, second) &lt; 0) {</span>
+<span class="nc" id="L496">                return first;</span>
+            } else {
+<span class="nc" id="L498">                return second;</span>
+            }
+        }
+    }
+
+    private static int compare(Relation first, Relation second) {
+<span class="nc" id="L504">        Object firstValue = first.value();</span>
+<span class="nc" id="L505">        Object secondValue = second.value();</span>
+<span class="nc bnc" id="L506" title="All 4 branches missed.">        if (firstValue instanceof Number &amp;&amp; secondValue instanceof Number) {</span>
+<span class="nc" id="L507">            return NumericUtil.compareNumber(firstValue, (Number) secondValue);</span>
+<span class="nc bnc" id="L508" title="All 4 branches missed.">        } else if (firstValue instanceof Date &amp;&amp; secondValue instanceof Date) {</span>
+<span class="nc" id="L509">            return ((Date) firstValue).compareTo((Date) secondValue);</span>
+        } else {
+<span class="nc" id="L511">            throw new IllegalArgumentException(String.format(&quot;Can't compare between %s and %s&quot;,</span>
+                                                             first, second));
+        }
+    }
+
+    /**
+     * Rename Relation Set to Relations to make code more readable
+     * Use `LinkedHashSet` to keep relation in order with insertion
+     */
+    private static class Relations extends LinkedHashSet&lt;Relation&gt; {
+
+        private static final long serialVersionUID = -2110811280408887334L;
+
+        public Relations() {
+<span class="nc" id="L525">            super();</span>
+<span class="nc" id="L526">        }</span>
+
+        public static Relations of(Relation... relations) {
+<span class="nc" id="L529">            Relations rs = new Relations();</span>
+<span class="nc" id="L530">            rs.addAll(Arrays.asList(relations));</span>
+<span class="nc" id="L531">            return rs;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

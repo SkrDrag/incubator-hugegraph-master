@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GlobalMasterInfo.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.masterelection</a> &gt; <span class="el_source">GlobalMasterInfo.java</span></div><h1>GlobalMasterInfo.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.masterelection;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.type.define.NodeRole;
+import org.apache.hugegraph.util.E;
+
+// TODO: rename to GlobalNodeRoleInfo
+public final class GlobalMasterInfo {
+
+<span class="nc" id="L28">    private final static NodeInfo NO_MASTER = new NodeInfo(false, &quot;&quot;);</span>
+
+    private volatile boolean supportElection;
+    private volatile NodeInfo masterNodeInfo;
+
+    private volatile Id nodeId;
+    private volatile NodeRole nodeRole;
+
+    public GlobalMasterInfo() {
+<span class="nc" id="L37">        this(NO_MASTER);</span>
+<span class="nc" id="L38">    }</span>
+
+<span class="nc" id="L40">    public GlobalMasterInfo(NodeInfo masterInfo) {</span>
+<span class="nc" id="L41">        this.supportElection = false;</span>
+<span class="nc" id="L42">        this.masterNodeInfo = masterInfo;</span>
+
+<span class="nc" id="L44">        this.nodeId = null;</span>
+<span class="nc" id="L45">        this.nodeRole = null;</span>
+<span class="nc" id="L46">    }</span>
+
+    public void supportElection(boolean featureSupport) {
+<span class="nc" id="L49">        this.supportElection = featureSupport;</span>
+<span class="nc" id="L50">    }</span>
+
+    public boolean supportElection() {
+<span class="nc" id="L53">        return this.supportElection;</span>
+    }
+
+    public void resetMasterInfo() {
+<span class="nc" id="L57">        this.masterNodeInfo = NO_MASTER;</span>
+<span class="nc" id="L58">    }</span>
+
+    public void masterInfo(boolean isMaster, String nodeUrl) {
+        // final can avoid instruction rearrangement, visibility can be ignored
+<span class="nc" id="L62">        this.masterNodeInfo = new NodeInfo(isMaster, nodeUrl);</span>
+<span class="nc" id="L63">    }</span>
+
+    public NodeInfo masterInfo() {
+<span class="nc" id="L66">        return this.masterNodeInfo;</span>
+    }
+
+    public Id nodeId() {
+<span class="nc" id="L70">        return this.nodeId;</span>
+    }
+
+    public NodeRole nodeRole() {
+<span class="nc" id="L74">        return this.nodeRole;</span>
+    }
+
+    public void initNodeId(Id id) {
+<span class="nc" id="L78">        this.nodeId = id;</span>
+<span class="nc" id="L79">    }</span>
+
+    public void initNodeRole(NodeRole role) {
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        E.checkArgument(role != null, &quot;The server role can't be null&quot;);</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        E.checkArgument(this.nodeRole == null,</span>
+                        &quot;The server role can't be init twice&quot;);
+<span class="nc" id="L85">        this.nodeRole = role;</span>
+<span class="nc" id="L86">    }</span>
+
+    public void changeNodeRole(NodeRole role) {
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        E.checkArgument(role != null, &quot;The server role can't be null&quot;);</span>
+<span class="nc" id="L90">        this.nodeRole = role;</span>
+<span class="nc" id="L91">    }</span>
+
+    public static GlobalMasterInfo master(String nodeId) {
+<span class="nc" id="L94">        NodeInfo masterInfo = new NodeInfo(true, nodeId);</span>
+<span class="nc" id="L95">        GlobalMasterInfo nodeInfo = new GlobalMasterInfo(masterInfo);</span>
+<span class="nc" id="L96">        nodeInfo.nodeId = IdGenerator.of(nodeId);</span>
+<span class="nc" id="L97">        nodeInfo.nodeRole = NodeRole.MASTER;</span>
+<span class="nc" id="L98">        return nodeInfo;</span>
+    }
+
+    public static class NodeInfo {
+
+        private final boolean isMaster;
+        private final String nodeUrl;
+
+<span class="nc" id="L106">        public NodeInfo(boolean isMaster, String url) {</span>
+<span class="nc" id="L107">            this.isMaster = isMaster;</span>
+<span class="nc" id="L108">            this.nodeUrl = url;</span>
+<span class="nc" id="L109">        }</span>
+
+        public boolean isMaster() {
+<span class="nc" id="L112">            return this.isMaster;</span>
+        }
+
+        public String nodeUrl() {
+<span class="nc" id="L116">            return this.nodeUrl;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

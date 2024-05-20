@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IndexLabel.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.schema</a> &gt; <span class="el_source">IndexLabel.java</span></div><h1>IndexLabel.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.schema;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.schema.builder.SchemaBuilder;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.IndexType;
+import org.apache.hugegraph.util.E;
+import com.google.common.base.Objects;
+
+public class IndexLabel extends SchemaElement {
+
+    private HugeType baseType;
+    private Id baseValue;
+    private IndexType indexType;
+    private List&lt;Id&gt; indexFields;
+
+    public IndexLabel(final HugeGraph graph, Id id, String name) {
+<span class="nc" id="L43">        super(graph, id, name);</span>
+<span class="nc" id="L44">        this.baseType = HugeType.SYS_SCHEMA;</span>
+<span class="nc" id="L45">        this.baseValue = NONE_ID;</span>
+<span class="nc" id="L46">        this.indexType = IndexType.SECONDARY;</span>
+<span class="nc" id="L47">        this.indexFields = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L48">    }</span>
+
+    protected IndexLabel(long id, String name) {
+<span class="nc" id="L51">        this(null, IdGenerator.of(id), name);</span>
+<span class="nc" id="L52">    }</span>
+
+    @Override
+    public HugeType type() {
+<span class="nc" id="L56">        return HugeType.INDEX_LABEL;</span>
+    }
+
+    public HugeType baseType() {
+<span class="nc" id="L60">        return this.baseType;</span>
+    }
+
+    public void baseType(HugeType baseType) {
+<span class="nc" id="L64">        this.baseType = baseType;</span>
+<span class="nc" id="L65">    }</span>
+
+    public Id baseValue() {
+<span class="nc" id="L68">        return this.baseValue;</span>
+    }
+
+    public void baseValue(Id id) {
+<span class="nc" id="L72">        this.baseValue = id;</span>
+<span class="nc" id="L73">    }</span>
+
+    public IndexType indexType() {
+<span class="nc" id="L76">        return this.indexType;</span>
+    }
+
+    public void indexType(IndexType indexType) {
+<span class="nc" id="L80">        this.indexType = indexType;</span>
+<span class="nc" id="L81">    }</span>
+
+    public HugeType queryType() {
+<span class="nc bnc" id="L84" title="All 4 branches missed.">        switch (this.baseType) {</span>
+            case VERTEX_LABEL:
+<span class="nc" id="L86">                return HugeType.VERTEX;</span>
+            case EDGE_LABEL:
+<span class="nc" id="L88">                return HugeType.EDGE;</span>
+            case SYS_SCHEMA:
+<span class="nc" id="L90">                return HugeType.SYS_SCHEMA;</span>
+            default:
+<span class="nc" id="L92">                throw new AssertionError(String.format(</span>
+                          &quot;Query type of index label is either '%s' or '%s', &quot; +
+                          &quot;but '%s' is used&quot;,
+                          HugeType.VERTEX_LABEL, HugeType.EDGE_LABEL,
+                          this.baseType));
+        }
+    }
+
+    public List&lt;Id&gt; indexFields() {
+<span class="nc" id="L101">        return Collections.unmodifiableList(this.indexFields);</span>
+    }
+
+    public void indexFields(Id... ids) {
+<span class="nc" id="L105">        this.indexFields.addAll(Arrays.asList(ids));</span>
+<span class="nc" id="L106">    }</span>
+
+    public void indexField(Id id) {
+<span class="nc" id="L109">        this.indexFields.add(id);</span>
+<span class="nc" id="L110">    }</span>
+
+    public Id indexField() {
+<span class="nc bnc" id="L113" title="All 2 branches missed.">        E.checkState(this.indexFields.size() == 1,</span>
+                     &quot;There should be only one field in %s index label, &quot; +
+<span class="nc" id="L115">                     &quot;but got: %s&quot;, this.indexType.string(), this.indexFields);</span>
+<span class="nc" id="L116">        return this.indexFields.get(0);</span>
+    }
+
+    public SchemaLabel baseLabel() {
+<span class="nc" id="L120">        return getBaseLabel(this.graph, this.baseType, this.baseValue);</span>
+    }
+
+    public boolean hasSameContent(IndexLabel other) {
+<span class="nc bnc" id="L124" title="All 6 branches missed.">        return super.hasSameContent(other) &amp;&amp;</span>
+               this.indexType == other.indexType &amp;&amp;
+               this.baseType == other.baseType &amp;&amp;
+<span class="nc bnc" id="L127" title="All 2 branches missed.">               Objects.equal(this.graph.mapPkId2Name(this.indexFields),</span>
+<span class="nc" id="L128">                             other.graph.mapPkId2Name(other.indexFields));</span>
+    }
+
+    public boolean olap() {
+<span class="nc" id="L132">        return VertexLabel.OLAP_VL.id().equals(this.baseValue);</span>
+    }
+
+    public Object validValue(Object value) {
+<span class="nc bnc" id="L136" title="All 2 branches missed.">        if (!(value instanceof Number)) {</span>
+<span class="nc" id="L137">            return value;</span>
+        }
+
+<span class="nc" id="L140">        Number number = (Number) value;</span>
+<span class="nc bnc" id="L141" title="All 5 branches missed.">        switch (this.indexType()) {</span>
+            case RANGE_INT:
+<span class="nc" id="L143">                return number.intValue();</span>
+            case RANGE_LONG:
+<span class="nc" id="L145">                return number.longValue();</span>
+            case RANGE_FLOAT:
+<span class="nc" id="L147">                return number.floatValue();</span>
+            case RANGE_DOUBLE:
+<span class="nc" id="L149">                return number.doubleValue();</span>
+            default:
+<span class="nc" id="L151">                return value;</span>
+        }
+    }
+
+    // Label index
+<span class="nc" id="L156">    private static final IndexLabel VL_IL = new IndexLabel(VL_IL_ID, &quot;~vli&quot;);</span>
+<span class="nc" id="L157">    private static final IndexLabel EL_IL = new IndexLabel(EL_IL_ID, &quot;~eli&quot;);</span>
+
+    // Schema name index
+<span class="nc" id="L160">    private static final IndexLabel PKN_IL = new IndexLabel(PKN_IL_ID, &quot;~pkni&quot;);</span>
+<span class="nc" id="L161">    private static final IndexLabel VLN_IL = new IndexLabel(VLN_IL_ID, &quot;~vlni&quot;);</span>
+<span class="nc" id="L162">    private static final IndexLabel ELN_IL = new IndexLabel(ELN_IL_ID, &quot;~elni&quot;);</span>
+<span class="nc" id="L163">    private static final IndexLabel ILN_IL = new IndexLabel(ILN_IL_ID, &quot;~ilni&quot;);</span>
+
+    public static IndexLabel label(HugeType type) {
+<span class="nc bnc" id="L166" title="All 7 branches missed.">        switch (type) {</span>
+            case VERTEX:
+<span class="nc" id="L168">                return VL_IL;</span>
+            case EDGE:
+            case EDGE_OUT:
+            case EDGE_IN:
+<span class="nc" id="L172">                return EL_IL;</span>
+            case PROPERTY_KEY:
+<span class="nc" id="L174">                return PKN_IL;</span>
+            case VERTEX_LABEL:
+<span class="nc" id="L176">                return VLN_IL;</span>
+            case EDGE_LABEL:
+<span class="nc" id="L178">                return ELN_IL;</span>
+            case INDEX_LABEL:
+<span class="nc" id="L180">                return ILN_IL;</span>
+            default:
+<span class="nc" id="L182">                throw new AssertionError(String.format(</span>
+                          &quot;No primitive index label for '%s'&quot;, type));
+        }
+    }
+
+    public static IndexLabel label(HugeGraph graph, Id id) {
+        // Primitive IndexLabel first
+<span class="nc bnc" id="L189" title="All 4 branches missed.">        if (id.asLong() &lt; 0 &amp;&amp; id.asLong() &gt; -NEXT_PRIMITIVE_SYS_ID) {</span>
+<span class="nc bnc" id="L190" title="All 7 branches missed.">            switch ((int) id.asLong()) {</span>
+                case VL_IL_ID:
+<span class="nc" id="L192">                    return VL_IL;</span>
+                case EL_IL_ID:
+<span class="nc" id="L194">                    return EL_IL;</span>
+                case PKN_IL_ID:
+<span class="nc" id="L196">                    return PKN_IL;</span>
+                case VLN_IL_ID:
+<span class="nc" id="L198">                    return VLN_IL;</span>
+                case ELN_IL_ID:
+<span class="nc" id="L200">                    return ELN_IL;</span>
+                case ILN_IL_ID:
+<span class="nc" id="L202">                    return ILN_IL;</span>
+                default:
+<span class="nc" id="L204">                    throw new AssertionError(String.format(</span>
+                              &quot;No primitive index label for '%s'&quot;, id));
+            }
+        }
+<span class="nc" id="L208">        return graph.indexLabel(id);</span>
+    }
+
+    public static SchemaLabel getBaseLabel(HugeGraph graph,
+                                           HugeType baseType,
+                                           Object baseValue) {
+<span class="nc" id="L214">        E.checkNotNull(baseType, &quot;base type&quot;, &quot;index label&quot;);</span>
+<span class="nc" id="L215">        E.checkNotNull(baseValue, &quot;base value&quot;, &quot;index label&quot;);</span>
+<span class="nc bnc" id="L216" title="All 4 branches missed.">        E.checkArgument(baseValue instanceof String || baseValue instanceof Id,</span>
+                        &quot;The base value must be instance of String or Id, &quot; +
+                        &quot;but got %s(%s)&quot;, baseValue,
+<span class="nc" id="L219">                        baseValue.getClass().getSimpleName());</span>
+
+        SchemaLabel label;
+<span class="nc bnc" id="L222" title="All 3 branches missed.">        switch (baseType) {</span>
+            case VERTEX_LABEL:
+<span class="nc bnc" id="L224" title="All 2 branches missed.">                if (baseValue instanceof String) {</span>
+<span class="nc" id="L225">                    label = graph.vertexLabel((String) baseValue);</span>
+                } else {
+<span class="nc bnc" id="L227" title="All 2 branches missed.">                    assert baseValue instanceof Id;</span>
+<span class="nc" id="L228">                    label = graph.vertexLabel((Id) baseValue);</span>
+                }
+<span class="nc" id="L230">                break;</span>
+            case EDGE_LABEL:
+<span class="nc bnc" id="L232" title="All 2 branches missed.">                if (baseValue instanceof String) {</span>
+<span class="nc" id="L233">                    label = graph.edgeLabel((String) baseValue);</span>
+                } else {
+<span class="nc bnc" id="L235" title="All 2 branches missed.">                    assert baseValue instanceof Id;</span>
+<span class="nc" id="L236">                    label = graph.edgeLabel((Id) baseValue);</span>
+                }
+<span class="nc" id="L238">                break;</span>
+            default:
+<span class="nc" id="L240">                throw new AssertionError(String.format(</span>
+                          &quot;Unsupported base type '%s' of index label&quot;,
+                          baseType));
+        }
+
+<span class="nc" id="L245">        E.checkArgumentNotNull(label, &quot;Can't find the %s with name '%s'&quot;,</span>
+<span class="nc" id="L246">                               baseType.readableName(), baseValue);</span>
+<span class="nc" id="L247">        return label;</span>
+    }
+
+    public interface Builder extends SchemaBuilder&lt;IndexLabel&gt; {
+
+        TaskWithSchema createWithTask();
+
+        Id rebuild();
+
+        Builder onV(String baseValue);
+
+        Builder onE(String baseValue);
+
+        Builder by(String... fields);
+
+        Builder secondary();
+
+        Builder range();
+
+        Builder search();
+
+        Builder shard();
+
+        Builder unique();
+
+        Builder on(HugeType baseType, String baseValue);
+
+        Builder indexType(IndexType indexType);
+
+        Builder userdata(String key, Object value);
+
+        Builder userdata(Map&lt;String, Object&gt; userdata);
+
+        Builder rebuild(boolean rebuild);
+    }
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

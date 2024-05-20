@@ -1,0 +1,431 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractTransaction.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.tx</a> &gt; <span class="el_source">AbstractTransaction.java</span></div><h1>AbstractTransaction.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.tx;
+
+import java.util.Set;
+
+import org.apache.commons.lang3.StringUtils;
+import org.apache.hugegraph.backend.query.IdQuery;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.query.QueryResults;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.HugeGraphParams;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.Transaction;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.serializer.AbstractSerializer;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendEntryIterator;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStore;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.perf.PerfUtil.Watched;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.Action;
+import org.apache.hugegraph.type.define.CollectionType;
+import org.apache.hugegraph.type.define.GraphMode;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.util.collection.IdSet;
+import com.google.common.util.concurrent.RateLimiter;
+
+public abstract class AbstractTransaction implements Transaction {
+
+<span class="nc" id="L54">    protected static final Logger LOG = Log.logger(AbstractTransaction.class);</span>
+
+<span class="nc" id="L56">    private final Thread ownerThread = Thread.currentThread();</span>
+
+<span class="nc" id="L58">    private boolean autoCommit = false;</span>
+<span class="nc" id="L59">    private boolean closed = false;</span>
+<span class="nc" id="L60">    private boolean committing = false;</span>
+<span class="nc" id="L61">    private boolean committing2Backend = false;</span>
+
+    private final HugeGraphParams graph;
+    private final BackendStore store;
+
+    private BackendMutation mutation;
+
+    protected final AbstractSerializer serializer;
+
+<span class="nc" id="L70">    public AbstractTransaction(HugeGraphParams graph, BackendStore store) {</span>
+<span class="nc" id="L71">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+<span class="nc" id="L72">        E.checkNotNull(store, &quot;store&quot;);</span>
+
+<span class="nc" id="L74">        this.graph = graph;</span>
+<span class="nc" id="L75">        this.serializer = this.graph.serializer();</span>
+
+<span class="nc" id="L77">        this.store = store;</span>
+<span class="nc" id="L78">        this.reset();</span>
+
+<span class="nc" id="L80">        store.open(this.graph.configuration());</span>
+<span class="nc" id="L81">    }</span>
+
+    public HugeGraph graph() {
+<span class="nc" id="L84">        E.checkNotNull(this.graph, &quot;graph&quot;);</span>
+<span class="nc" id="L85">        return this.graph.graph();</span>
+    }
+
+    protected HugeGraphParams params() {
+<span class="nc" id="L89">        E.checkNotNull(this.graph, &quot;graph&quot;);</span>
+<span class="nc" id="L90">        return this.graph;</span>
+    }
+
+    protected BackendStore store() {
+<span class="nc" id="L94">        E.checkNotNull(this.store, &quot;store&quot;);</span>
+<span class="nc" id="L95">        return this.store;</span>
+    }
+
+    public BackendFeatures storeFeatures() {
+<span class="nc" id="L99">        return this.store.features();</span>
+    }
+
+    public boolean storeInitialized() {
+<span class="nc" id="L103">        return this.store.initialized();</span>
+    }
+
+    public &lt;R&gt; R metadata(HugeType type, String meta, Object... args) {
+<span class="nc" id="L107">        return this.store().metadata(type, meta, args);</span>
+    }
+
+    public String graphName() {
+<span class="nc" id="L111">        return this.params().name();</span>
+    }
+
+    public GraphMode graphMode() {
+<span class="nc" id="L115">        return this.params().mode();</span>
+    }
+
+    @Watched(prefix = &quot;tx&quot;)
+    public Number queryNumber(Query query) {
+<span class="nc" id="L120">        LOG.debug(&quot;Transaction queryNumber: {}&quot;, query);</span>
+
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        E.checkArgument(query.aggregate() != null,</span>
+                        &quot;The aggregate must be set for number query: %s&quot;,
+                        query);
+<span class="nc" id="L125">        Query squery = this.serializer.writeQuery(query);</span>
+
+<span class="nc" id="L127">        this.beforeRead();</span>
+        try {
+<span class="nc" id="L129">            return this.store.queryNumber(squery);</span>
+        } finally {
+<span class="nc" id="L131">            this.afterRead();</span>
+        }
+    }
+
+    @Watched(prefix = &quot;tx&quot;)
+    public QueryResults&lt;BackendEntry&gt; query(Query query) {
+<span class="nc" id="L137">        LOG.debug(&quot;Transaction query: {}&quot;, query);</span>
+        /*
+         * NOTE: it's dangerous if an IdQuery/ConditionQuery is empty
+         * check if the query is empty and its class is not the Query itself
+         */
+<span class="nc bnc" id="L142" title="All 4 branches missed.">        if (query.empty() &amp;&amp; !query.getClass().equals(Query.class)) {</span>
+<span class="nc" id="L143">            throw new BackendException(&quot;Query without any id or condition&quot;);</span>
+        }
+
+<span class="nc" id="L146">        Query squery = this.serializer.writeQuery(query);</span>
+
+        // Do rate limit if needed
+<span class="nc" id="L149">        RateLimiter rateLimiter = this.graph.readRateLimiter();</span>
+<span class="nc bnc" id="L150" title="All 4 branches missed.">        if (rateLimiter != null &amp;&amp; query.resultType().isGraph()) {</span>
+<span class="nc" id="L151">            double time = rateLimiter.acquire(1);</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">            if (time &gt; 0) {</span>
+<span class="nc" id="L153">                LOG.debug(&quot;Waited for {}s to query&quot;, time);</span>
+            }
+<span class="nc" id="L155">            BackendEntryIterator.checkInterrupted();</span>
+        }
+
+<span class="nc" id="L158">        this.beforeRead();</span>
+        try {
+<span class="nc" id="L160">            this.injectOlapPkIfNeeded(squery);</span>
+<span class="nc" id="L161">            return new QueryResults&lt;&gt;(this.store.query(squery), query);</span>
+        } finally {
+<span class="nc" id="L163">            this.afterRead(); // TODO: not complete the iteration currently</span>
+        }
+    }
+
+    private void injectOlapPkIfNeeded(Query query) {
+<span class="nc bnc" id="L168" title="All 2 branches missed.">        if (!query.resultType().isVertex() ||</span>
+<span class="nc bnc" id="L169" title="All 2 branches missed.">            !this.graph.readMode().showOlap()) {</span>
+<span class="nc" id="L170">            return;</span>
+        }
+        /*
+         * Control olap access by auth, only accessible olap property key
+         * will be queried
+         */
+<span class="nc" id="L176">        Set&lt;Id&gt; olapPks = new IdSet(CollectionType.EC);</span>
+<span class="nc bnc" id="L177" title="All 2 branches missed.">        for (PropertyKey propertyKey : this.graph.graph().propertyKeys()) {</span>
+<span class="nc bnc" id="L178" title="All 2 branches missed.">            if (propertyKey.olap()) {</span>
+<span class="nc" id="L179">                olapPks.add(propertyKey.id());</span>
+            }
+<span class="nc" id="L181">        }</span>
+<span class="nc" id="L182">        query.olapPks(olapPks);</span>
+<span class="nc" id="L183">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    public BackendEntry query(HugeType type, Id id) {
+<span class="nc" id="L187">        IdQuery idQuery = new IdQuery.OneIdQuery(type, id);</span>
+<span class="nc" id="L188">        return this.query(idQuery).one();</span>
+    }
+
+    public BackendEntry get(HugeType type, Id id) {
+<span class="nc" id="L192">        BackendEntry entry = this.query(type, id);</span>
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        if (entry == null) {</span>
+<span class="nc" id="L194">            throw new NotFoundException(</span>
+                      &quot;Not found the %s entry with id '%s'&quot;,
+<span class="nc" id="L196">                      type.readableName(), id);</span>
+        }
+<span class="nc" id="L198">        return entry;</span>
+    }
+
+    @Watched(prefix = &quot;tx&quot;)
+    @Override
+    public void commit() throws BackendException {
+<span class="nc" id="L204">        LOG.debug(&quot;Transaction commit() [auto: {}]...&quot;, this.autoCommit);</span>
+<span class="nc" id="L205">        this.checkOwnerThread();</span>
+
+<span class="nc bnc" id="L207" title="All 2 branches missed.">        if (this.closed) {</span>
+<span class="nc" id="L208">            throw new BackendException(&quot;Transaction has been closed&quot;);</span>
+        }
+
+<span class="nc bnc" id="L211" title="All 2 branches missed.">        if (this.committing) {</span>
+            // It is not allowed to recursively commit in a transaction
+<span class="nc" id="L213">            return;</span>
+        }
+
+<span class="nc bnc" id="L216" title="All 2 branches missed.">        if (!this.hasUpdate()) {</span>
+<span class="nc" id="L217">            LOG.debug(&quot;Transaction has no data to commit({})&quot;, store());</span>
+<span class="nc" id="L218">            return;</span>
+        }
+
+        // Do rate limit if needed
+<span class="nc" id="L222">        RateLimiter rateLimiter = this.graph.writeRateLimiter();</span>
+<span class="nc bnc" id="L223" title="All 2 branches missed.">        if (rateLimiter != null) {</span>
+<span class="nc" id="L224">            int size = this.mutationSize();</span>
+<span class="nc bnc" id="L225" title="All 2 branches missed.">            double time = size &gt; 0 ? rateLimiter.acquire(size) : 0.0;</span>
+<span class="nc bnc" id="L226" title="All 2 branches missed.">            if (time &gt; 0) {</span>
+<span class="nc" id="L227">                LOG.debug(&quot;Waited for {}s to mutate {} item(s)&quot;, time, size);</span>
+            }
+<span class="nc" id="L229">            BackendEntryIterator.checkInterrupted();</span>
+        }
+
+        // Do commit
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        assert !this.committing : &quot;Not allowed to commit when it's committing&quot;;</span>
+<span class="nc" id="L234">        this.committing = true;</span>
+        try {
+<span class="nc" id="L236">            this.commit2Backend();</span>
+        } finally {
+<span class="nc" id="L238">            this.committing = false;</span>
+<span class="nc" id="L239">            this.reset();</span>
+        }
+<span class="nc" id="L241">    }</span>
+
+    @Override
+    public void commitIfGtSize(int size) throws BackendException {
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (this.mutationSize() &gt;= size) {</span>
+<span class="nc" id="L246">            this.commit();</span>
+        }
+<span class="nc" id="L248">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    @Override
+    public void rollback() throws BackendException {
+<span class="nc" id="L253">        LOG.debug(&quot;Transaction rollback()...&quot;);</span>
+<span class="nc" id="L254">        this.reset();</span>
+<span class="nc bnc" id="L255" title="All 2 branches missed.">        if (this.committing2Backend) {</span>
+<span class="nc" id="L256">            this.rollbackBackend();</span>
+        }
+<span class="nc" id="L258">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    @Override
+    public void close() {
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (this.hasUpdate()) {</span>
+<span class="nc" id="L264">            throw new BackendException(&quot;There are still changes to commit&quot;);</span>
+        }
+<span class="nc bnc" id="L266" title="All 2 branches missed.">        if (this.closed) {</span>
+<span class="nc" id="L267">            return;</span>
+        }
+<span class="nc" id="L269">        this.closed = true;</span>
+<span class="nc" id="L270">        this.autoCommit = true; /* Let call after close() fail to commit */</span>
+<span class="nc" id="L271">        this.store().close();</span>
+<span class="nc" id="L272">    }</span>
+
+    @Override
+    public boolean autoCommit() {
+<span class="nc" id="L276">        return this.autoCommit;</span>
+    }
+
+    public boolean hasUpdate() {
+<span class="nc bnc" id="L280" title="All 2 branches missed.">        return !this.mutation.isEmpty();</span>
+    }
+
+    public boolean hasUpdate(HugeType type, Action action) {
+<span class="nc" id="L284">        return this.mutation.contains(type, action);</span>
+    }
+
+    public int mutationSize() {
+<span class="nc" id="L288">        return this.mutation.size();</span>
+    }
+
+    protected void autoCommit(boolean autoCommit) {
+<span class="nc" id="L292">        this.autoCommit = autoCommit;</span>
+<span class="nc" id="L293">    }</span>
+
+    protected void reset() {
+<span class="nc bnc" id="L296" title="All 4 branches missed.">        if (this.mutation == null || !this.mutation.isEmpty()) {</span>
+<span class="nc" id="L297">            this.mutation = new BackendMutation();</span>
+        }
+<span class="nc" id="L299">    }</span>
+
+    protected BackendMutation mutation() {
+<span class="nc" id="L302">        return this.mutation;</span>
+    }
+
+    protected void commit2Backend() {
+<span class="nc" id="L306">        BackendMutation mutation = this.prepareCommit();</span>
+<span class="nc bnc" id="L307" title="All 2 branches missed.">        assert !mutation.isEmpty();</span>
+<span class="nc" id="L308">        this.commitMutation2Backend(mutation);</span>
+<span class="nc" id="L309">    }</span>
+
+    protected void commitMutation2Backend(BackendMutation... mutations) {
+<span class="nc bnc" id="L312" title="All 2 branches missed.">        assert mutations.length &gt; 0;</span>
+<span class="nc" id="L313">        this.committing2Backend = true;</span>
+
+        // If an exception occurred, catch in the upper layer and rollback
+<span class="nc" id="L316">        this.store.beginTx();</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">        for (BackendMutation mutation : mutations) {</span>
+<span class="nc" id="L318">            this.store.mutate(mutation);</span>
+        }
+<span class="nc" id="L320">        this.store.commitTx();</span>
+
+<span class="nc" id="L322">        this.committing2Backend = false;</span>
+<span class="nc" id="L323">    }</span>
+
+    protected void rollbackBackend() {
+<span class="nc" id="L326">        this.committing2Backend = false;</span>
+<span class="nc" id="L327">        this.store.rollbackTx();</span>
+<span class="nc" id="L328">    }</span>
+
+    protected BackendMutation prepareCommit() {
+        // For sub-class preparing data, nothing to do here
+<span class="nc" id="L332">        LOG.debug(&quot;Transaction prepareCommit()...&quot;);</span>
+<span class="nc" id="L333">        return this.mutation();</span>
+    }
+
+    protected void beforeWrite() {
+        // TODO: auto open()
+<span class="nc" id="L338">    }</span>
+
+    protected void afterWrite() {
+<span class="nc bnc" id="L341" title="All 2 branches missed.">        if (this.autoCommit()) {</span>
+<span class="nc" id="L342">            this.commitOrRollback();</span>
+        }
+<span class="nc" id="L344">    }</span>
+
+    protected void beforeRead() {
+<span class="nc bnc" id="L347" title="All 4 branches missed.">        if (this.autoCommit() &amp;&amp; this.hasUpdate()) {</span>
+<span class="nc" id="L348">            this.commitOrRollback();</span>
+        }
+<span class="nc" id="L350">    }</span>
+
+    protected void afterRead() {
+        // pass
+<span class="nc" id="L354">    }</span>
+
+    protected void checkOwnerThread() {
+<span class="nc bnc" id="L357" title="All 2 branches missed.">        if (Thread.currentThread() != this.ownerThread) {</span>
+<span class="nc" id="L358">            throw new BackendException(&quot;Can't operate a tx in other threads&quot;);</span>
+        }
+<span class="nc" id="L360">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    public void commitOrRollback() {
+<span class="nc" id="L364">        LOG.debug(&quot;Transaction commitOrRollback()&quot;);</span>
+<span class="nc" id="L365">        this.checkOwnerThread();</span>
+
+        /*
+         * The mutation will be reset after commit, in order to log the
+         * mutation after failure, let's save it to a local variable.
+         */
+<span class="nc" id="L371">        BackendMutation mutation = this.mutation();</span>
+
+        try {
+            // Do commit
+<span class="nc" id="L375">            this.commit();</span>
+<span class="nc" id="L376">        } catch (Throwable e1) {</span>
+<span class="nc" id="L377">            LOG.error(&quot;Failed to commit changes:&quot;, e1);</span>
+            // Do rollback
+            try {
+<span class="nc" id="L380">                this.rollback();</span>
+<span class="nc" id="L381">            } catch (Throwable e2) {</span>
+<span class="nc" id="L382">                LOG.error(&quot;Failed to rollback changes:\n {}&quot;, mutation, e2);</span>
+<span class="nc" id="L383">            }</span>
+            /*
+             * Rethrow the commit exception
+             * The e.getMessage maybe too long to see key information,
+             */
+<span class="nc" id="L388">            throw new BackendException(&quot;Failed to commit changes: %s(%s)&quot;,</span>
+<span class="nc" id="L389">                                       StringUtils.abbreviateMiddle(</span>
+<span class="nc" id="L390">                                       e1.getMessage(), &quot;.&quot;, 256),</span>
+<span class="nc" id="L391">                                       HugeException.rootCause(e1));</span>
+<span class="nc" id="L392">        }</span>
+<span class="nc" id="L393">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    public void doInsert(BackendEntry entry) {
+<span class="nc" id="L397">        this.doAction(Action.INSERT, entry);</span>
+<span class="nc" id="L398">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    public void doAppend(BackendEntry entry) {
+<span class="nc" id="L402">        this.doAction(Action.APPEND, entry);</span>
+<span class="nc" id="L403">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    public void doEliminate(BackendEntry entry) {
+<span class="nc" id="L407">        this.doAction(Action.ELIMINATE, entry);</span>
+<span class="nc" id="L408">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    public void doRemove(BackendEntry entry) {
+<span class="nc" id="L412">        this.doAction(Action.DELETE, entry);</span>
+<span class="nc" id="L413">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    public void doUpdateIfPresent(BackendEntry entry) {
+<span class="nc" id="L417">        this.doAction(Action.UPDATE_IF_PRESENT, entry);</span>
+<span class="nc" id="L418">    }</span>
+
+    @Watched(prefix = &quot;tx&quot;)
+    public void doUpdateIfAbsent(BackendEntry entry) {
+<span class="nc" id="L422">        this.doAction(Action.UPDATE_IF_ABSENT, entry);</span>
+<span class="nc" id="L423">    }</span>
+
+    protected void doAction(Action action, BackendEntry entry) {
+<span class="nc" id="L426">        LOG.debug(&quot;Transaction {} entry {}&quot;, action, entry);</span>
+<span class="nc" id="L427">        E.checkNotNull(entry, &quot;entry&quot;);</span>
+<span class="nc" id="L428">        this.mutation.add(entry, action);</span>
+<span class="nc" id="L429">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

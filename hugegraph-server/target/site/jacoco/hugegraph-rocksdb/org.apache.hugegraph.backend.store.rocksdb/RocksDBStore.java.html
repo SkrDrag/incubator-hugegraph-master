@@ -1,0 +1,1130 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>RocksDBStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-rocksdb</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.rocksdb</a> &gt; <span class="el_source">RocksDBStore.java</span></div><h1>RocksDBStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.rocksdb;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.serializer.MergeIterator;
+import org.apache.hugegraph.backend.store.AbstractBackendStore;
+import org.apache.hugegraph.backend.store.BackendAction;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendSessionPool;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.backend.store.BackendTable;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.ConnectionException;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.Consumers;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.ExecutorUtil;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.Log;
+import org.rocksdb.RocksDBException;
+import org.slf4j.Logger;
+
+import com.google.common.collect.ImmutableList;
+
+public abstract class RocksDBStore extends AbstractBackendStore&lt;RocksDBSessions.Session&gt; {
+
+<span class="nc" id="L76">    private static final Logger LOG = Log.logger(RocksDBStore.class);</span>
+
+<span class="nc" id="L78">    private static final BackendFeatures FEATURES = new RocksDBFeatures();</span>
+
+    private final String store;
+    private final String database;
+
+    private final BackendStoreProvider provider;
+    private final Map&lt;HugeType, RocksDBTable&gt; tables;
+    private final Map&lt;String, RocksDBTable&gt; olapTables;
+
+    private String dataPath;
+    private RocksDBSessions sessions;
+    private final Map&lt;HugeType, String&gt; tableDiskMapping;
+    // DataPath:RocksDB mapping
+    private final ConcurrentMap&lt;String, RocksDBSessions&gt; dbs;
+    private final ReadWriteLock storeLock;
+
+    private static final String TABLE_GENERAL_KEY = &quot;general&quot;;
+    private static final String DB_OPEN = &quot;db-open-%s&quot;;
+
+    private static final long DB_OPEN_TIMEOUT = 600L; // unit s
+    private static final long DB_CLOSE_TIMEOUT = 30L; // unit s
+    /**
+     * This is threads number used to concurrently opening RocksDB dbs,
+     * 8 is supposed enough due to configurable data disks and
+     * disk number of one machine
+     */
+    private static final int OPEN_POOL_THREADS = 8;
+    private boolean isGraphStore;
+
+    public RocksDBStore(final BackendStoreProvider provider,
+<span class="nc" id="L108">                        final String database, final String store) {</span>
+<span class="nc" id="L109">        this.tables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L110">        this.olapTables = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L111">        this.provider = provider;</span>
+<span class="nc" id="L112">        this.database = database;</span>
+<span class="nc" id="L113">        this.store = store;</span>
+<span class="nc" id="L114">        this.sessions = null;</span>
+<span class="nc" id="L115">        this.tableDiskMapping = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L116">        this.dbs = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L117">        this.storeLock = new ReentrantReadWriteLock();</span>
+
+<span class="nc" id="L119">        this.registerMetaHandlers();</span>
+<span class="nc" id="L120">    }</span>
+
+    private void registerMetaHandlers() {
+<span class="nc" id="L123">        Supplier&lt;List&lt;RocksDBSessions&gt;&gt; dbsGet = () -&gt; {</span>
+<span class="nc" id="L124">            List&lt;RocksDBSessions&gt; dbs = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L125">            dbs.add(this.sessions);</span>
+<span class="nc" id="L126">            dbs.addAll(this.tableDBMapping().values());</span>
+<span class="nc" id="L127">            return dbs;</span>
+        };
+
+<span class="nc" id="L130">        this.registerMetaHandler(&quot;metrics&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc" id="L131">            RocksDBMetrics metrics = new RocksDBMetrics(dbsGet.get(), session);</span>
+<span class="nc" id="L132">            return metrics.metrics();</span>
+        });
+
+<span class="nc" id="L135">        this.registerMetaHandler(&quot;compact&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc" id="L136">            RocksDBMetrics metrics = new RocksDBMetrics(dbsGet.get(), session);</span>
+<span class="nc" id="L137">            return metrics.compact();</span>
+        });
+<span class="nc" id="L139">    }</span>
+
+    protected void registerTableManager(HugeType type, RocksDBTable table) {
+<span class="nc" id="L142">        this.tables.put(type, table);</span>
+<span class="nc" id="L143">    }</span>
+
+    protected void registerTableManager(String name, RocksDBTable table) {
+<span class="nc" id="L146">        this.olapTables.put(name, table);</span>
+<span class="nc" id="L147">    }</span>
+
+    protected void unregisterTableManager(String name) {
+<span class="nc" id="L150">        this.olapTables.remove(name);</span>
+<span class="nc" id="L151">    }</span>
+
+    @Override
+    protected final RocksDBTable table(HugeType type) {
+<span class="nc" id="L155">        RocksDBTable table = this.tables.get(type);</span>
+<span class="nc bnc" id="L156" title="All 2 branches missed.">        if (table == null) {</span>
+<span class="nc" id="L157">            throw new BackendException(&quot;Unsupported table: '%s'&quot;, type);</span>
+        }
+<span class="nc" id="L159">        return table;</span>
+    }
+
+    protected final RocksDBTable table(String name) {
+<span class="nc" id="L163">        RocksDBTable table = this.olapTables.get(name);</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">        if (table == null) {</span>
+<span class="nc" id="L165">            throw new BackendException(&quot;Unsupported table: '%s'&quot;, name);</span>
+        }
+<span class="nc" id="L167">        return table;</span>
+    }
+
+    protected List&lt;String&gt; tableNames() {
+<span class="nc" id="L171">        List&lt;String&gt; tables = this.tables.values().stream()</span>
+<span class="nc" id="L172">                                         .map(BackendTable::table)</span>
+<span class="nc" id="L173">                                         .collect(Collectors.toList());</span>
+<span class="nc" id="L174">        tables.addAll(this.olapTables());</span>
+<span class="nc" id="L175">        return tables;</span>
+    }
+
+    protected List&lt;String&gt; olapTables() {
+<span class="nc" id="L179">        return this.olapTables.values().stream().map(RocksDBTable::table)</span>
+<span class="nc" id="L180">                              .collect(Collectors.toList());</span>
+    }
+
+    protected List&lt;String&gt; tableNames(HugeType type) {
+<span class="nc bnc" id="L184" title="All 2 branches missed.">        return type != HugeType.OLAP ? Collections.singletonList(this.table(type).table()) :</span>
+<span class="nc" id="L185">                                       this.olapTables();</span>
+    }
+
+    @Override
+    public String store() {
+<span class="nc" id="L190">        return this.store;</span>
+    }
+
+    @Override
+    public String database() {
+<span class="nc" id="L195">        return this.database;</span>
+    }
+
+    @Override
+    public BackendStoreProvider provider() {
+<span class="nc" id="L200">        return this.provider;</span>
+    }
+
+    @Override
+    public BackendFeatures features() {
+<span class="nc" id="L205">        return FEATURES;</span>
+    }
+
+    @Override
+    public synchronized void open(HugeConfig config) {
+<span class="nc" id="L210">        LOG.debug(&quot;Store open: {}&quot;, this.store);</span>
+
+<span class="nc" id="L212">        E.checkNotNull(config, &quot;config&quot;);</span>
+<span class="nc" id="L213">        String graphStore = config.get(CoreOptions.STORE_GRAPH);</span>
+<span class="nc" id="L214">        this.isGraphStore = this.store.equals(graphStore);</span>
+<span class="nc" id="L215">        this.dataPath = config.get(RocksDBOptions.DATA_PATH);</span>
+
+<span class="nc bnc" id="L217" title="All 4 branches missed.">        if (this.sessions != null &amp;&amp; !this.sessions.closed()) {</span>
+<span class="nc" id="L218">            LOG.debug(&quot;Store {} has been opened before&quot;, this.store);</span>
+<span class="nc" id="L219">            this.useSessions();</span>
+<span class="nc" id="L220">            return;</span>
+        }
+
+<span class="nc" id="L223">        List&lt;Future&lt;?&gt;&gt; futures = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L224">        ExecutorService openPool = ExecutorUtil.newFixedThreadPool(OPEN_POOL_THREADS, DB_OPEN);</span>
+        // Open base disk
+<span class="nc" id="L226">        futures.add(openPool.submit(() -&gt; {</span>
+<span class="nc" id="L227">            this.sessions = this.open(config, this.tableNames());</span>
+<span class="nc" id="L228">        }));</span>
+
+        // Open tables with optimized disk
+<span class="nc" id="L231">        Map&lt;String, String&gt; disks = config.getMap(RocksDBOptions.DATA_DISKS);</span>
+<span class="nc" id="L232">        Set&lt;String&gt; openedDisks = new HashSet&lt;&gt;();</span>
+<span class="nc bnc" id="L233" title="All 2 branches missed.">        if (!disks.isEmpty()) {</span>
+<span class="nc" id="L234">            this.parseTableDiskMapping(disks, this.dataPath);</span>
+<span class="nc bnc" id="L235" title="All 2 branches missed.">            for (Entry&lt;HugeType, String&gt; e : this.tableDiskMapping.entrySet()) {</span>
+<span class="nc" id="L236">                String disk = e.getValue();</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">                if (openedDisks.contains(disk)) {</span>
+<span class="nc" id="L238">                    continue;</span>
+                }
+<span class="nc" id="L240">                openedDisks.add(disk);</span>
+<span class="nc" id="L241">                List&lt;String&gt; tables = this.tableNames(e.getKey());</span>
+<span class="nc" id="L242">                futures.add(openPool.submit(() -&gt; {</span>
+<span class="nc" id="L243">                    this.open(config, disk, disk, tables);</span>
+<span class="nc" id="L244">                }));</span>
+<span class="nc" id="L245">            }</span>
+        }
+
+        try {
+<span class="nc" id="L249">            this.waitOpenFinished(futures);</span>
+        } finally {
+<span class="nc" id="L251">            this.shutdownOpenPool(openPool);</span>
+        }
+<span class="nc" id="L253">    }</span>
+
+    private void waitOpenFinished(List&lt;Future&lt;?&gt;&gt; futures) {
+<span class="nc bnc" id="L256" title="All 2 branches missed.">        for (Future&lt;?&gt; future : futures) {</span>
+            try {
+<span class="nc" id="L258">                future.get();</span>
+<span class="nc" id="L259">            } catch (Throwable e) {</span>
+<span class="nc bnc" id="L260" title="All 2 branches missed.">                if (e.getCause() instanceof ConnectionException) {</span>
+<span class="nc" id="L261">                    throw new ConnectionException(&quot;Failed to open RocksDB store&quot;, e);</span>
+                }
+<span class="nc" id="L263">                throw new BackendException(&quot;Failed to open RocksDB store&quot;, e);</span>
+<span class="nc" id="L264">            }</span>
+<span class="nc" id="L265">        }</span>
+<span class="nc" id="L266">    }</span>
+
+    private void shutdownOpenPool(ExecutorService openPool) {
+<span class="nc bnc" id="L269" title="All 2 branches missed.">        if (openPool.isShutdown()) {</span>
+<span class="nc" id="L270">            return;</span>
+        }
+
+        /*
+         * Transfer the session holder from db-open thread to main thread,
+         * otherwise once the db-open thread pool is closed, we can no longer
+         * close the session created by it, which will cause the rocksdb
+         * instance fail to close
+         */
+<span class="nc" id="L279">        this.useSessions();</span>
+        try {
+<span class="nc" id="L281">            Consumers.executeOncePerThread(openPool, OPEN_POOL_THREADS,</span>
+                                           this::closeSessions, DB_CLOSE_TIMEOUT);
+<span class="nc" id="L283">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L284">            throw new BackendException(&quot;Failed to close session opened by open-pool&quot;);</span>
+<span class="nc" id="L285">        }</span>
+
+        boolean terminated;
+<span class="nc" id="L288">        openPool.shutdown();</span>
+        try {
+<span class="nc" id="L290">            terminated = openPool.awaitTermination(DB_OPEN_TIMEOUT,</span>
+                                                   TimeUnit.SECONDS);
+<span class="nc" id="L292">        } catch (Throwable e) {</span>
+<span class="nc" id="L293">            throw new BackendException(&quot;Failed to wait db-open thread pool shutdown&quot;, e);</span>
+<span class="nc" id="L294">        }</span>
+<span class="nc bnc" id="L295" title="All 2 branches missed.">        if (!terminated) {</span>
+<span class="nc" id="L296">            LOG.warn(&quot;Timeout when waiting db-open thread pool shutdown&quot;);</span>
+        }
+<span class="nc" id="L298">        openPool.shutdownNow();</span>
+<span class="nc" id="L299">    }</span>
+
+    protected RocksDBSessions open(HugeConfig config, List&lt;String&gt; tableNames) {
+<span class="nc" id="L302">        String dataPath = this.wrapPath(config.get(RocksDBOptions.DATA_PATH));</span>
+<span class="nc" id="L303">        String walPath = this.wrapPath(config.get(RocksDBOptions.WAL_PATH));</span>
+<span class="nc" id="L304">        return this.open(config, dataPath, walPath, tableNames);</span>
+    }
+
+    protected RocksDBSessions open(HugeConfig config, String dataPath,
+                                   String walPath, List&lt;String&gt; tableNames) {
+<span class="nc" id="L309">        LOG.info(&quot;Opening RocksDB with data path: {}&quot;, dataPath);</span>
+<span class="nc" id="L310">        RocksDBSessions sessions = null;</span>
+        try {
+<span class="nc" id="L312">            sessions = this.openSessionPool(config, dataPath,</span>
+                                            walPath, tableNames);
+<span class="nc" id="L314">        } catch (RocksDBException e) {</span>
+<span class="nc" id="L315">            RocksDBSessions origin = this.dbs.get(dataPath);</span>
+<span class="nc bnc" id="L316" title="All 2 branches missed.">            if (origin != null) {</span>
+<span class="nc bnc" id="L317" title="All 2 branches missed.">                if (e.getMessage().contains(&quot;No locks available&quot;)) {</span>
+                    /*
+                     * Open twice, copy a RocksDBSessions reference, since from
+                     * v0.11.2 release we don't support multi graphs share
+                     * rocksdb instance (before v0.11.2 graphs with different
+                     * CF-prefix share one rocksdb instance and data path),
+                     * so each graph has its independent data paths, but multi
+                     * CFs may share same optimized disk(or optimized disk path).
+                     */
+<span class="nc" id="L326">                    sessions = origin.copy(config, this.database, this.store);</span>
+                }
+            }
+
+<span class="nc bnc" id="L330" title="All 2 branches missed.">            if (e.getMessage().contains(&quot;Column family not found&quot;)) {</span>
+<span class="nc bnc" id="L331" title="All 2 branches missed.">                if (this.isSchemaStore()) {</span>
+<span class="nc" id="L332">                    LOG.info(&quot;Failed to open RocksDB '{}' with database '{}',&quot; +</span>
+                             &quot; try to init CF later&quot;, dataPath, this.database);
+                }
+                List&lt;String&gt; none;
+<span class="nc" id="L336">                boolean existsOtherKeyspace = existsOtherKeyspace(dataPath);</span>
+<span class="nc bnc" id="L337" title="All 2 branches missed.">                if (existsOtherKeyspace) {</span>
+                    // Open a keyspace after other keyspace closed
+                    // Set to empty list to open old CFs(of other keyspace)
+<span class="nc" id="L340">                    none = ImmutableList.of();</span>
+                } else {
+                    // Before init the first keyspace
+<span class="nc" id="L343">                    none = null;</span>
+                }
+                try {
+<span class="nc" id="L346">                    sessions = this.openSessionPool(config, dataPath, walPath, none);</span>
+<span class="nc" id="L347">                } catch (RocksDBException e1) {</span>
+<span class="nc" id="L348">                    e = e1;</span>
+<span class="nc" id="L349">                }</span>
+<span class="nc bnc" id="L350" title="All 4 branches missed.">                if (sessions == null &amp;&amp; !existsOtherKeyspace) {</span>
+<span class="nc" id="L351">                    LOG.error(&quot;Failed to open RocksDB with default CF, &quot; +</span>
+                              &quot;is there data for other programs: {}&quot;, dataPath);
+                }
+            }
+
+<span class="nc bnc" id="L356" title="All 2 branches missed.">            if (sessions == null) {</span>
+                // Error after trying other ways
+<span class="nc" id="L358">                LOG.error(&quot;Failed to open RocksDB '{}'&quot;, dataPath, e);</span>
+<span class="nc" id="L359">                throw new ConnectionException(&quot;Failed to open RocksDB '%s'&quot;, e, dataPath);</span>
+            }
+<span class="nc" id="L361">        }</span>
+
+<span class="nc bnc" id="L363" title="All 2 branches missed.">        if (sessions != null) {</span>
+            // May override the original session pool
+<span class="nc" id="L365">            this.dbs.put(dataPath, sessions);</span>
+<span class="nc" id="L366">            sessions.session().open();</span>
+<span class="nc" id="L367">            LOG.debug(&quot;Store opened: {}&quot;, dataPath);</span>
+        }
+
+<span class="nc" id="L370">        return sessions;</span>
+    }
+
+    protected RocksDBSessions openSessionPool(HugeConfig config,
+                                              String dataPath, String walPath,
+                                              List&lt;String&gt; tableNames) throws RocksDBException {
+<span class="nc bnc" id="L376" title="All 2 branches missed.">        if (tableNames == null) {</span>
+<span class="nc" id="L377">            return new RocksDBStdSessions(config, this.database, this.store, dataPath, walPath);</span>
+        } else {
+<span class="nc" id="L379">            return new RocksDBStdSessions(config, this.database, this.store,</span>
+                                          dataPath, walPath, tableNames);
+        }
+    }
+
+    protected String wrapPath(String path) {
+        // Ensure the `path` exists
+        try {
+<span class="nc" id="L387">            FileUtils.forceMkdir(FileUtils.getFile(path));</span>
+<span class="nc" id="L388">        } catch (IOException e) {</span>
+<span class="nc" id="L389">            throw new BackendException(e.getMessage(), e);</span>
+<span class="nc" id="L390">        }</span>
+        // Join with store type
+<span class="nc" id="L392">        return Paths.get(path, this.store).toString();</span>
+    }
+
+    protected Map&lt;String, RocksDBSessions&gt; tableDBMapping() {
+<span class="nc" id="L396">        Map&lt;String, RocksDBSessions&gt; tableDBMap = InsertionOrderUtil.newMap();</span>
+<span class="nc bnc" id="L397" title="All 2 branches missed.">        for (Entry&lt;HugeType, String&gt; e : this.tableDiskMapping.entrySet()) {</span>
+<span class="nc" id="L398">            HugeType type = e.getKey();</span>
+<span class="nc" id="L399">            RocksDBSessions db = this.db(e.getValue());</span>
+<span class="nc bnc" id="L400" title="All 2 branches missed.">            String key = type != HugeType.OLAP ? this.table(type).table() : type.string();</span>
+<span class="nc" id="L401">            tableDBMap.put(key, db);</span>
+<span class="nc" id="L402">        }</span>
+<span class="nc" id="L403">        return tableDBMap;</span>
+    }
+
+    protected ReadWriteLock storeLock() {
+<span class="nc" id="L407">        return this.storeLock;</span>
+    }
+
+    @Override
+    public void close() {
+<span class="nc" id="L412">        LOG.debug(&quot;Store close: {}&quot;, this.store);</span>
+<span class="nc" id="L413">        this.checkOpened();</span>
+<span class="nc" id="L414">        this.closeSessions();</span>
+<span class="nc" id="L415">    }</span>
+
+    @Override
+    public boolean opened() {
+<span class="nc" id="L419">        this.checkDbOpened();</span>
+<span class="nc" id="L420">        return this.sessions.session().opened();</span>
+    }
+
+    @Override
+    public void mutate(BackendMutation mutation) {
+<span class="nc" id="L425">        Lock readLock = this.storeLock.readLock();</span>
+<span class="nc" id="L426">        readLock.lock();</span>
+        try {
+<span class="nc" id="L428">            this.checkOpened();</span>
+<span class="nc bnc" id="L429" title="All 2 branches missed.">            if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L430">                LOG.debug(&quot;Store {} mutation: {}&quot;, this.store, mutation);</span>
+            }
+
+<span class="nc bnc" id="L433" title="All 2 branches missed.">            for (HugeType type : mutation.types()) {</span>
+<span class="nc" id="L434">                RocksDBSessions.Session session = this.session(type);</span>
+<span class="nc bnc" id="L435" title="All 2 branches missed.">                for (Iterator&lt;BackendAction&gt; it = mutation.mutation(type); it.hasNext(); ) {</span>
+<span class="nc" id="L436">                    this.mutate(session, it.next());</span>
+                }
+<span class="nc" id="L438">            }</span>
+        } finally {
+<span class="nc" id="L440">            readLock.unlock();</span>
+        }
+<span class="nc" id="L442">    }</span>
+
+    private void mutate(RocksDBSessions.Session session, BackendAction item) {
+<span class="nc" id="L445">        BackendEntry entry = item.entry();</span>
+        RocksDBTable table;
+
+<span class="nc bnc" id="L448" title="All 2 branches missed.">        if (!entry.olap()) {</span>
+            // Oltp table
+<span class="nc" id="L450">            table = this.table(entry.type());</span>
+        } else {
+<span class="nc bnc" id="L452" title="All 2 branches missed.">            if (entry.type().isIndex()) {</span>
+                // Olap index
+<span class="nc" id="L454">                table = this.table(this.olapTableName(entry.type()));</span>
+            } else {
+                // Olap vertex
+<span class="nc" id="L457">                table = this.table(this.olapTableName(entry.subId()));</span>
+            }
+<span class="nc" id="L459">            session = this.session(HugeType.OLAP);</span>
+        }
+
+<span class="nc bnc" id="L462" title="All 7 branches missed.">        switch (item.action()) {</span>
+            case INSERT:
+<span class="nc" id="L464">                table.insert(session, entry);</span>
+<span class="nc" id="L465">                break;</span>
+            case DELETE:
+<span class="nc" id="L467">                table.delete(session, entry);</span>
+<span class="nc" id="L468">                break;</span>
+            case APPEND:
+<span class="nc" id="L470">                table.append(session, entry);</span>
+<span class="nc" id="L471">                break;</span>
+            case ELIMINATE:
+<span class="nc" id="L473">                table.eliminate(session, entry);</span>
+<span class="nc" id="L474">                break;</span>
+            case UPDATE_IF_PRESENT:
+<span class="nc" id="L476">                table.updateIfPresent(session, entry);</span>
+<span class="nc" id="L477">                break;</span>
+            case UPDATE_IF_ABSENT:
+<span class="nc" id="L479">                table.updateIfAbsent(session, entry);</span>
+<span class="nc" id="L480">                break;</span>
+            default:
+<span class="nc" id="L482">                throw new AssertionError(String.format(&quot;Unsupported mutate action: %s&quot;,</span>
+<span class="nc" id="L483">                                                       item.action()));</span>
+        }
+<span class="nc" id="L485">    }</span>
+
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(Query query) {
+<span class="nc" id="L489">        Lock readLock = this.storeLock.readLock();</span>
+<span class="nc" id="L490">        readLock.lock();</span>
+
+        try {
+<span class="nc" id="L493">            this.checkOpened();</span>
+<span class="nc" id="L494">            HugeType tableType = RocksDBTable.tableType(query);</span>
+            RocksDBTable table;
+            RocksDBSessions.Session session;
+<span class="nc bnc" id="L497" title="All 2 branches missed.">            if (query.olap()) {</span>
+<span class="nc" id="L498">                table = this.table(this.olapTableName(tableType));</span>
+<span class="nc" id="L499">                session = this.session(HugeType.OLAP);</span>
+            } else {
+<span class="nc" id="L501">                table = this.table(tableType);</span>
+<span class="nc" id="L502">                session = this.session(tableType);</span>
+            }
+
+<span class="nc" id="L505">            Iterator&lt;BackendEntry&gt; entries = table.query(session, query);</span>
+            // Merge olap results as needed
+<span class="nc" id="L507">            Set&lt;Id&gt; olapPks = query.olapPks();</span>
+<span class="nc bnc" id="L508" title="All 4 branches missed.">            if (this.isGraphStore &amp;&amp; !olapPks.isEmpty()) {</span>
+<span class="nc" id="L509">                List&lt;Iterator&lt;BackendEntry&gt;&gt; iterators = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L510" title="All 2 branches missed.">                for (Id pk : olapPks) {</span>
+<span class="nc" id="L511">                    Query q = query.copy();</span>
+<span class="nc" id="L512">                    table = this.table(this.olapTableName(pk));</span>
+<span class="nc" id="L513">                    iterators.add(table.query(this.session(HugeType.OLAP), q));</span>
+<span class="nc" id="L514">                }</span>
+<span class="nc" id="L515">                entries = new MergeIterator&lt;&gt;(entries, iterators, BackendEntry::mergeable);</span>
+            }
+<span class="nc" id="L517">            return entries;</span>
+        } finally {
+<span class="nc" id="L519">            readLock.unlock();</span>
+        }
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+<span class="nc" id="L525">        Lock readLock = this.storeLock.readLock();</span>
+<span class="nc" id="L526">        readLock.lock();</span>
+        try {
+<span class="nc" id="L528">            this.checkOpened();</span>
+<span class="nc" id="L529">            HugeType tableType = RocksDBTable.tableType(query);</span>
+<span class="nc" id="L530">            RocksDBTable table = this.table(tableType);</span>
+<span class="nc" id="L531">            return table.queryNumber(this.session(tableType), query);</span>
+        } finally {
+<span class="nc" id="L533">            readLock.unlock();</span>
+        }
+    }
+
+    @Override
+    public synchronized void init() {
+<span class="nc" id="L539">        Lock writeLock = this.storeLock.writeLock();</span>
+<span class="nc" id="L540">        writeLock.lock();</span>
+        try {
+<span class="nc" id="L542">            this.checkDbOpened();</span>
+            // Create tables with main disk
+<span class="nc" id="L544">            this.createTable(this.sessions, this.tableNames().toArray(new String[0]));</span>
+
+            // Create table with optimized disk
+<span class="nc" id="L547">            Map&lt;String, RocksDBSessions&gt; tableDBMap = this.tableDBMapping();</span>
+<span class="nc bnc" id="L548" title="All 2 branches missed.">            for (Map.Entry&lt;String, RocksDBSessions&gt; e : tableDBMap.entrySet()) {</span>
+<span class="nc bnc" id="L549" title="All 2 branches missed.">                if (e.getKey().equals(HugeType.OLAP.string())) {</span>
+<span class="nc bnc" id="L550" title="All 2 branches missed.">                    for (String olapTable : this.olapTables()) {</span>
+<span class="nc" id="L551">                        this.createTable(e.getValue(), olapTable);</span>
+<span class="nc" id="L552">                    }</span>
+                } else {
+<span class="nc" id="L554">                    this.createTable(e.getValue(), e.getKey());</span>
+                }
+<span class="nc" id="L556">            }</span>
+
+<span class="nc" id="L558">            LOG.debug(&quot;Store initialized: {}&quot;, this.store);</span>
+        } finally {
+<span class="nc" id="L560">            writeLock.unlock();</span>
+        }
+<span class="nc" id="L562">    }</span>
+
+    protected void createTable(RocksDBSessions db, String... tables) {
+        try {
+<span class="nc" id="L566">            db.createTable(tables);</span>
+<span class="nc" id="L567">        } catch (RocksDBException e) {</span>
+<span class="nc" id="L568">            throw new BackendException(&quot;Failed to create tables %s for '%s'&quot;,</span>
+<span class="nc" id="L569">                                       e, Arrays.asList(tables), this.store);</span>
+<span class="nc" id="L570">        }</span>
+<span class="nc" id="L571">    }</span>
+
+    @Override
+    public synchronized void clear(boolean clearSpace) {
+<span class="nc" id="L575">        Lock writeLock = this.storeLock.writeLock();</span>
+<span class="nc" id="L576">        writeLock.lock();</span>
+        try {
+<span class="nc" id="L578">            this.checkDbOpened();</span>
+            // Drop tables with main disk
+<span class="nc" id="L580">            this.dropTable(this.sessions, this.tableNames().toArray(new String[0]));</span>
+
+            // Drop tables with optimized disk
+<span class="nc" id="L583">            Map&lt;String, RocksDBSessions&gt; tableDBMap = this.tableDBMapping();</span>
+<span class="nc bnc" id="L584" title="All 2 branches missed.">            for (Map.Entry&lt;String, RocksDBSessions&gt; e : tableDBMap.entrySet()) {</span>
+<span class="nc bnc" id="L585" title="All 2 branches missed.">                if (e.getKey().equals(HugeType.OLAP.string())) {</span>
+<span class="nc bnc" id="L586" title="All 2 branches missed.">                    for (String olapTable : this.olapTables()) {</span>
+<span class="nc" id="L587">                        this.dropTable(e.getValue(), olapTable);</span>
+<span class="nc" id="L588">                    }</span>
+                } else {
+<span class="nc" id="L590">                    this.dropTable(e.getValue(), e.getKey());</span>
+                }
+<span class="nc" id="L592">            }</span>
+
+<span class="nc" id="L594">            LOG.debug(&quot;Store cleared: {}&quot;, this.store);</span>
+        } finally {
+<span class="nc" id="L596">            writeLock.unlock();</span>
+        }
+<span class="nc" id="L598">    }</span>
+
+    protected void dropTable(RocksDBSessions db, String... tables) {
+        try {
+<span class="nc" id="L602">            db.dropTable(tables);</span>
+<span class="nc" id="L603">        } catch (BackendException e) {</span>
+<span class="nc bnc" id="L604" title="All 2 branches missed.">            if (e.getMessage().contains(&quot;is not opened&quot;)) {</span>
+<span class="nc" id="L605">                return;</span>
+            }
+<span class="nc" id="L607">            throw e;</span>
+<span class="nc" id="L608">        } catch (RocksDBException e) {</span>
+<span class="nc" id="L609">            throw new BackendException(&quot;Failed to drop tables %s for '%s'&quot;,</span>
+<span class="nc" id="L610">                                       e, Arrays.asList(tables), this.store);</span>
+<span class="nc" id="L611">        }</span>
+<span class="nc" id="L612">    }</span>
+
+    @Override
+    public boolean initialized() {
+<span class="nc" id="L616">        this.checkDbOpened();</span>
+<span class="nc bnc" id="L617" title="All 2 branches missed.">        if (!this.opened()) {</span>
+<span class="nc" id="L618">            return false;</span>
+        }
+
+<span class="nc bnc" id="L621" title="All 2 branches missed.">        for (String table : this.tableNames()) {</span>
+<span class="nc bnc" id="L622" title="All 2 branches missed.">            if (!this.sessions.existsTable(table)) {</span>
+<span class="nc" id="L623">                return false;</span>
+            }
+<span class="nc" id="L625">        }</span>
+<span class="nc" id="L626">        return true;</span>
+    }
+
+    @Override
+    public synchronized void truncate() {
+<span class="nc" id="L631">        Lock writeLock = this.storeLock.writeLock();</span>
+<span class="nc" id="L632">        writeLock.lock();</span>
+        try {
+<span class="nc" id="L634">            this.checkOpened();</span>
+
+<span class="nc" id="L636">            this.clear(false);</span>
+<span class="nc" id="L637">            this.init();</span>
+            // Clear write-batch
+<span class="nc" id="L639">            this.dbs.values().forEach(BackendSessionPool::forceResetSessions);</span>
+<span class="nc" id="L640">            LOG.debug(&quot;Store truncated: {}&quot;, this.store);</span>
+        } finally {
+<span class="nc" id="L642">            writeLock.unlock();</span>
+        }
+<span class="nc" id="L644">    }</span>
+
+    @Override
+    public void beginTx() {
+<span class="nc" id="L648">        Lock readLock = this.storeLock.readLock();</span>
+<span class="nc" id="L649">        readLock.lock();</span>
+        try {
+<span class="nc" id="L651">            this.checkOpened();</span>
+
+<span class="nc bnc" id="L653" title="All 2 branches missed.">            for (RocksDBSessions.Session session : this.session()) {</span>
+<span class="nc bnc" id="L654" title="All 2 branches missed.">                assert !session.hasChanges();</span>
+<span class="nc" id="L655">            }</span>
+        } finally {
+<span class="nc" id="L657">            readLock.unlock();</span>
+        }
+<span class="nc" id="L659">    }</span>
+
+    @Override
+    public void commitTx() {
+<span class="nc" id="L663">        Lock readLock = this.storeLock.readLock();</span>
+<span class="nc" id="L664">        readLock.lock();</span>
+        try {
+<span class="nc" id="L666">            this.checkOpened();</span>
+            // Unable to guarantee atomicity when committing multi sessions
+<span class="nc bnc" id="L668" title="All 2 branches missed.">            for (RocksDBSessions.Session session : this.session()) {</span>
+<span class="nc" id="L669">                Object count = session.commit();</span>
+<span class="nc bnc" id="L670" title="All 2 branches missed.">                if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L671">                    LOG.debug(&quot;Store {} committed {} items&quot;, this.store, count);</span>
+                }
+<span class="nc" id="L673">            }</span>
+        } finally {
+<span class="nc" id="L675">            readLock.unlock();</span>
+        }
+<span class="nc" id="L677">    }</span>
+
+    @Override
+    public void rollbackTx() {
+<span class="nc" id="L681">        Lock readLock = this.storeLock.readLock();</span>
+<span class="nc" id="L682">        readLock.lock();</span>
+        try {
+<span class="nc" id="L684">            this.checkOpened();</span>
+
+<span class="nc bnc" id="L686" title="All 2 branches missed.">            for (RocksDBSessions.Session session : this.session()) {</span>
+<span class="nc" id="L687">                session.rollback();</span>
+<span class="nc" id="L688">            }</span>
+        } finally {
+<span class="nc" id="L690">            readLock.unlock();</span>
+        }
+<span class="nc" id="L692">    }</span>
+
+    @Override
+    protected RocksDBSessions.Session session(HugeType tableType) {
+<span class="nc" id="L696">        this.checkOpened();</span>
+
+        // Optimized disk
+<span class="nc" id="L699">        String disk = this.tableDiskMapping.get(tableType);</span>
+<span class="nc bnc" id="L700" title="All 2 branches missed.">        if (disk != null) {</span>
+<span class="nc" id="L701">            return this.db(disk).session();</span>
+        }
+
+<span class="nc" id="L704">        return this.sessions.session();</span>
+    }
+
+    @Override
+    public Map&lt;String, String&gt; createSnapshot(String snapshotPrefix) {
+<span class="nc" id="L709">        Lock readLock = this.storeLock.readLock();</span>
+<span class="nc" id="L710">        readLock.lock();</span>
+        try {
+<span class="nc" id="L712">            Map&lt;String, String&gt; uniqueSnapshotDirMaps = new HashMap&lt;&gt;();</span>
+            // Every rocksdb instance should create a snapshot
+<span class="nc bnc" id="L714" title="All 2 branches missed.">            for (Map.Entry&lt;String, RocksDBSessions&gt; entry : this.dbs.entrySet()) {</span>
+                // Like: parent_path/rocksdb-data/*, * maybe g,m,s
+<span class="nc" id="L716">                Path originDataPath = Paths.get(entry.getKey()).toAbsolutePath();</span>
+<span class="nc" id="L717">                Path parentParentPath = originDataPath.toAbsolutePath().getParent().getParent();</span>
+                // Like: rocksdb-data/*
+<span class="nc" id="L719">                Path pureDataPath = parentParentPath.relativize(originDataPath);</span>
+                // Like: parent_path/snapshot_rocksdb-data/*
+<span class="nc" id="L721">                Path snapshotPath = parentParentPath.resolve(snapshotPrefix +</span>
+                                                             &quot;_&quot; + pureDataPath);
+<span class="nc" id="L723">                LOG.debug(&quot;Create snapshot '{}' for origin data path '{}'&quot;,</span>
+                          snapshotPath, originDataPath);
+<span class="nc" id="L725">                RocksDBSessions sessions = entry.getValue();</span>
+<span class="nc" id="L726">                sessions.createSnapshot(snapshotPath.toString());</span>
+
+<span class="nc" id="L728">                String snapshotDir = snapshotPath.toAbsolutePath().getParent().toString();</span>
+                // Find correspond data HugeType key
+<span class="nc" id="L730">                String diskTableKey = this.findDiskTableKeyByPath(entry.getKey());</span>
+<span class="nc" id="L731">                uniqueSnapshotDirMaps.put(snapshotDir, diskTableKey);</span>
+<span class="nc" id="L732">            }</span>
+<span class="nc" id="L733">            LOG.info(&quot;The store '{}' create snapshot successfully&quot;, this);</span>
+<span class="nc" id="L734">            return uniqueSnapshotDirMaps;</span>
+        } finally {
+<span class="nc" id="L736">            readLock.unlock();</span>
+        }
+    }
+
+    @Override
+    public void resumeSnapshot(String snapshotPrefix, boolean deleteSnapshot) {
+<span class="nc" id="L742">        Lock readLock = this.storeLock.readLock();</span>
+<span class="nc" id="L743">        readLock.lock();</span>
+        try {
+<span class="nc bnc" id="L745" title="All 2 branches missed.">            if (!this.opened()) {</span>
+<span class="nc" id="L746">                return;</span>
+            }
+<span class="nc" id="L748">            Map&lt;String, RocksDBSessions&gt; snapshotPaths = new HashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L749" title="All 2 branches missed.">            for (Map.Entry&lt;String, RocksDBSessions&gt; entry : this.dbs.entrySet()) {</span>
+<span class="nc" id="L750">                RocksDBSessions sessions = entry.getValue();</span>
+<span class="nc" id="L751">                String snapshotPath = sessions.buildSnapshotPath(snapshotPrefix);</span>
+<span class="nc" id="L752">                LOG.debug(&quot;The origin data path: {}&quot;, entry.getKey());</span>
+<span class="nc bnc" id="L753" title="All 2 branches missed.">                if (!deleteSnapshot) {</span>
+<span class="nc" id="L754">                    snapshotPath = sessions.hardLinkSnapshot(snapshotPath);</span>
+                }
+<span class="nc" id="L756">                LOG.debug(&quot;The snapshot data path: {}&quot;, snapshotPath);</span>
+<span class="nc" id="L757">                snapshotPaths.put(snapshotPath, sessions);</span>
+<span class="nc" id="L758">            }</span>
+
+            for (Map.Entry&lt;String, RocksDBSessions&gt; entry :
+<span class="nc bnc" id="L761" title="All 2 branches missed.">                snapshotPaths.entrySet()) {</span>
+<span class="nc" id="L762">                String snapshotPath = entry.getKey();</span>
+<span class="nc" id="L763">                RocksDBSessions sessions = entry.getValue();</span>
+<span class="nc" id="L764">                sessions.resumeSnapshot(snapshotPath);</span>
+
+<span class="nc bnc" id="L766" title="All 2 branches missed.">                if (deleteSnapshot) {</span>
+                    // Delete empty snapshot parent directory
+<span class="nc" id="L768">                    Path parentPath = Paths.get(snapshotPath).toAbsolutePath().getParent();</span>
+<span class="nc bnc" id="L769" title="All 2 branches missed.">                    if (Files.list(parentPath).count() == 0) {</span>
+<span class="nc" id="L770">                        FileUtils.deleteDirectory(parentPath.toFile());</span>
+                    }
+                }
+<span class="nc" id="L773">            }</span>
+<span class="nc" id="L774">            LOG.info(&quot;The store '{}' resume snapshot successfully&quot;, this);</span>
+<span class="nc" id="L775">        } catch (RocksDBException | IOException e) {</span>
+<span class="nc" id="L776">            throw new BackendException(&quot;Failed to resume snapshot&quot;, e);</span>
+        } finally {
+<span class="nc" id="L778">            readLock.unlock();</span>
+        }
+<span class="nc" id="L780">    }</span>
+
+    private void useSessions() {
+<span class="nc bnc" id="L783" title="All 2 branches missed.">        for (RocksDBSessions sessions : this.sessions()) {</span>
+<span class="nc" id="L784">            sessions.useSession();</span>
+<span class="nc" id="L785">        }</span>
+<span class="nc" id="L786">    }</span>
+
+    private List&lt;RocksDBSessions.Session&gt; session() {
+<span class="nc" id="L789">        this.checkOpened();</span>
+
+<span class="nc bnc" id="L791" title="All 2 branches missed.">        if (this.tableDiskMapping.isEmpty()) {</span>
+<span class="nc" id="L792">            return Collections.singletonList(this.sessions.session());</span>
+        }
+
+        // Collect session of each table with optimized disk
+<span class="nc" id="L796">        List&lt;RocksDBSessions.Session&gt; list = new ArrayList&lt;&gt;(this.tableDiskMapping.size() + 1);</span>
+<span class="nc" id="L797">        list.add(this.sessions.session());</span>
+<span class="nc bnc" id="L798" title="All 2 branches missed.">        for (String disk : this.tableDiskMapping.values()) {</span>
+<span class="nc" id="L799">            list.add(db(disk).session());</span>
+<span class="nc" id="L800">        }</span>
+<span class="nc" id="L801">        return list;</span>
+    }
+
+    private void closeSessions() {
+<span class="nc" id="L805">        Iterator&lt;Map.Entry&lt;String, RocksDBSessions&gt;&gt; iter = this.dbs.entrySet().iterator();</span>
+<span class="nc bnc" id="L806" title="All 2 branches missed.">        while (iter.hasNext()) {</span>
+<span class="nc" id="L807">            Map.Entry&lt;String, RocksDBSessions&gt; entry = iter.next();</span>
+<span class="nc" id="L808">            RocksDBSessions sessions = entry.getValue();</span>
+<span class="nc" id="L809">            boolean closed = sessions.close();</span>
+<span class="nc bnc" id="L810" title="All 2 branches missed.">            if (closed) {</span>
+<span class="nc" id="L811">                iter.remove();</span>
+            }
+<span class="nc" id="L813">        }</span>
+<span class="nc" id="L814">    }</span>
+
+    private Collection&lt;RocksDBSessions&gt; sessions() {
+<span class="nc" id="L817">        return this.dbs.values();</span>
+    }
+
+    private void parseTableDiskMapping(Map&lt;String, String&gt; disks, String dataPath) {
+
+<span class="nc" id="L822">        this.tableDiskMapping.clear();</span>
+<span class="nc bnc" id="L823" title="All 2 branches missed.">        for (Map.Entry&lt;String, String&gt; disk : disks.entrySet()) {</span>
+            // The format of `disk` like: `graph/vertex: /path/to/disk1`
+<span class="nc" id="L825">            String name = disk.getKey();</span>
+<span class="nc" id="L826">            String path = disk.getValue();</span>
+<span class="nc bnc" id="L827" title="All 2 branches missed.">            E.checkArgument(!dataPath.equals(path),</span>
+                            &quot;Invalid disk path (can't be the same as data_path): '%s'&quot;, path);
+<span class="nc bnc" id="L829" title="All 4 branches missed.">            E.checkArgument(!name.isEmpty() &amp;&amp; !path.isEmpty(),</span>
+                            &quot;Invalid disk format: '%s', expect `NAME:PATH`&quot;, disk);
+<span class="nc" id="L831">            String[] pair = name.split(&quot;/&quot;, 2);</span>
+<span class="nc bnc" id="L832" title="All 2 branches missed.">            E.checkArgument(pair.length == 2,</span>
+                            &quot;Invalid disk key format: '%s', expect `STORE/TABLE`&quot;, name);
+<span class="nc" id="L834">            String store = pair[0].trim();</span>
+<span class="nc" id="L835">            HugeType table = HugeType.valueOf(pair[1].trim().toUpperCase());</span>
+<span class="nc bnc" id="L836" title="All 2 branches missed.">            if (this.store.equals(store)) {</span>
+<span class="nc" id="L837">                path = this.wrapPath(path);</span>
+<span class="nc" id="L838">                this.tableDiskMapping.put(table, path);</span>
+            }
+<span class="nc" id="L840">        }</span>
+<span class="nc" id="L841">    }</span>
+
+    @SuppressWarnings(&quot;unused&quot;)
+    private Map&lt;String, String&gt; reportDiskMapping() {
+<span class="nc" id="L845">        Map&lt;String, String&gt; diskMapping = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L846">        diskMapping.put(TABLE_GENERAL_KEY, this.dataPath);</span>
+<span class="nc bnc" id="L847" title="All 2 branches missed.">        for (Map.Entry&lt;HugeType, String&gt; e : this.tableDiskMapping.entrySet()) {</span>
+<span class="nc" id="L848">            String key = this.store + &quot;/&quot; + e.getKey().name();</span>
+<span class="nc" id="L849">            String value = Paths.get(e.getValue()).toAbsolutePath().getParent().toString();</span>
+<span class="nc" id="L850">            diskMapping.put(key, value);</span>
+<span class="nc" id="L851">        }</span>
+<span class="nc" id="L852">        return diskMapping;</span>
+    }
+
+    private String findDiskTableKeyByPath(String diskPath) {
+<span class="nc" id="L856">        String diskTableKey = TABLE_GENERAL_KEY;</span>
+<span class="nc bnc" id="L857" title="All 2 branches missed.">        for (Map.Entry&lt;HugeType, String&gt; e : this.tableDiskMapping.entrySet()) {</span>
+<span class="nc bnc" id="L858" title="All 2 branches missed.">            if (diskPath.equals(e.getValue())) {</span>
+<span class="nc" id="L859">                diskTableKey = this.store + &quot;/&quot; + e.getKey().name();</span>
+<span class="nc" id="L860">                break;</span>
+            }
+<span class="nc" id="L862">        }</span>
+<span class="nc" id="L863">        return diskTableKey;</span>
+    }
+
+    private void checkDbOpened() {
+<span class="nc bnc" id="L867" title="All 4 branches missed.">        E.checkState(this.sessions != null &amp;&amp; !this.sessions.closed(),</span>
+                     &quot;RocksDB has not been opened&quot;);
+<span class="nc" id="L869">    }</span>
+
+    protected RocksDBSessions db(HugeType tableType) {
+<span class="nc" id="L872">        this.checkOpened();</span>
+
+        // Optimized disk
+<span class="nc" id="L875">        String disk = this.tableDiskMapping.get(tableType);</span>
+<span class="nc bnc" id="L876" title="All 2 branches missed.">        if (disk != null) {</span>
+<span class="nc" id="L877">            return this.db(disk);</span>
+        }
+
+<span class="nc" id="L880">        return this.sessions;</span>
+    }
+
+    private RocksDBSessions db(String disk) {
+<span class="nc" id="L884">        RocksDBSessions db = this.dbs.get(disk);</span>
+<span class="nc bnc" id="L885" title="All 4 branches missed.">        E.checkState(db != null &amp;&amp; !db.closed(),</span>
+                     &quot;RocksDB store has not been opened: %s&quot;, disk);
+<span class="nc" id="L887">        return db;</span>
+    }
+
+    private static boolean existsOtherKeyspace(String dataPath) {
+        Set&lt;String&gt; cfs;
+        try {
+<span class="nc" id="L893">            cfs = RocksDBStdSessions.listCFs(dataPath);</span>
+<span class="nc" id="L894">        } catch (RocksDBException e) {</span>
+<span class="nc" id="L895">            return false;</span>
+<span class="nc" id="L896">        }</span>
+
+<span class="nc" id="L898">        int matched = 0;</span>
+<span class="nc bnc" id="L899" title="All 2 branches missed.">        for (String cf : cfs) {</span>
+<span class="nc bnc" id="L900" title="All 2 branches missed.">            if (cf.endsWith(RocksDBTables.PropertyKey.TABLE) ||</span>
+<span class="nc bnc" id="L901" title="All 2 branches missed.">                cf.endsWith(RocksDBTables.VertexLabel.TABLE) ||</span>
+<span class="nc bnc" id="L902" title="All 2 branches missed.">                cf.endsWith(RocksDBTables.EdgeLabel.TABLE) ||</span>
+<span class="nc bnc" id="L903" title="All 2 branches missed.">                cf.endsWith(RocksDBTables.IndexLabel.TABLE) ||</span>
+<span class="nc bnc" id="L904" title="All 2 branches missed.">                cf.endsWith(RocksDBTables.SecondaryIndex.TABLE) ||</span>
+<span class="nc bnc" id="L905" title="All 2 branches missed.">                cf.endsWith(RocksDBTables.SearchIndex.TABLE) ||</span>
+<span class="nc bnc" id="L906" title="All 2 branches missed.">                cf.endsWith(RocksDBTables.RangeIntIndex.TABLE) ||</span>
+<span class="nc bnc" id="L907" title="All 2 branches missed.">                cf.endsWith(RocksDBTables.RangeFloatIndex.TABLE) ||</span>
+<span class="nc bnc" id="L908" title="All 2 branches missed.">                cf.endsWith(RocksDBTables.RangeLongIndex.TABLE) ||</span>
+<span class="nc bnc" id="L909" title="All 2 branches missed.">                cf.endsWith(RocksDBTables.RangeDoubleIndex.TABLE)) {</span>
+<span class="nc bnc" id="L910" title="All 2 branches missed.">                if (++matched &gt;= 3) {</span>
+<span class="nc" id="L911">                    return true;</span>
+                }
+            }
+<span class="nc" id="L914">        }</span>
+<span class="nc" id="L915">        return false;</span>
+    }
+
+    /***************************** Store defines *****************************/
+
+    public static class RocksDBSchemaStore extends RocksDBStore {
+
+        private final RocksDBTables.Counters counters;
+
+        public RocksDBSchemaStore(BackendStoreProvider provider,
+                                  String database, String store) {
+<span class="nc" id="L926">            super(provider, database, store);</span>
+
+<span class="nc" id="L928">            this.counters = new RocksDBTables.Counters(database);</span>
+
+<span class="nc" id="L930">            registerTableManager(HugeType.VERTEX_LABEL, new RocksDBTables.VertexLabel(database));</span>
+<span class="nc" id="L931">            registerTableManager(HugeType.EDGE_LABEL, new RocksDBTables.EdgeLabel(database));</span>
+<span class="nc" id="L932">            registerTableManager(HugeType.PROPERTY_KEY, new RocksDBTables.PropertyKey(database));</span>
+<span class="nc" id="L933">            registerTableManager(HugeType.INDEX_LABEL, new RocksDBTables.IndexLabel(database));</span>
+<span class="nc" id="L934">            registerTableManager(HugeType.SECONDARY_INDEX,</span>
+                                 new RocksDBTables.SecondaryIndex(database));
+<span class="nc" id="L936">        }</span>
+
+        @Override
+        protected List&lt;String&gt; tableNames() {
+<span class="nc" id="L940">            List&lt;String&gt; tableNames = super.tableNames();</span>
+<span class="nc" id="L941">            tableNames.add(this.counters.table());</span>
+<span class="nc" id="L942">            return tableNames;</span>
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L947">            Lock readLock = super.storeLock.readLock();</span>
+<span class="nc" id="L948">            readLock.lock();</span>
+            try {
+<span class="nc" id="L950">                super.checkOpened();</span>
+<span class="nc" id="L951">                RocksDBSessions.Session session = super.sessions.session();</span>
+<span class="nc" id="L952">                this.counters.increaseCounter(session, type, increment);</span>
+            } finally {
+<span class="nc" id="L954">                readLock.unlock();</span>
+            }
+<span class="nc" id="L956">        }</span>
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L960">            Lock readLock = super.storeLock.readLock();</span>
+<span class="nc" id="L961">            readLock.lock();</span>
+            try {
+<span class="nc" id="L963">                super.checkOpened();</span>
+<span class="nc" id="L964">                RocksDBSessions.Session session = super.sessions.session();</span>
+<span class="nc" id="L965">                return this.counters.getCounter(session, type);</span>
+            } finally {
+<span class="nc" id="L967">                readLock.unlock();</span>
+            }
+        }
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L973">            return true;</span>
+        }
+    }
+
+    public static class RocksDBGraphStore extends RocksDBStore {
+
+        public RocksDBGraphStore(BackendStoreProvider provider,
+                                 String database, String store) {
+<span class="nc" id="L981">            super(provider, database, store);</span>
+
+<span class="nc" id="L983">            registerTableManager(HugeType.VERTEX, new RocksDBTables.Vertex(database));</span>
+
+<span class="nc" id="L985">            registerTableManager(HugeType.EDGE_OUT, RocksDBTables.Edge.out(database));</span>
+<span class="nc" id="L986">            registerTableManager(HugeType.EDGE_IN, RocksDBTables.Edge.in(database));</span>
+
+<span class="nc" id="L988">            registerTableManager(HugeType.SECONDARY_INDEX,</span>
+                                 new RocksDBTables.SecondaryIndex(database));
+<span class="nc" id="L990">            registerTableManager(HugeType.VERTEX_LABEL_INDEX,</span>
+                                 new RocksDBTables.VertexLabelIndex(database));
+<span class="nc" id="L992">            registerTableManager(HugeType.EDGE_LABEL_INDEX,</span>
+                                 new RocksDBTables.EdgeLabelIndex(database));
+<span class="nc" id="L994">            registerTableManager(HugeType.RANGE_INT_INDEX,</span>
+                                 new RocksDBTables.RangeIntIndex(database));
+<span class="nc" id="L996">            registerTableManager(HugeType.RANGE_FLOAT_INDEX,</span>
+                                 new RocksDBTables.RangeFloatIndex(database));
+<span class="nc" id="L998">            registerTableManager(HugeType.RANGE_LONG_INDEX,</span>
+                                 new RocksDBTables.RangeLongIndex(database));
+<span class="nc" id="L1000">            registerTableManager(HugeType.RANGE_DOUBLE_INDEX,</span>
+                                 new RocksDBTables.RangeDoubleIndex(database));
+<span class="nc" id="L1002">            registerTableManager(HugeType.SEARCH_INDEX,</span>
+                                 new RocksDBTables.SearchIndex(database));
+<span class="nc" id="L1004">            registerTableManager(HugeType.SHARD_INDEX,</span>
+                                 new RocksDBTables.ShardIndex(database));
+<span class="nc" id="L1006">            registerTableManager(HugeType.UNIQUE_INDEX,</span>
+                                 new RocksDBTables.UniqueIndex(database));
+
+<span class="nc" id="L1009">            registerTableManager(this.olapTableName(HugeType.SECONDARY_INDEX),</span>
+                                 new RocksDBTables.OlapSecondaryIndex(store));
+<span class="nc" id="L1011">            registerTableManager(this.olapTableName(HugeType.RANGE_INT_INDEX),</span>
+                                 new RocksDBTables.OlapRangeIntIndex(store));
+<span class="nc" id="L1013">            registerTableManager(this.olapTableName(HugeType.RANGE_LONG_INDEX),</span>
+                                 new RocksDBTables.OlapRangeLongIndex(store));
+<span class="nc" id="L1015">            registerTableManager(this.olapTableName(HugeType.RANGE_FLOAT_INDEX),</span>
+                                 new RocksDBTables.OlapRangeFloatIndex(store));
+<span class="nc" id="L1017">            registerTableManager(this.olapTableName(HugeType.RANGE_DOUBLE_INDEX),</span>
+                                 new RocksDBTables.OlapRangeDoubleIndex(store));
+<span class="nc" id="L1019">        }</span>
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L1023">            return false;</span>
+        }
+
+        @Override
+        public Id nextId(HugeType type) {
+<span class="nc" id="L1028">            throw new UnsupportedOperationException(&quot;RocksDBGraphStore.nextId()&quot;);</span>
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long num) {
+<span class="nc" id="L1033">            throw new UnsupportedOperationException(&quot;RocksDBGraphStore.increaseCounter()&quot;);</span>
+        }
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L1038">            throw new UnsupportedOperationException(&quot;RocksDBGraphStore.getCounter()&quot;);</span>
+        }
+
+        /**
+         * TODO: can we remove this method since createOlapTable would register?
+         */
+        @Override
+        public void checkAndRegisterOlapTable(Id id) {
+<span class="nc" id="L1046">            RocksDBTable table = new RocksDBTables.OlapTable(this.store(), id);</span>
+<span class="nc bnc" id="L1047" title="All 2 branches missed.">            if (!super.sessions.existsTable(table.table())) {</span>
+<span class="nc" id="L1048">                throw new HugeException(&quot;Not exist table '%s''&quot;, table.table());</span>
+            }
+<span class="nc" id="L1050">            registerTableManager(this.olapTableName(id), table);</span>
+<span class="nc" id="L1051">        }</span>
+
+        @Override
+        public void createOlapTable(Id id) {
+<span class="nc" id="L1055">            RocksDBTable table = new RocksDBTables.OlapTable(this.store(), id);</span>
+<span class="nc" id="L1056">            this.createTable(this.db(HugeType.OLAP), table.table());</span>
+<span class="nc" id="L1057">            registerTableManager(this.olapTableName(id), table);</span>
+<span class="nc" id="L1058">        }</span>
+
+        @Override
+        public void clearOlapTable(Id id) {
+<span class="nc" id="L1062">            String name = this.olapTableName(id);</span>
+<span class="nc" id="L1063">            RocksDBTable table = this.table(name);</span>
+<span class="nc" id="L1064">            RocksDBSessions db = this.db(HugeType.OLAP);</span>
+<span class="nc bnc" id="L1065" title="All 2 branches missed.">            if (!db.existsTable(table.table())) {</span>
+<span class="nc" id="L1066">                throw new HugeException(&quot;Not exist table '%s''&quot;, name);</span>
+            }
+<span class="nc" id="L1068">            this.dropTable(db, table.table());</span>
+<span class="nc" id="L1069">            this.createTable(db, table.table());</span>
+<span class="nc" id="L1070">        }</span>
+
+        @Override
+        public void removeOlapTable(Id id) {
+<span class="nc" id="L1074">            String name = this.olapTableName(id);</span>
+<span class="nc" id="L1075">            RocksDBTable table = this.table(name);</span>
+<span class="nc" id="L1076">            RocksDBSessions db = this.db(HugeType.OLAP);</span>
+<span class="nc bnc" id="L1077" title="All 2 branches missed.">            if (!db.existsTable(table.table())) {</span>
+<span class="nc" id="L1078">                throw new HugeException(&quot;Not exist table '%s''&quot;, name);</span>
+            }
+<span class="nc" id="L1080">            this.dropTable(db, table.table());</span>
+<span class="nc" id="L1081">            this.unregisterTableManager(this.olapTableName(id));</span>
+<span class="nc" id="L1082">        }</span>
+    }
+
+    public static class RocksDBSystemStore extends RocksDBGraphStore {
+
+        private final RocksDBTables.Meta meta;
+
+        public RocksDBSystemStore(BackendStoreProvider provider, String database, String store) {
+<span class="nc" id="L1090">            super(provider, database, store);</span>
+<span class="nc" id="L1091">            this.meta = new RocksDBTables.Meta(database);</span>
+<span class="nc" id="L1092">        }</span>
+
+        @Override
+        public synchronized void init() {
+<span class="nc" id="L1096">            super.init();</span>
+<span class="nc" id="L1097">            Lock writeLock = this.storeLock().writeLock();</span>
+<span class="nc" id="L1098">            writeLock.lock();</span>
+            try {
+<span class="nc" id="L1100">                RocksDBSessions.Session session = super.session(HugeType.META);</span>
+<span class="nc" id="L1101">                String driverVersion = this.provider().driverVersion();</span>
+<span class="nc" id="L1102">                this.meta.writeVersion(session, driverVersion);</span>
+<span class="nc" id="L1103">                LOG.info(&quot;Write down the backend version: {}&quot;, driverVersion);</span>
+            } finally {
+<span class="nc" id="L1105">                writeLock.unlock();</span>
+            }
+<span class="nc" id="L1107">        }</span>
+
+        @Override
+        public String storedVersion() {
+<span class="nc" id="L1111">            Lock readLock = this.storeLock().readLock();</span>
+<span class="nc" id="L1112">            readLock.lock();</span>
+            try {
+<span class="nc" id="L1114">                super.checkOpened();</span>
+<span class="nc" id="L1115">                RocksDBSessions.Session session = super.session(null);</span>
+<span class="nc" id="L1116">                return this.meta.readVersion(session);</span>
+            } finally {
+<span class="nc" id="L1118">                readLock.unlock();</span>
+            }
+        }
+
+        @Override
+        protected List&lt;String&gt; tableNames() {
+<span class="nc" id="L1124">            List&lt;String&gt; tableNames = super.tableNames();</span>
+<span class="nc" id="L1125">            tableNames.add(this.meta.table());</span>
+<span class="nc" id="L1126">            return tableNames;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

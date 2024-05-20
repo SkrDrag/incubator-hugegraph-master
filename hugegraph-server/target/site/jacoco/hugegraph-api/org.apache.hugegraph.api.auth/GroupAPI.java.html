@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>GroupAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.auth</a> &gt; <span class="el_source">GroupAPI.java</span></div><h1>GroupAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.auth;
+
+import java.util.List;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+import jakarta.inject.Singleton;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.define.Checkable;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.filter.StatusFilter.Status;
+import org.apache.hugegraph.auth.HugeGroup;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.exception.NotFoundException;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+import com.codahale.metrics.annotation.Timed;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@Path(&quot;graphs/{graph}/auth/groups&quot;)
+@Singleton
+@Tag(name = &quot;GroupAPI&quot;)
+<span class="nc" id="L55">public class GroupAPI extends API {</span>
+
+<span class="nc" id="L57">    private static final Logger LOG = Log.logger(GroupAPI.class);</span>
+
+    @POST
+    @Timed
+    @Status(Status.CREATED)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String create(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         JsonGroup jsonGroup) {
+<span class="nc" id="L67">        LOG.debug(&quot;Graph [{}] create group: {}&quot;, graph, jsonGroup);</span>
+<span class="nc" id="L68">        checkCreatingBody(jsonGroup);</span>
+
+<span class="nc" id="L70">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L71">        HugeGroup group = jsonGroup.build();</span>
+<span class="nc" id="L72">        group.id(manager.authManager().createGroup(group));</span>
+<span class="nc" id="L73">        return manager.serializer(g).writeAuthElement(group);</span>
+    }
+
+    @PUT
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String update(@Context GraphManager manager,
+                         @PathParam(&quot;graph&quot;) String graph,
+                         @PathParam(&quot;id&quot;) String id,
+                         JsonGroup jsonGroup) {
+<span class="nc" id="L85">        LOG.debug(&quot;Graph [{}] update group: {}&quot;, graph, jsonGroup);</span>
+<span class="nc" id="L86">        checkUpdatingBody(jsonGroup);</span>
+
+<span class="nc" id="L88">        HugeGraph g = graph(manager, graph);</span>
+        HugeGroup group;
+        try {
+<span class="nc" id="L91">            group = manager.authManager().getGroup(UserAPI.parseId(id));</span>
+<span class="nc" id="L92">        } catch (NotFoundException e) {</span>
+<span class="nc" id="L93">            throw new IllegalArgumentException(&quot;Invalid group id: &quot; + id);</span>
+<span class="nc" id="L94">        }</span>
+<span class="nc" id="L95">        group = jsonGroup.build(group);</span>
+<span class="nc" id="L96">        manager.authManager().updateGroup(group);</span>
+<span class="nc" id="L97">        return manager.serializer(g).writeAuthElement(group);</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String list(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @QueryParam(&quot;limit&quot;) @DefaultValue(&quot;100&quot;) long limit) {
+<span class="nc" id="L106">        LOG.debug(&quot;Graph [{}] list groups&quot;, graph);</span>
+
+<span class="nc" id="L108">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L109">        List&lt;HugeGroup&gt; groups = manager.authManager().listAllGroups(limit);</span>
+<span class="nc" id="L110">        return manager.serializer(g).writeAuthElements(&quot;groups&quot;, groups);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L120">        LOG.debug(&quot;Graph [{}] get group: {}&quot;, graph, id);</span>
+
+<span class="nc" id="L122">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L123">        HugeGroup group = manager.authManager().getGroup(IdGenerator.of(id));</span>
+<span class="nc" id="L124">        return manager.serializer(g).writeAuthElement(group);</span>
+    }
+
+    @DELETE
+    @Timed
+    @Path(&quot;{id}&quot;)
+    @Consumes(APPLICATION_JSON)
+    public void delete(@Context GraphManager manager,
+                       @PathParam(&quot;graph&quot;) String graph,
+                       @PathParam(&quot;id&quot;) String id) {
+<span class="nc" id="L134">        LOG.debug(&quot;Graph [{}] delete group: {}&quot;, graph, id);</span>
+
+        @SuppressWarnings(&quot;unused&quot;) // just check if the graph exists
+<span class="nc" id="L137">        HugeGraph g = graph(manager, graph);</span>
+        try {
+<span class="nc" id="L139">            manager.authManager().deleteGroup(IdGenerator.of(id));</span>
+<span class="nc" id="L140">        } catch (NotFoundException e) {</span>
+<span class="nc" id="L141">            throw new IllegalArgumentException(&quot;Invalid group id: &quot; + id);</span>
+<span class="nc" id="L142">        }</span>
+<span class="nc" id="L143">    }</span>
+
+    @JsonIgnoreProperties(value = {&quot;id&quot;, &quot;group_creator&quot;,
+                                   &quot;group_create&quot;, &quot;group_update&quot;})
+    private static class JsonGroup implements Checkable {
+
+        @JsonProperty(&quot;group_name&quot;)
+        private String name;
+        @JsonProperty(&quot;group_description&quot;)
+        private String description;
+
+        public HugeGroup build(HugeGroup group) {
+<span class="nc bnc" id="L155" title="All 4 branches missed.">            E.checkArgument(this.name == null || group.name().equals(this.name),</span>
+                            &quot;The name of group can't be updated&quot;);
+<span class="nc bnc" id="L157" title="All 2 branches missed.">            if (this.description != null) {</span>
+<span class="nc" id="L158">                group.description(this.description);</span>
+            }
+<span class="nc" id="L160">            return group;</span>
+        }
+
+        public HugeGroup build() {
+<span class="nc" id="L164">            HugeGroup group = new HugeGroup(this.name);</span>
+<span class="nc" id="L165">            group.description(this.description);</span>
+<span class="nc" id="L166">            return group;</span>
+        }
+
+        @Override
+        public void checkCreate(boolean isBatch) {
+<span class="nc" id="L171">            E.checkArgumentNotNull(this.name,</span>
+                                   &quot;The name of group can't be null&quot;);
+<span class="nc" id="L173">        }</span>
+
+        @Override
+        public void checkUpdate() {
+<span class="nc" id="L177">            E.checkArgumentNotNull(this.description,</span>
+                                   &quot;The description of group can't be null&quot;);
+<span class="nc" id="L179">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

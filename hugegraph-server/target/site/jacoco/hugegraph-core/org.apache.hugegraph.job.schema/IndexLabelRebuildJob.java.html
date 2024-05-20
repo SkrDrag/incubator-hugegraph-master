@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IndexLabelRebuildJob.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.schema</a> &gt; <span class="el_source">IndexLabelRebuildJob.java</span></div><h1>IndexLabelRebuildJob.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.schema;
+
+import java.util.Collection;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
+
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.tx.GraphTransaction;
+import org.apache.hugegraph.backend.tx.SchemaTransaction;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.SchemaStatus;
+import org.apache.hugegraph.util.LockUtil;
+import org.apache.tinkerpop.gremlin.structure.Edge;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+
+import org.apache.hugegraph.schema.EdgeLabel;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.schema.SchemaLabel;
+import org.apache.hugegraph.schema.VertexLabel;
+import org.apache.hugegraph.structure.HugeElement;
+import com.google.common.collect.ImmutableSet;
+
+<span class="nc" id="L42">public class IndexLabelRebuildJob extends SchemaJob {</span>
+
+    @Override
+    public String type() {
+<span class="nc" id="L46">        return REBUILD_INDEX;</span>
+    }
+
+    @Override
+    public Object execute() {
+<span class="nc" id="L51">        SchemaElement schema = this.schemaElement();</span>
+        // If the schema does not exist, ignore it
+<span class="nc bnc" id="L53" title="All 2 branches missed.">        if (schema != null) {</span>
+<span class="nc" id="L54">            this.rebuildIndex(schema);</span>
+        }
+<span class="nc" id="L56">        return null;</span>
+    }
+
+    private void rebuildIndex(SchemaElement schema) {
+<span class="nc bnc" id="L60" title="All 3 branches missed.">        switch (schema.type()) {</span>
+            case INDEX_LABEL:
+<span class="nc" id="L62">                IndexLabel indexLabel = (IndexLabel) schema;</span>
+                SchemaLabel label;
+<span class="nc bnc" id="L64" title="All 2 branches missed.">                if (indexLabel.baseType() == HugeType.VERTEX_LABEL) {</span>
+<span class="nc" id="L65">                    label = this.graph().vertexLabel(indexLabel.baseValue());</span>
+                } else {
+<span class="nc bnc" id="L67" title="All 2 branches missed.">                    assert indexLabel.baseType() == HugeType.EDGE_LABEL;</span>
+<span class="nc" id="L68">                    label = this.graph().edgeLabel(indexLabel.baseValue());</span>
+                }
+<span class="nc bnc" id="L70" title="All 2 branches missed.">                assert label != null;</span>
+<span class="nc" id="L71">                this.rebuildIndex(label, ImmutableSet.of(indexLabel.id()));</span>
+<span class="nc" id="L72">                break;</span>
+            case VERTEX_LABEL:
+            case EDGE_LABEL:
+<span class="nc" id="L75">                label = (SchemaLabel) schema;</span>
+<span class="nc" id="L76">                this.rebuildIndex(label, label.indexLabels());</span>
+<span class="nc" id="L77">                break;</span>
+            default:
+<span class="nc bnc" id="L79" title="All 2 branches missed.">                assert schema.type() == HugeType.PROPERTY_KEY;</span>
+<span class="nc" id="L80">                throw new AssertionError(String.format(</span>
+<span class="nc" id="L81">                          &quot;The %s can't rebuild index&quot;, schema.type()));</span>
+        }
+<span class="nc" id="L83">    }</span>
+
+    private void rebuildIndex(SchemaLabel label, Collection&lt;Id&gt; indexLabelIds) {
+<span class="nc" id="L86">        SchemaTransaction schemaTx = this.params().schemaTransaction();</span>
+<span class="nc" id="L87">        GraphTransaction graphTx = this.params().graphTransaction();</span>
+
+<span class="nc" id="L89">        Consumer&lt;?&gt; indexUpdater = (elem) -&gt; {</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            for (Id id : indexLabelIds) {</span>
+<span class="nc" id="L91">                graphTx.updateIndex(id, (HugeElement) elem, false);</span>
+<span class="nc" id="L92">            }</span>
+<span class="nc" id="L93">        };</span>
+
+<span class="nc" id="L95">        LockUtil.Locks locks = new LockUtil.Locks(schemaTx.graphName());</span>
+        try {
+<span class="nc" id="L97">            locks.lockWrites(LockUtil.INDEX_LABEL_REBUILD, indexLabelIds);</span>
+
+<span class="nc" id="L99">            Set&lt;IndexLabel&gt; ils = indexLabelIds.stream()</span>
+<span class="nc" id="L100">                                               .map(this.graph()::indexLabel)</span>
+<span class="nc" id="L101">                                               .collect(Collectors.toSet());</span>
+<span class="nc bnc" id="L102" title="All 2 branches missed.">            for (IndexLabel il : ils) {</span>
+<span class="nc bnc" id="L103" title="All 2 branches missed.">                if (il.status() == SchemaStatus.CREATING) {</span>
+<span class="nc" id="L104">                    continue;</span>
+                }
+<span class="nc" id="L106">                schemaTx.updateSchemaStatus(il, SchemaStatus.REBUILDING);</span>
+<span class="nc" id="L107">            }</span>
+
+<span class="nc" id="L109">            this.removeIndex(indexLabelIds);</span>
+            /*
+             * Note: Here must commit index transaction firstly.
+             * Because remove index convert to (id like &lt;?&gt;:personByCity):
+             * `delete from index table where label = ?`,
+             * But append index will convert to (id like Beijing:personByCity):
+             * `update index element_ids += xxx where field_value = ?
+             * and index_label_name = ?`,
+             * They have different id lead to it can't compare and optimize
+             */
+<span class="nc" id="L119">            graphTx.commit();</span>
+
+            try {
+<span class="nc bnc" id="L122" title="All 2 branches missed.">                if (label.type() == HugeType.VERTEX_LABEL) {</span>
+                    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L124">                    Consumer&lt;Vertex&gt; consumer = (Consumer&lt;Vertex&gt;) indexUpdater;</span>
+<span class="nc" id="L125">                    graphTx.traverseVerticesByLabel((VertexLabel) label,</span>
+                                                    consumer, false);
+<span class="nc" id="L127">                } else {</span>
+<span class="nc bnc" id="L128" title="All 2 branches missed.">                    assert label.type() == HugeType.EDGE_LABEL;</span>
+                    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L130">                    Consumer&lt;Edge&gt; consumer = (Consumer&lt;Edge&gt;) indexUpdater;</span>
+<span class="nc" id="L131">                    graphTx.traverseEdgesByLabel((EdgeLabel) label,</span>
+                                                 consumer, false);
+                }
+<span class="nc" id="L134">                graphTx.commit();</span>
+<span class="nc" id="L135">            } catch (Throwable e) {</span>
+<span class="nc bnc" id="L136" title="All 2 branches missed.">                for (IndexLabel il : ils) {</span>
+<span class="nc" id="L137">                    schemaTx.updateSchemaStatus(il, SchemaStatus.INVALID);</span>
+<span class="nc" id="L138">                }</span>
+<span class="nc" id="L139">                throw e;</span>
+<span class="nc" id="L140">            }</span>
+
+<span class="nc bnc" id="L142" title="All 2 branches missed.">            for (IndexLabel il : ils) {</span>
+<span class="nc" id="L143">                schemaTx.updateSchemaStatus(il, SchemaStatus.CREATED);</span>
+<span class="nc" id="L144">            }</span>
+        } finally {
+<span class="nc" id="L146">            locks.unlock();</span>
+        }
+<span class="nc" id="L148">    }</span>
+
+    private void removeIndex(Collection&lt;Id&gt; indexLabelIds) {
+<span class="nc" id="L151">        SchemaTransaction schemaTx = this.params().schemaTransaction();</span>
+<span class="nc" id="L152">        GraphTransaction graphTx = this.params().graphTransaction();</span>
+
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        for (Id id : indexLabelIds) {</span>
+<span class="nc" id="L155">            IndexLabel il = schemaTx.getIndexLabel(id);</span>
+<span class="nc bnc" id="L156" title="All 4 branches missed.">            if (il == null || il.status() == SchemaStatus.CREATING) {</span>
+                /*
+                 * TODO: How to deal with non-existent index name:
+                 * continue or throw exception?
+                 */
+<span class="nc" id="L161">                continue;</span>
+            }
+<span class="nc" id="L163">            LockUtil.Locks locks = new LockUtil.Locks(schemaTx.graphName());</span>
+            try {
+<span class="nc" id="L165">                locks.lockWrites(LockUtil.INDEX_LABEL_DELETE, indexLabelIds);</span>
+<span class="nc" id="L166">                graphTx.removeIndex(il);</span>
+<span class="nc" id="L167">            } catch (Throwable e) {</span>
+<span class="nc" id="L168">                schemaTx.updateSchemaStatus(il, SchemaStatus.INVALID);</span>
+<span class="nc" id="L169">                throw e;</span>
+            } finally {
+<span class="nc" id="L171">                locks.unlock();</span>
+            }
+<span class="nc" id="L173">        }</span>
+<span class="nc" id="L174">    }</span>
+
+    private SchemaElement schemaElement() {
+<span class="nc" id="L177">        HugeType type = this.schemaType();</span>
+<span class="nc" id="L178">        Id id = this.schemaId();</span>
+<span class="nc bnc" id="L179" title="All 4 branches missed.">        switch (type) {</span>
+            case VERTEX_LABEL:
+<span class="nc" id="L181">                return this.graph().vertexLabel(id);</span>
+            case EDGE_LABEL:
+<span class="nc" id="L183">                return this.graph().edgeLabel(id);</span>
+            case INDEX_LABEL:
+<span class="nc" id="L185">                return this.graph().indexLabel(id);</span>
+            default:
+<span class="nc" id="L187">                throw new AssertionError(String.format(</span>
+                          &quot;Invalid HugeType '%s' for rebuild&quot;, type));
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

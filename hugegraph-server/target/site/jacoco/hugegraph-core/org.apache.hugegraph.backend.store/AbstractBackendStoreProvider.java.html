@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractBackendStoreProvider.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store</a> &gt; <span class="el_source">AbstractBackendStoreProvider.java</span></div><h1>AbstractBackendStoreProvider.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
+
+import org.apache.hugegraph.backend.store.raft.StoreSnapshotFile;
+import org.slf4j.Logger;
+
+import com.alipay.remoting.rpc.RpcServer;
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.config.CoreOptions;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.event.EventHub;
+import org.apache.hugegraph.event.EventListener;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Events;
+import org.apache.hugegraph.util.Log;
+
+<span class="nc" id="L37">public abstract class AbstractBackendStoreProvider</span>
+                implements BackendStoreProvider {
+
+<span class="nc" id="L40">    private static final Logger LOG = Log.logger(AbstractBackendStoreProvider.class);</span>
+
+<span class="nc" id="L42">    private String graph = null;</span>
+
+<span class="nc" id="L44">    private final EventHub storeEventHub = new EventHub(&quot;store&quot;);</span>
+
+<span class="nc" id="L46">    protected Map&lt;String, BackendStore&gt; stores = null;</span>
+
+    protected final void notifyAndWaitEvent(String event) {
+<span class="nc" id="L49">        Future&lt;?&gt; future = this.storeEventHub.notify(event, this);</span>
+        try {
+<span class="nc" id="L51">            future.get();</span>
+<span class="nc" id="L52">        } catch (Throwable e) {</span>
+<span class="nc" id="L53">            LOG.warn(&quot;Error when waiting for event execution: {}&quot;, event, e);</span>
+<span class="nc" id="L54">        }</span>
+<span class="nc" id="L55">    }</span>
+
+    protected final void checkOpened() {
+<span class="nc bnc" id="L58" title="All 4 branches missed.">        E.checkState(this.graph != null &amp;&amp; this.stores != null,</span>
+                     &quot;The BackendStoreProvider has not been opened&quot;);
+<span class="nc" id="L60">    }</span>
+
+    protected abstract BackendStore newSchemaStore(HugeConfig config, String store);
+
+    protected abstract BackendStore newGraphStore(HugeConfig config, String store);
+
+    protected abstract BackendStore newSystemStore(HugeConfig config, String store);
+
+    @Override
+    public void listen(EventListener listener) {
+<span class="nc" id="L70">        this.storeEventHub.listen(EventHub.ANY_EVENT, listener);</span>
+<span class="nc" id="L71">    }</span>
+
+    @Override
+    public void unlisten(EventListener listener) {
+<span class="nc" id="L75">        this.storeEventHub.unlisten(EventHub.ANY_EVENT, listener);</span>
+<span class="nc" id="L76">    }</span>
+
+    @Override
+    public String storedVersion() {
+<span class="nc" id="L80">        return this.loadSystemStore(null).storedVersion();</span>
+    }
+
+    @Override
+    public String graph() {
+<span class="nc" id="L85">        this.checkOpened();</span>
+<span class="nc" id="L86">        return this.graph;</span>
+    }
+
+    @Override
+    public void open(String graph) {
+<span class="nc" id="L91">        LOG.debug(&quot;Graph '{}' open StoreProvider&quot;, this.graph);</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">        E.checkArgument(graph != null, &quot;The graph name can't be null&quot;);</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        E.checkArgument(!graph.isEmpty(), &quot;The graph name can't be empty&quot;);</span>
+
+<span class="nc" id="L95">        this.graph = graph;</span>
+<span class="nc" id="L96">        this.stores = new ConcurrentHashMap&lt;&gt;();</span>
+
+<span class="nc" id="L98">        this.storeEventHub.notify(Events.STORE_OPEN, this);</span>
+<span class="nc" id="L99">    }</span>
+
+    @Override
+    public void waitReady(RpcServer rpcServer) {
+        // passs
+<span class="nc" id="L104">    }</span>
+
+    @Override
+    public void close() throws BackendException {
+<span class="nc" id="L108">        LOG.debug(&quot;Graph '{}' close StoreProvider&quot;, this.graph);</span>
+<span class="nc" id="L109">        this.checkOpened();</span>
+<span class="nc" id="L110">        this.storeEventHub.notify(Events.STORE_CLOSE, this);</span>
+<span class="nc" id="L111">    }</span>
+
+    @Override
+    public void init() {
+<span class="nc" id="L115">        this.checkOpened();</span>
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        for (BackendStore store : this.stores.values()) {</span>
+<span class="nc" id="L117">            store.init();</span>
+<span class="nc" id="L118">        }</span>
+<span class="nc" id="L119">        this.notifyAndWaitEvent(Events.STORE_INIT);</span>
+
+<span class="nc" id="L121">        LOG.debug(&quot;Graph '{}' store has been initialized&quot;, this.graph);</span>
+<span class="nc" id="L122">    }</span>
+
+    @Override
+    public void clear() throws BackendException {
+<span class="nc" id="L126">        this.checkOpened();</span>
+<span class="nc bnc" id="L127" title="All 2 branches missed.">        for (BackendStore store : this.stores.values()) {</span>
+            // Just clear tables of store, not clear space
+<span class="nc" id="L129">            store.clear(false);</span>
+<span class="nc" id="L130">        }</span>
+<span class="nc bnc" id="L131" title="All 2 branches missed.">        for (BackendStore store : this.stores.values()) {</span>
+            // Only clear space of store
+<span class="nc" id="L133">            store.clear(true);</span>
+<span class="nc" id="L134">        }</span>
+<span class="nc" id="L135">        this.notifyAndWaitEvent(Events.STORE_CLEAR);</span>
+
+<span class="nc" id="L137">        LOG.debug(&quot;Graph '{}' store has been cleared&quot;, this.graph);</span>
+<span class="nc" id="L138">    }</span>
+
+    @Override
+    public void truncate() {
+<span class="nc" id="L142">        this.checkOpened();</span>
+<span class="nc bnc" id="L143" title="All 2 branches missed.">        for (BackendStore store : this.stores.values()) {</span>
+<span class="nc" id="L144">            store.truncate();</span>
+<span class="nc" id="L145">        }</span>
+<span class="nc" id="L146">        this.notifyAndWaitEvent(Events.STORE_TRUNCATE);</span>
+
+<span class="nc" id="L148">        LOG.debug(&quot;Graph '{}' store has been truncated&quot;, this.graph);</span>
+<span class="nc" id="L149">    }</span>
+
+    @Override
+    public boolean initialized() {
+<span class="nc" id="L153">        this.checkOpened();</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        for (BackendStore store : this.stores.values()) {</span>
+<span class="nc bnc" id="L155" title="All 2 branches missed.">            if (!store.initialized()) {</span>
+<span class="nc" id="L156">                return false;</span>
+            }
+<span class="nc" id="L158">        }</span>
+<span class="nc" id="L159">        return true;</span>
+    }
+
+    @Override
+    public void createSnapshot() {
+<span class="nc" id="L164">        String snapshotPrefix = StoreSnapshotFile.SNAPSHOT_DIR;</span>
+<span class="nc bnc" id="L165" title="All 2 branches missed.">        for (BackendStore store : this.stores.values()) {</span>
+<span class="nc" id="L166">            store.createSnapshot(snapshotPrefix);</span>
+<span class="nc" id="L167">        }</span>
+<span class="nc" id="L168">    }</span>
+
+    @Override
+    public void resumeSnapshot() {
+<span class="nc" id="L172">        String snapshotPrefix = StoreSnapshotFile.SNAPSHOT_DIR;</span>
+<span class="nc bnc" id="L173" title="All 2 branches missed.">        for (BackendStore store : this.stores.values()) {</span>
+<span class="nc" id="L174">            store.resumeSnapshot(snapshotPrefix, true);</span>
+<span class="nc" id="L175">        }</span>
+<span class="nc" id="L176">    }</span>
+
+    @Override
+    public BackendStore loadSchemaStore(HugeConfig config) {
+<span class="nc" id="L180">        String name = SCHEMA_STORE;</span>
+<span class="nc" id="L181">        LOG.debug(&quot;The '{}' StoreProvider load SchemaStore '{}'&quot;,</span>
+<span class="nc" id="L182">                  this.type(), name);</span>
+
+<span class="nc" id="L184">        this.checkOpened();</span>
+<span class="nc bnc" id="L185" title="All 2 branches missed.">        if (!this.stores.containsKey(name)) {</span>
+<span class="nc" id="L186">            BackendStore s = this.newSchemaStore(config, name);</span>
+<span class="nc" id="L187">            this.stores.putIfAbsent(name, s);</span>
+        }
+
+<span class="nc" id="L190">        BackendStore store = this.stores.get(name);</span>
+<span class="nc" id="L191">        E.checkNotNull(store, &quot;store&quot;);</span>
+<span class="nc" id="L192">        return store;</span>
+    }
+
+    @Override
+    public BackendStore loadGraphStore(HugeConfig config) {
+<span class="nc" id="L197">        String name = GRAPH_STORE;</span>
+<span class="nc" id="L198">        LOG.debug(&quot;The '{}' StoreProvider load GraphStore '{}'&quot;,</span>
+<span class="nc" id="L199">                  this.type(), name);</span>
+
+<span class="nc" id="L201">        this.checkOpened();</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">        if (!this.stores.containsKey(name)) {</span>
+<span class="nc" id="L203">            BackendStore s = this.newGraphStore(config, name);</span>
+<span class="nc" id="L204">            this.stores.putIfAbsent(name, s);</span>
+        }
+
+<span class="nc" id="L207">        BackendStore store = this.stores.get(name);</span>
+<span class="nc" id="L208">        E.checkNotNull(store, &quot;store&quot;);</span>
+<span class="nc" id="L209">        return store;</span>
+    }
+
+    @Override
+    public BackendStore loadSystemStore(HugeConfig config) {
+<span class="nc" id="L214">        String name = SYSTEM_STORE;</span>
+<span class="nc" id="L215">        LOG.debug(&quot;The '{}' StoreProvider load SystemStore '{}'&quot;,</span>
+<span class="nc" id="L216">                  this.type(), name);</span>
+
+<span class="nc" id="L218">        this.checkOpened();</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">        if (!this.stores.containsKey(name)) {</span>
+<span class="nc" id="L220">            BackendStore s = this.newSystemStore(config, name);</span>
+<span class="nc" id="L221">            this.stores.putIfAbsent(name, s);</span>
+        }
+
+<span class="nc" id="L224">        BackendStore store = this.stores.get(name);</span>
+<span class="nc" id="L225">        E.checkNotNull(store, &quot;store&quot;);</span>
+<span class="nc" id="L226">        return store;</span>
+    }
+
+    @Override
+    public EventHub storeEventHub() {
+<span class="nc" id="L231">        return this.storeEventHub;</span>
+    }
+
+    @Override
+    public void onCloneConfig(HugeConfig config, String newGraph) {
+<span class="nc" id="L236">        config.setProperty(CoreOptions.STORE.name(), newGraph);</span>
+<span class="nc" id="L237">    }</span>
+
+    @Override
+    public void onDeleteConfig(HugeConfig config) {
+        // pass
+<span class="nc" id="L242">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

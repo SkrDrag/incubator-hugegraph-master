@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>WeightedEdgeStep.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.algorithm.steps</a> &gt; <span class="el_source">WeightedEdgeStep.java</span></div><h1>WeightedEdgeStep.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.algorithm.steps;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_SAMPLE;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.NO_LIMIT;
+
+import java.util.List;
+import java.util.Map;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.schema.PropertyKey;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+
+public class WeightedEdgeStep {
+
+    private final EdgeStep edgeStep;
+    private final PropertyKey weightBy;
+    private final double defaultWeight;
+    private final long sample;
+
+    public WeightedEdgeStep(HugeGraph g, Directions direction) {
+<span class="nc" id="L42">        this(g, direction, ImmutableList.of());</span>
+<span class="nc" id="L43">    }</span>
+
+    public WeightedEdgeStep(HugeGraph g, List&lt;String&gt; labels) {
+<span class="nc" id="L46">        this(g, Directions.BOTH, labels);</span>
+<span class="nc" id="L47">    }</span>
+
+    public WeightedEdgeStep(HugeGraph g, Map&lt;String, Object&gt; properties) {
+<span class="nc" id="L50">        this(g, Directions.BOTH, ImmutableList.of(), properties);</span>
+<span class="nc" id="L51">    }</span>
+
+    public WeightedEdgeStep(HugeGraph g, Directions direction, List&lt;String&gt; labels) {
+<span class="nc" id="L54">        this(g, direction, labels, ImmutableMap.of());</span>
+<span class="nc" id="L55">    }</span>
+
+    public WeightedEdgeStep(HugeGraph g, Directions direction, List&lt;String&gt; labels,
+                            Map&lt;String, Object&gt; properties) {
+<span class="nc" id="L59">        this(g, direction, labels, properties,</span>
+<span class="nc" id="L60">             Long.parseLong(DEFAULT_MAX_DEGREE), 0L, null, 0.0D,</span>
+<span class="nc" id="L61">             Long.parseLong(DEFAULT_SAMPLE));</span>
+<span class="nc" id="L62">    }</span>
+
+    public WeightedEdgeStep(HugeGraph g, Directions direction, List&lt;String&gt; labels,
+                            Map&lt;String, Object&gt; properties,
+                            long maxDegree, long skipDegree,
+<span class="nc" id="L67">                            String weightBy, double defaultWeight, long sample) {</span>
+<span class="nc bnc" id="L68" title="All 4 branches missed.">        E.checkArgument(sample &gt; 0L || sample == NO_LIMIT,</span>
+                        &quot;The sample must be &gt; 0 or == -1, but got: %s&quot;,
+<span class="nc" id="L70">                        sample);</span>
+<span class="nc bnc" id="L71" title="All 4 branches missed.">        E.checkArgument(maxDegree == NO_LIMIT || maxDegree &gt;= sample,</span>
+                        &quot;The max degree must be greater than or equal to &quot; +
+                        &quot;sample, but got max degree %s and sample %s&quot;,
+<span class="nc" id="L74">                        maxDegree, sample);</span>
+
+<span class="nc" id="L76">        this.edgeStep = new EdgeStep(g, direction, labels, properties,</span>
+                                     maxDegree, skipDegree);
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        if (weightBy != null) {</span>
+<span class="nc" id="L79">            this.weightBy = g.propertyKey(weightBy);</span>
+        } else {
+<span class="nc" id="L81">            this.weightBy = null;</span>
+        }
+<span class="nc" id="L83">        this.defaultWeight = defaultWeight;</span>
+<span class="nc" id="L84">        this.sample = sample;</span>
+<span class="nc" id="L85">    }</span>
+
+    public EdgeStep step() {
+<span class="nc" id="L88">        return this.edgeStep;</span>
+    }
+
+    public PropertyKey weightBy() {
+<span class="nc" id="L92">        return this.weightBy;</span>
+    }
+
+    public double defaultWeight() {
+<span class="nc" id="L96">        return this.defaultWeight;</span>
+    }
+
+    public long sample() {
+<span class="nc" id="L100">        return this.sample;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

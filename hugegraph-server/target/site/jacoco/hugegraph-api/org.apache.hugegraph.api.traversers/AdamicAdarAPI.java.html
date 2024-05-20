@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AdamicAdarAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.traversers</a> &gt; <span class="el_source">AdamicAdarAPI.java</span></div><h1>AdamicAdarAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.traversers;
+
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_ELEMENTS_LIMIT;
+import static org.apache.hugegraph.traversal.algorithm.HugeTraverser.DEFAULT_MAX_DEGREE;
+
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.DefaultValue;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.api.graph.EdgeAPI;
+import org.apache.hugegraph.api.graph.VertexAPI;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.traversal.algorithm.PredictionTraverser;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.JsonUtil;
+import com.codahale.metrics.annotation.Timed;
+import com.google.common.collect.ImmutableMap;
+
+/**
+ * AdamicAdar is one of the prediction algorithms in graph, you can get more
+ * info and definition in:
+ * https://en.wikipedia.org/wiki/Adamic/Adar_index
+ */
+@Path(&quot;graphs/{graph}/traversers/adamicadar&quot;)
+@Singleton
+@Tag(name = &quot;AdamicAdarAPI&quot;)
+<span class="nc" id="L54">public class AdamicAdarAPI extends API {</span>
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    public String get(@Context GraphManager manager,
+                      @PathParam(&quot;graph&quot;) String graph,
+                      @QueryParam(&quot;vertex&quot;) String current,
+                      @QueryParam(&quot;other&quot;) String other,
+                      @QueryParam(&quot;direction&quot;) String direction,
+                      @QueryParam(&quot;label&quot;) String edgeLabel,
+                      @QueryParam(&quot;max_degree&quot;)
+                      @DefaultValue(DEFAULT_MAX_DEGREE) long maxDegree,
+                      @QueryParam(&quot;limit&quot;)
+                      @DefaultValue(DEFAULT_ELEMENTS_LIMIT) int limit) {
+<span class="nc" id="L69">        LOG.debug(&quot;Graph [{}] get adamic adar between '{}' and '{}' with &quot; +</span>
+                  &quot;direction {}, edge label {}, max degree '{}' and limit '{}'&quot;,
+<span class="nc" id="L71">                  graph, current, other, direction, edgeLabel, maxDegree,</span>
+<span class="nc" id="L72">                  limit);</span>
+
+<span class="nc" id="L74">        Id sourceId = VertexAPI.checkAndParseVertexId(current);</span>
+<span class="nc" id="L75">        Id targetId = VertexAPI.checkAndParseVertexId(other);</span>
+<span class="nc bnc" id="L76" title="All 2 branches missed.">        E.checkArgument(!current.equals(other),</span>
+                        &quot;The source and target vertex id can't be same&quot;);
+<span class="nc" id="L78">        Directions dir = Directions.convert(EdgeAPI.parseDirection(direction));</span>
+
+<span class="nc" id="L80">        HugeGraph g = graph(manager, graph);</span>
+<span class="nc" id="L81">        try (PredictionTraverser traverser = new PredictionTraverser(g)) {</span>
+<span class="nc" id="L82">            double score = traverser.adamicAdar(sourceId, targetId, dir,</span>
+                                                edgeLabel, maxDegree, limit);
+<span class="nc" id="L84">            return JsonUtil.toJson(ImmutableMap.of(&quot;adamic_adar&quot;, score));</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

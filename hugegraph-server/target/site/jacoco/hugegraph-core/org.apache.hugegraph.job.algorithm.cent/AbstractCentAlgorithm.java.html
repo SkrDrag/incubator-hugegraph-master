@@ -1,0 +1,210 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>AbstractCentAlgorithm.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.cent</a> &gt; <span class="el_source">AbstractCentAlgorithm.java</span></div><h1>AbstractCentAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.cent;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.tinkerpop.gremlin.process.traversal.Order;
+import org.apache.tinkerpop.gremlin.process.traversal.Pop;
+import org.apache.tinkerpop.gremlin.process.traversal.Scope;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.GraphTraversal;
+import org.apache.tinkerpop.gremlin.process.traversal.dsl.graph.__;
+import org.apache.tinkerpop.gremlin.structure.Column;
+import org.apache.tinkerpop.gremlin.structure.Direction;
+import org.apache.tinkerpop.gremlin.structure.Vertex;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.iterator.MapperIterator;
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.job.algorithm.AbstractAlgorithm;
+import org.apache.hugegraph.structure.HugeElement;
+import org.apache.hugegraph.structure.HugeVertex;
+import org.apache.hugegraph.type.define.Directions;
+import org.apache.hugegraph.util.Log;
+
+<span class="nc" id="L46">public abstract class AbstractCentAlgorithm extends AbstractAlgorithm {</span>
+
+<span class="nc" id="L48">    private static final Logger LOG = Log.logger(AbstractCentAlgorithm.class);</span>
+
+    @Override
+    public String category() {
+<span class="nc" id="L52">        return CATEGORY_CENT;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L57">        depth(parameters);</span>
+<span class="nc" id="L58">        degree(parameters);</span>
+<span class="nc" id="L59">        sample(parameters);</span>
+<span class="nc" id="L60">        direction(parameters);</span>
+<span class="nc" id="L61">        edgeLabel(parameters);</span>
+<span class="nc" id="L62">        sourceSample(parameters);</span>
+<span class="nc" id="L63">        sourceLabel(parameters);</span>
+<span class="nc" id="L64">        sourceCLabel(parameters);</span>
+<span class="nc" id="L65">        top(parameters);</span>
+<span class="nc" id="L66">    }</span>
+
+<span class="nc" id="L68">    protected static class Traverser extends AlgoTraverser {</span>
+
+        public Traverser(UserJob&lt;Object&gt; job) {
+<span class="nc" id="L71">            super(job);</span>
+<span class="nc" id="L72">        }</span>
+
+        protected GraphTraversal&lt;Vertex, Vertex&gt; constructSource(
+                                                 String sourceLabel,
+                                                 long sourceSample,
+                                                 String sourceCLabel) {
+<span class="nc" id="L78">            GraphTraversal&lt;Vertex, Vertex&gt; t = this.graph().traversal()</span>
+<span class="nc" id="L79">                                                           .withSack(1f).V();</span>
+
+<span class="nc bnc" id="L81" title="All 2 branches missed.">            if (sourceLabel != null) {</span>
+<span class="nc" id="L82">                t = t.hasLabel(sourceLabel);</span>
+            }
+
+<span class="nc" id="L85">            t = t.filter(it -&gt; {</span>
+<span class="nc" id="L86">                this.updateProgress(++this.progress);</span>
+<span class="nc bnc" id="L87" title="All 4 branches missed.">                return sourceCLabel == null || match(it.get(), sourceCLabel);</span>
+            });
+
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            if (sourceSample &gt; 0L) {</span>
+<span class="nc" id="L91">                t = t.sample((int) sourceSample);</span>
+            }
+
+<span class="nc" id="L94">            return t;</span>
+        }
+
+        protected GraphTraversal&lt;Vertex, Vertex&gt; constructPath(
+                  GraphTraversal&lt;Vertex, Vertex&gt; t, Directions dir,
+                  String label, long degree, long sample,
+                  String sourceLabel, String sourceCLabel) {
+<span class="nc" id="L101">            GraphTraversal&lt;?, Vertex&gt; unit = constructPathUnit(dir, label,</span>
+                                                               degree, sample,
+                                                               sourceLabel,
+                                                               sourceCLabel);
+<span class="nc" id="L105">            t = t.as(&quot;v&quot;).repeat(__.local(unit).simplePath().as(&quot;v&quot;));</span>
+
+<span class="nc" id="L107">            return t;</span>
+        }
+
+        protected GraphTraversal&lt;Vertex, Vertex&gt; constructPathUnit(
+                                                 Directions dir, String label,
+                                                 long degree, long sample,
+                                                 String sourceLabel,
+                                                 String sourceCLabel) {
+<span class="nc bnc" id="L115" title="All 2 branches missed.">            if (dir == null) {</span>
+<span class="nc" id="L116">                dir = Directions.BOTH;</span>
+            }
+<span class="nc" id="L118">            Direction direction = dir.direction();</span>
+
+<span class="nc" id="L120">            String[] labels = {};</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">            if (label != null) {</span>
+<span class="nc" id="L122">                labels = new String[]{label};</span>
+            }
+
+<span class="nc" id="L125">            GraphTraversal&lt;Vertex, Vertex&gt; unit = __.to(direction, labels);</span>
+<span class="nc bnc" id="L126" title="All 2 branches missed.">            if (sourceLabel != null) {</span>
+<span class="nc" id="L127">                unit = unit.hasLabel(sourceLabel);</span>
+            }
+<span class="nc bnc" id="L129" title="All 2 branches missed.">            if (sourceCLabel != null) {</span>
+<span class="nc" id="L130">                unit = unit.has(C_LABEL, sourceCLabel);</span>
+            }
+<span class="nc bnc" id="L132" title="All 2 branches missed.">            if (degree != NO_LIMIT) {</span>
+<span class="nc" id="L133">                unit = unit.limit(degree);</span>
+            }
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            if (sample &gt; 0L) {</span>
+<span class="nc" id="L136">                unit = unit.sample((int) sample);</span>
+            }
+<span class="nc" id="L138">            return unit;</span>
+        }
+
+        protected &lt;V&gt; GraphTraversal&lt;V, V&gt; filterNonShortestPath(
+                                           GraphTraversal&lt;V, V&gt; t,
+                                           boolean keepOneShortestPath) {
+<span class="nc" id="L144">            long size = this.graph().traversal().V().limit(100000L)</span>
+<span class="nc" id="L145">                                                    .count().next();</span>
+<span class="nc" id="L146">            Map&lt;Pair&lt;Id, Id&gt;, Integer&gt; triples = new HashMap&lt;&gt;((int) size);</span>
+<span class="nc" id="L147">            return t.filter(it -&gt; {</span>
+<span class="nc" id="L148">                Id start = it.&lt;HugeElement&gt;path(Pop.first, &quot;v&quot;).id();</span>
+<span class="nc" id="L149">                Id end = it.&lt;HugeElement&gt;path(Pop.last, &quot;v&quot;).id();</span>
+<span class="nc" id="L150">                int len = it.path().size();</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">                assert len == it.&lt;List&lt;?&gt;&gt;path(Pop.all, &quot;v&quot;).size();</span>
+
+<span class="nc" id="L153">                Pair&lt;Id, Id&gt; key = Pair.of(start, end);</span>
+<span class="nc" id="L154">                Integer shortest = triples.get(key);</span>
+<span class="nc bnc" id="L155" title="All 4 branches missed.">                if (shortest != null &amp;&amp; len &gt; shortest) {</span>
+                    // ignore non shortest path
+<span class="nc" id="L157">                    return false;</span>
+                }
+                // TODO: len may be smaller than shortest
+<span class="nc bnc" id="L160" title="All 2 branches missed.">                if (shortest == null) {</span>
+<span class="nc" id="L161">                    triples.put(key, len);</span>
+                } else {
+<span class="nc bnc" id="L163" title="All 2 branches missed.">                    assert len == shortest;</span>
+<span class="nc bnc" id="L164" title="All 2 branches missed.">                    return !keepOneShortestPath;</span>
+                }
+<span class="nc" id="L166">                return true;</span>
+            });
+        }
+
+        protected GraphTraversal&lt;Vertex, Id&gt; substractPath(
+                                             GraphTraversal&lt;Vertex, Vertex&gt; t,
+                                             boolean withBoundary) {
+            // t.select(Pop.all, &quot;v&quot;).unfold().id()
+<span class="nc" id="L174">            return t.select(Pop.all, &quot;v&quot;).flatMap(it -&gt; {</span>
+<span class="nc" id="L175">                List&lt;?&gt; path = (List&lt;?&gt;) it.get();</span>
+<span class="nc bnc" id="L176" title="All 2 branches missed.">                if (withBoundary) {</span>
+                    @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L178">                    Iterator&lt;HugeVertex&gt; items = (Iterator&lt;HugeVertex&gt;)</span>
+<span class="nc" id="L179">                                                 path.iterator();</span>
+<span class="nc" id="L180">                    return new MapperIterator&lt;&gt;(items, HugeVertex::id);</span>
+                }
+<span class="nc" id="L182">                int len = path.size();</span>
+<span class="nc bnc" id="L183" title="All 2 branches missed.">                if (len &lt; 3) {</span>
+<span class="nc" id="L184">                    return Collections.emptyIterator();</span>
+                }
+
+<span class="nc" id="L187">                LOG.debug(&quot;CentAlgorithm substract path: {}&quot;, path);</span>
+<span class="nc" id="L188">                path.remove(path.size() -1);</span>
+<span class="nc" id="L189">                path.remove(0);</span>
+                @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L191">                Iterator&lt;HugeVertex&gt; items = (Iterator&lt;HugeVertex&gt;)</span>
+<span class="nc" id="L192">                                             path.iterator();</span>
+<span class="nc" id="L193">                return new MapperIterator&lt;&gt;(items, HugeVertex::id);</span>
+            });
+        }
+
+        protected GraphTraversal&lt;Vertex, ?&gt; topN(GraphTraversal&lt;Vertex, ?&gt; t,
+                                                 long topN) {
+<span class="nc bnc" id="L199" title="All 4 branches missed.">            if (topN &gt; 0L || topN == NO_LIMIT) {</span>
+<span class="nc" id="L200">                t = t.order(Scope.local).by(Column.values, Order.desc);</span>
+<span class="nc bnc" id="L201" title="All 2 branches missed.">                if (topN &gt; 0L) {</span>
+<span class="nc bnc" id="L202" title="All 2 branches missed.">                    assert topN != NO_LIMIT;</span>
+<span class="nc" id="L203">                    t = t.limit(Scope.local, topN);</span>
+                }
+            }
+<span class="nc" id="L206">            return t;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

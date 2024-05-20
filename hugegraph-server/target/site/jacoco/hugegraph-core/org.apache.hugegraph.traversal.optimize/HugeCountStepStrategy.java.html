@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeCountStepStrategy.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.traversal.optimize</a> &gt; <span class="el_source">HugeCountStepStrategy.java</span></div><h1>HugeCountStepStrategy.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.traversal.optimize;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.hugegraph.backend.query.Aggregate;
+import org.apache.tinkerpop.gremlin.process.traversal.Step;
+import org.apache.tinkerpop.gremlin.process.traversal.Traversal;
+import org.apache.tinkerpop.gremlin.process.traversal.TraversalStrategy.ProviderOptimizationStrategy;
+import org.apache.tinkerpop.gremlin.process.traversal.step.TraversalParent;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.CountGlobalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.GraphStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.map.NoOpBarrierStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.sideEffect.AggregateGlobalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.sideEffect.AggregateLocalStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.sideEffect.IdentityStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.sideEffect.SideEffectStep;
+import org.apache.tinkerpop.gremlin.process.traversal.step.util.CollectingBarrierStep;
+import org.apache.tinkerpop.gremlin.process.traversal.strategy.AbstractTraversalStrategy;
+import org.apache.tinkerpop.gremlin.process.traversal.util.TraversalHelper;
+import org.apache.tinkerpop.gremlin.structure.Element;
+
+public final class HugeCountStepStrategy
+             extends AbstractTraversalStrategy&lt;ProviderOptimizationStrategy&gt;
+             implements ProviderOptimizationStrategy {
+
+    private static final long serialVersionUID = -3910433925919057771L;
+
+    private static final HugeCountStepStrategy INSTANCE;
+
+    static {
+<span class="nc" id="L51">        INSTANCE = new HugeCountStepStrategy();</span>
+<span class="nc" id="L52">    }</span>
+
+    private HugeCountStepStrategy() {
+        // pass
+    }
+
+    @Override
+    @SuppressWarnings({ &quot;rawtypes&quot;, &quot;unchecked&quot; })
+    public void apply(Traversal.Admin&lt;?, ?&gt; traversal) {
+<span class="nc" id="L61">        TraversalUtil.convAllHasSteps(traversal);</span>
+
+        // Extract CountGlobalStep
+<span class="nc" id="L64">        List&lt;CountGlobalStep&gt; steps = TraversalHelper.getStepsOfClass(</span>
+                                      CountGlobalStep.class, traversal);
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        if (steps.isEmpty()) {</span>
+<span class="nc" id="L67">            return;</span>
+        }
+
+        // Find HugeGraphStep before count()
+<span class="nc" id="L71">        CountGlobalStep&lt;?&gt; originStep = steps.get(0);</span>
+<span class="nc" id="L72">        List&lt;Step&lt;?, ?&gt;&gt; originSteps = new ArrayList&lt;&gt;();</span>
+<span class="nc" id="L73">        HugeGraphStep&lt;?, ? extends Element&gt; graphStep = null;</span>
+<span class="nc" id="L74">        Step&lt;?, ?&gt; step = originStep;</span>
+        do {
+<span class="nc bnc" id="L76" title="All 12 branches missed.">            if (!(step instanceof CountGlobalStep ||</span>
+                  step instanceof GraphStep ||
+                  step instanceof IdentityStep ||
+                  step instanceof NoOpBarrierStep ||
+                  step instanceof CollectingBarrierStep) ||
+                 (step instanceof TraversalParent &amp;&amp;
+<span class="nc bnc" id="L82" title="All 2 branches missed.">                  TraversalHelper.anyStepRecursively(s -&gt; {</span>
+<span class="nc bnc" id="L83" title="All 6 branches missed.">                      return s instanceof SideEffectStep ||</span>
+                             s instanceof AggregateGlobalStep ||
+                             s instanceof AggregateLocalStep;
+                  }, (TraversalParent) step))) {
+<span class="nc" id="L87">                return;</span>
+            }
+<span class="nc" id="L89">            originSteps.add(step);</span>
+<span class="nc bnc" id="L90" title="All 2 branches missed.">            if (step instanceof HugeGraphStep) {</span>
+<span class="nc" id="L91">                graphStep = (HugeGraphStep&lt;?, ? extends Element&gt;) step;</span>
+<span class="nc" id="L92">                break;</span>
+            }
+<span class="nc" id="L94">            step = step.getPreviousStep();</span>
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        } while (step != null);</span>
+
+<span class="nc bnc" id="L97" title="All 2 branches missed.">        if (graphStep == null) {</span>
+<span class="nc" id="L98">            return;</span>
+        }
+
+        // Replace with HugeCountStep
+<span class="nc" id="L102">        graphStep.queryInfo().aggregate(Aggregate.AggregateFunc.COUNT, null);</span>
+<span class="nc" id="L103">        HugeCountStep&lt;?&gt; countStep = new HugeCountStep&lt;&gt;(traversal, graphStep);</span>
+<span class="nc bnc" id="L104" title="All 2 branches missed.">        for (Step&lt;?, ?&gt; origin : originSteps) {</span>
+<span class="nc" id="L105">            TraversalHelper.copyLabels(origin, countStep, false);</span>
+<span class="nc" id="L106">            traversal.removeStep(origin);</span>
+<span class="nc" id="L107">        }</span>
+<span class="nc" id="L108">        traversal.addStep(0, countStep);</span>
+<span class="nc" id="L109">    }</span>
+
+    @Override
+    public Set&lt;Class&lt;? extends ProviderOptimizationStrategy&gt;&gt; applyPrior() {
+<span class="nc" id="L113">        return Collections.singleton(HugeGraphStepStrategy.class);</span>
+    }
+
+    @Override
+    public Set&lt;Class&lt;? extends ProviderOptimizationStrategy&gt;&gt; applyPost() {
+<span class="nc" id="L118">        return Collections.singleton(HugeVertexStepStrategy.class);</span>
+    }
+
+    public static HugeCountStepStrategy instance() {
+<span class="nc" id="L122">        return INSTANCE;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,592 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HbaseStore.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-hbase</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.hbase</a> &gt; <span class="el_source">HbaseStore.java</span></div><h1>HbaseStore.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.hbase;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BiFunction;
+import java.util.stream.Collectors;
+
+import org.apache.hadoop.hbase.NamespaceExistException;
+import org.apache.hadoop.hbase.TableExistsException;
+import org.apache.hadoop.hbase.TableNotFoundException;
+import org.slf4j.Logger;
+
+import org.apache.hugegraph.backend.BackendException;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.query.Query;
+import org.apache.hugegraph.backend.store.AbstractBackendStore;
+import org.apache.hugegraph.backend.store.BackendAction;
+import org.apache.hugegraph.backend.store.BackendEntry;
+import org.apache.hugegraph.backend.store.BackendFeatures;
+import org.apache.hugegraph.backend.store.BackendMutation;
+import org.apache.hugegraph.backend.store.BackendStoreProvider;
+import org.apache.hugegraph.config.HugeConfig;
+import org.apache.hugegraph.exception.ConnectionException;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.Log;
+
+public abstract class HbaseStore extends AbstractBackendStore&lt;HbaseSessions.Session&gt; {
+
+<span class="nc" id="L52">    private static final Logger LOG = Log.logger(HbaseStore.class);</span>
+
+    private final BackendFeatures features;
+
+    private final String store;
+    private final String namespace;
+
+    private final BackendStoreProvider provider;
+    private final Map&lt;HugeType, HbaseTable&gt; tables;
+    private short vertexLogicPartitions;
+    private short edgeLogicPartitions;
+
+    private HbaseSessions sessions;
+
+    public HbaseStore(BackendStoreProvider provider,
+<span class="nc" id="L67">                      String namespace, String store, boolean enablePartition) {</span>
+<span class="nc" id="L68">        this.tables = new HashMap&lt;&gt;();</span>
+
+<span class="nc" id="L70">        this.provider = provider;</span>
+<span class="nc" id="L71">        this.namespace = namespace;</span>
+<span class="nc" id="L72">        this.store = store;</span>
+<span class="nc" id="L73">        this.sessions = null;</span>
+<span class="nc" id="L74">        this.features = new HbaseFeatures(enablePartition);</span>
+
+<span class="nc" id="L76">        this.registerMetaHandlers();</span>
+<span class="nc" id="L77">        LOG.debug(&quot;Store loaded: {}&quot;, store);</span>
+<span class="nc" id="L78">    }</span>
+
+    private void registerMetaHandlers() {
+<span class="nc" id="L81">        this.registerMetaHandler(&quot;metrics&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc" id="L82">            HbaseMetrics metrics = new HbaseMetrics(this.sessions);</span>
+<span class="nc" id="L83">            return metrics.metrics();</span>
+        });
+
+<span class="nc" id="L86">        this.registerMetaHandler(&quot;compact&quot;, (session, meta, args) -&gt; {</span>
+<span class="nc" id="L87">            HbaseMetrics metrics = new HbaseMetrics(this.sessions);</span>
+<span class="nc" id="L88">            return metrics.compact(this.tableNames());</span>
+        });
+<span class="nc" id="L90">    }</span>
+
+    protected void registerTableManager(HugeType type, HbaseTable table) {
+<span class="nc" id="L93">        this.tables.put(type, table);</span>
+<span class="nc" id="L94">    }</span>
+
+    @Override
+    protected final HbaseTable table(HugeType type) {
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        assert type != null;</span>
+<span class="nc" id="L99">        HbaseTable table = this.tables.get(type);</span>
+<span class="nc bnc" id="L100" title="All 2 branches missed.">        if (table == null) {</span>
+<span class="nc" id="L101">            throw new BackendException(&quot;Unsupported table type: %s&quot;, type);</span>
+        }
+<span class="nc" id="L103">        return table;</span>
+    }
+
+    @Override
+    protected HbaseSessions.Session session(HugeType type) {
+<span class="nc" id="L108">        this.checkOpened();</span>
+<span class="nc" id="L109">        return this.sessions.session();</span>
+    }
+
+    protected List&lt;String&gt; tableNames() {
+<span class="nc" id="L113">        return this.tables.values().stream().map(t -&gt; t.table())</span>
+<span class="nc" id="L114">                                            .collect(Collectors.toList());</span>
+    }
+
+    public String namespace() {
+<span class="nc" id="L118">        return this.namespace;</span>
+    }
+
+    @Override
+    public String store() {
+<span class="nc" id="L123">        return this.store;</span>
+    }
+
+    @Override
+    public String database() {
+<span class="nc" id="L128">        return this.namespace;</span>
+    }
+
+    @Override
+    public BackendStoreProvider provider() {
+<span class="nc" id="L133">        return this.provider;</span>
+    }
+
+    @Override
+    public BackendFeatures features() {
+<span class="nc" id="L138">        return features;</span>
+    }
+
+    @Override
+    public synchronized void open(HugeConfig config) {
+<span class="nc" id="L143">        E.checkNotNull(config, &quot;config&quot;);</span>
+<span class="nc" id="L144">        this.vertexLogicPartitions = config.get(HbaseOptions.HBASE_VERTEX_PARTITION).shortValue();</span>
+<span class="nc" id="L145">        this.edgeLogicPartitions = config.get(HbaseOptions.HBASE_EDGE_PARTITION).shortValue();</span>
+
+<span class="nc bnc" id="L147" title="All 2 branches missed.">        if (this.sessions == null) {</span>
+<span class="nc" id="L148">            this.sessions = new HbaseSessions(config, this.namespace, this.store);</span>
+        }
+
+<span class="nc bnc" id="L151" title="All 2 branches missed.">        assert this.sessions != null;</span>
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        if (!this.sessions.closed()) {</span>
+<span class="nc" id="L153">            LOG.debug(&quot;Store {} has been opened before&quot;, this.store);</span>
+<span class="nc" id="L154">            this.sessions.useSession();</span>
+<span class="nc" id="L155">            return;</span>
+        }
+
+        try {
+            // NOTE: won't throw error even if connection refused
+<span class="nc" id="L160">            this.sessions.open();</span>
+<span class="nc" id="L161">        } catch (Throwable e) {</span>
+<span class="nc" id="L162">            LOG.error(&quot;Failed to open HBase '{}'&quot;, this.store, e);</span>
+<span class="nc" id="L163">            throw new ConnectionException(&quot;Failed to connect to HBase&quot;, e);</span>
+<span class="nc" id="L164">        }</span>
+
+<span class="nc" id="L166">        this.sessions.session().open();</span>
+<span class="nc" id="L167">        LOG.debug(&quot;Store opened: {}&quot;, this.store);</span>
+<span class="nc" id="L168">    }</span>
+
+    @Override
+    public void close() {
+<span class="nc" id="L172">        this.checkOpened();</span>
+<span class="nc" id="L173">        this.sessions.close();</span>
+
+<span class="nc" id="L175">        LOG.debug(&quot;Store closed: {}&quot;, this.store);</span>
+<span class="nc" id="L176">    }</span>
+
+    @Override
+    public boolean opened() {
+<span class="nc" id="L180">        this.checkConnectionOpened();</span>
+<span class="nc" id="L181">        return this.sessions.session().opened();</span>
+    }
+
+    @Override
+    public void mutate(BackendMutation mutation) {
+<span class="nc bnc" id="L186" title="All 2 branches missed.">        if (LOG.isDebugEnabled()) {</span>
+<span class="nc" id="L187">            LOG.debug(&quot;Store {} mutation: {}&quot;, this.store, mutation);</span>
+        }
+
+<span class="nc" id="L190">        this.checkOpened();</span>
+<span class="nc" id="L191">        HbaseSessions.Session session = this.sessions.session();</span>
+
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        for (Iterator&lt;BackendAction&gt; it = mutation.mutation(); it.hasNext();) {</span>
+<span class="nc" id="L194">            this.mutate(session, it.next());</span>
+        }
+<span class="nc" id="L196">    }</span>
+
+    private void mutate(HbaseSessions.Session session, BackendAction item) {
+<span class="nc" id="L199">        BackendEntry entry = item.entry();</span>
+<span class="nc" id="L200">        HbaseTable table = this.table(entry.type());</span>
+
+<span class="nc bnc" id="L202" title="All 7 branches missed.">        switch (item.action()) {</span>
+            case INSERT:
+<span class="nc" id="L204">                table.insert(session, entry);</span>
+<span class="nc" id="L205">                break;</span>
+            case DELETE:
+<span class="nc" id="L207">                table.delete(session, entry);</span>
+<span class="nc" id="L208">                break;</span>
+            case APPEND:
+<span class="nc" id="L210">                table.append(session, entry);</span>
+<span class="nc" id="L211">                break;</span>
+            case ELIMINATE:
+<span class="nc" id="L213">                table.eliminate(session, entry);</span>
+<span class="nc" id="L214">                break;</span>
+            case UPDATE_IF_PRESENT:
+<span class="nc" id="L216">                table.updateIfPresent(session, entry);</span>
+<span class="nc" id="L217">                break;</span>
+            case UPDATE_IF_ABSENT:
+<span class="nc" id="L219">                table.updateIfAbsent(session, entry);</span>
+<span class="nc" id="L220">                break;</span>
+            default:
+<span class="nc" id="L222">                throw new AssertionError(String.format(</span>
+<span class="nc" id="L223">                          &quot;Unsupported mutate action: %s&quot;, item.action()));</span>
+        }
+<span class="nc" id="L225">    }</span>
+
+    @Override
+    public Iterator&lt;BackendEntry&gt; query(Query query) {
+<span class="nc" id="L229">        this.checkOpened();</span>
+
+<span class="nc" id="L231">        HbaseSessions.Session session = this.sessions.session();</span>
+<span class="nc" id="L232">        HbaseTable table = this.table(HbaseTable.tableType(query));</span>
+<span class="nc" id="L233">        return table.query(session, query);</span>
+    }
+
+    @Override
+    public Number queryNumber(Query query) {
+<span class="nc" id="L238">        this.checkOpened();</span>
+
+<span class="nc" id="L240">        HbaseSessions.Session session = this.sessions.session();</span>
+<span class="nc" id="L241">        HbaseTable table = this.table(HbaseTable.tableType(query));</span>
+<span class="nc" id="L242">        return table.queryNumber(session, query);</span>
+    }
+
+    @Override
+    public void init() {
+<span class="nc" id="L247">        this.checkConnectionOpened();</span>
+
+        // Create namespace
+        try {
+<span class="nc" id="L251">            this.sessions.createNamespace();</span>
+<span class="nc" id="L252">        } catch (NamespaceExistException ignored) {</span>
+            // Ignore due to both schema &amp; graph store would create namespace
+<span class="nc" id="L254">        } catch (IOException e) {</span>
+<span class="nc" id="L255">            throw new BackendException(</span>
+                      &quot;Failed to create namespace '%s' for '%s' store&quot;,
+                      e, this.namespace, this.store);
+<span class="nc" id="L258">        }</span>
+
+        // Create tables
+<span class="nc bnc" id="L261" title="All 2 branches missed.">        for (String table : this.tableNames()) {</span>
+            try {
+<span class="nc bnc" id="L263" title="All 4 branches missed.">                if (table.equals(&quot;g_oe&quot;) || table.equals(&quot;g_ie&quot;)) {</span>
+<span class="nc" id="L264">                    this.sessions.createPreSplitTable(table, HbaseTable.cfs(),</span>
+                        this.edgeLogicPartitions);
+<span class="nc bnc" id="L266" title="All 2 branches missed.">                } else if (table.equals(&quot;g_v&quot;)) {</span>
+<span class="nc" id="L267">                    this.sessions.createPreSplitTable(table, HbaseTable.cfs(), </span>
+                        this.vertexLogicPartitions);
+                } else {
+<span class="nc" id="L270">                    this.sessions.createTable(table, HbaseTable.cfs());</span>
+                }
+
+<span class="nc" id="L273">            } catch (TableExistsException ignored) {</span>
+<span class="nc" id="L274">                continue;</span>
+<span class="nc" id="L275">            } catch (IOException e) {</span>
+<span class="nc" id="L276">                throw new BackendException(</span>
+                          &quot;Failed to create table '%s' for '%s' store&quot;,
+                          e, table, this.store);
+<span class="nc" id="L279">            }</span>
+<span class="nc" id="L280">        }</span>
+
+<span class="nc" id="L282">        LOG.debug(&quot;Store initialized: {}&quot;, this.store);</span>
+<span class="nc" id="L283">    }</span>
+
+    @Override
+    public void clear(boolean clearSpace) {
+<span class="nc" id="L287">        this.checkConnectionOpened();</span>
+
+        // Return if not exists namespace
+        try {
+<span class="nc bnc" id="L291" title="All 2 branches missed.">            if (!this.sessions.existsNamespace()) {</span>
+<span class="nc" id="L292">                return;</span>
+            }
+<span class="nc" id="L294">        } catch (IOException e) {</span>
+<span class="nc" id="L295">            throw new BackendException(</span>
+                      &quot;Exception when checking for the existence of '%s'&quot;,
+                      e, this.namespace);
+<span class="nc" id="L298">        }</span>
+
+<span class="nc bnc" id="L300" title="All 2 branches missed.">        if (!clearSpace) {</span>
+            // Drop tables
+<span class="nc bnc" id="L302" title="All 2 branches missed.">            for (String table : this.tableNames()) {</span>
+                try {
+<span class="nc" id="L304">                    this.sessions.dropTable(table);</span>
+<span class="nc" id="L305">                } catch (TableNotFoundException e) {</span>
+<span class="nc" id="L306">                    LOG.warn(&quot;The table '{}' of '{}' store does not exist &quot; +</span>
+                             &quot;when trying to drop&quot;, table, this.store);
+<span class="nc" id="L308">                } catch (IOException e) {</span>
+<span class="nc" id="L309">                    throw new BackendException(</span>
+                              &quot;Failed to drop table '%s' of '%s' store&quot;,
+                              e, table, this.store);
+<span class="nc" id="L312">                }</span>
+<span class="nc" id="L313">            }</span>
+        } else {
+            // Drop namespace
+            try {
+<span class="nc" id="L317">                this.sessions.dropNamespace();</span>
+<span class="nc" id="L318">            } catch (IOException e) {</span>
+<span class="nc" id="L319">                String notEmpty = &quot;Only empty namespaces can be removed&quot;;</span>
+<span class="nc bnc" id="L320" title="All 2 branches missed.">                if (e.getCause().getMessage().contains(notEmpty)) {</span>
+<span class="nc" id="L321">                    LOG.debug(&quot;Can't drop namespace '{}': {}&quot;,</span>
+                              this.namespace, e);
+                } else {
+<span class="nc" id="L324">                    throw new BackendException(</span>
+                              &quot;Failed to drop namespace '%s' of '%s' store&quot;,
+                              e, this.namespace, this.store);
+                }
+<span class="nc" id="L328">            }</span>
+        }
+
+<span class="nc" id="L331">        LOG.debug(&quot;Store cleared: {}&quot;, this.store);</span>
+<span class="nc" id="L332">    }</span>
+
+    @Override
+    public boolean initialized() {
+<span class="nc" id="L336">        this.checkConnectionOpened();</span>
+
+        try {
+<span class="nc bnc" id="L339" title="All 2 branches missed.">            if (!this.sessions.existsNamespace()) {</span>
+<span class="nc" id="L340">                return false;</span>
+            }
+<span class="nc bnc" id="L342" title="All 2 branches missed.">            for (String table : this.tableNames()) {</span>
+<span class="nc bnc" id="L343" title="All 2 branches missed.">                if (!this.sessions.existsTable(table)) {</span>
+<span class="nc" id="L344">                    return false;</span>
+                }
+<span class="nc" id="L346">            }</span>
+<span class="nc" id="L347">        } catch (IOException e) {</span>
+<span class="nc" id="L348">            throw new BackendException(&quot;Failed to obtain table info&quot;, e);</span>
+<span class="nc" id="L349">        }</span>
+<span class="nc" id="L350">        return true;</span>
+    }
+
+    @Override
+    public void truncate() {
+<span class="nc" id="L355">        this.checkOpened();</span>
+
+        // Total time may cost 3 * TRUNCATE_TIMEOUT, due to there are 3 stores
+<span class="nc" id="L358">        long timeout = this.sessions.config().get(HbaseOptions.TRUNCATE_TIMEOUT);</span>
+<span class="nc" id="L359">        long start = System.currentTimeMillis();</span>
+
+<span class="nc" id="L361">        BiFunction&lt;String, Future&lt;Void&gt;, Void&gt; wait = (table, future) -&gt; {</span>
+<span class="nc" id="L362">            long elapsed = System.currentTimeMillis() - start;</span>
+<span class="nc" id="L363">            long remainingTime = timeout - elapsed / 1000L;</span>
+            try {
+<span class="nc" id="L365">                return future.get(remainingTime, TimeUnit.SECONDS);</span>
+<span class="nc" id="L366">            } catch (Exception e) {</span>
+<span class="nc" id="L367">                throw new BackendException(</span>
+                          &quot;Error when truncating table '%s' of '%s' store: %s&quot;,
+<span class="nc" id="L369">                          table, this.store, e.toString());</span>
+            }
+        };
+
+        // Truncate tables
+<span class="nc" id="L374">        List&lt;String&gt; tables = this.tableNames();</span>
+<span class="nc" id="L375">        Map&lt;String, Future&lt;Void&gt;&gt; futures = new HashMap&lt;&gt;(tables.size());</span>
+
+        try {
+            // Disable tables async
+<span class="nc bnc" id="L379" title="All 2 branches missed.">            for (String table : tables) {</span>
+<span class="nc" id="L380">                futures.put(table, this.sessions.disableTableAsync(table));</span>
+<span class="nc" id="L381">            }</span>
+<span class="nc bnc" id="L382" title="All 2 branches missed.">            for (Map.Entry&lt;String, Future&lt;Void&gt;&gt; entry : futures.entrySet()) {</span>
+<span class="nc" id="L383">                wait.apply(entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L384">            }</span>
+<span class="nc" id="L385">        } catch (Exception e) {</span>
+<span class="nc" id="L386">            this.enableTables();</span>
+<span class="nc" id="L387">            throw new BackendException(</span>
+                      &quot;Failed to disable table for '%s' store&quot;, e, this.store);
+<span class="nc" id="L389">        }</span>
+
+        try {
+            // Truncate tables async
+<span class="nc bnc" id="L393" title="All 2 branches missed.">            for (String table : tables) {</span>
+<span class="nc" id="L394">                futures.put(table, this.sessions.truncateTableAsync(table));</span>
+<span class="nc" id="L395">            }</span>
+<span class="nc bnc" id="L396" title="All 2 branches missed.">            for (Map.Entry&lt;String, Future&lt;Void&gt;&gt; entry : futures.entrySet()) {</span>
+<span class="nc" id="L397">                wait.apply(entry.getKey(), entry.getValue());</span>
+<span class="nc" id="L398">            }</span>
+<span class="nc" id="L399">        } catch (Exception e) {</span>
+<span class="nc" id="L400">            this.enableTables();</span>
+<span class="nc" id="L401">            throw new BackendException(</span>
+                      &quot;Failed to truncate table for '%s' store&quot;, e, this.store);
+<span class="nc" id="L403">        }</span>
+
+<span class="nc" id="L405">        LOG.debug(&quot;Store truncated: {}&quot;, this.store);</span>
+<span class="nc" id="L406">    }</span>
+
+    private void enableTables() {
+<span class="nc bnc" id="L409" title="All 2 branches missed.">        for (String table : this.tableNames()) {</span>
+            try {
+<span class="nc" id="L411">                this.sessions.enableTable(table);</span>
+<span class="nc" id="L412">            } catch (Exception e) {</span>
+<span class="nc" id="L413">                LOG.warn(&quot;Failed to enable table '{}' of '{}' store&quot;,</span>
+                         table, this.store, e);
+<span class="nc" id="L415">            }</span>
+<span class="nc" id="L416">        }</span>
+<span class="nc" id="L417">    }</span>
+
+    @Override
+    public void beginTx() {
+        // pass
+<span class="nc" id="L422">    }</span>
+
+    @Override
+    public void commitTx() {
+<span class="nc" id="L426">        this.checkOpened();</span>
+<span class="nc" id="L427">        HbaseSessions.Session session = this.sessions.session();</span>
+
+<span class="nc" id="L429">        session.commit();</span>
+<span class="nc" id="L430">    }</span>
+
+    @Override
+    public void rollbackTx() {
+<span class="nc" id="L434">        this.checkOpened();</span>
+<span class="nc" id="L435">        HbaseSessions.Session session = this.sessions.session();</span>
+
+<span class="nc" id="L437">        session.rollback();</span>
+<span class="nc" id="L438">    }</span>
+
+    private void checkConnectionOpened() {
+<span class="nc bnc" id="L441" title="All 4 branches missed.">        E.checkState(this.sessions != null &amp;&amp; this.sessions.opened(),</span>
+                     &quot;HBase store has not been initialized&quot;);
+<span class="nc" id="L443">    }</span>
+
+    /***************************** Store defines *****************************/
+
+    public static class HbaseSchemaStore extends HbaseStore {
+
+        private final HbaseTables.Counters counters;
+
+        public HbaseSchemaStore(HugeConfig config, BackendStoreProvider provider,
+                                String namespace, String store) {
+<span class="nc" id="L453">            super(provider, namespace, store, </span>
+<span class="nc" id="L454">                  config.get(HbaseOptions.HBASE_ENABLE_PARTITION).booleanValue());</span>
+
+<span class="nc" id="L456">            this.counters = new HbaseTables.Counters();</span>
+
+<span class="nc" id="L458">            registerTableManager(HugeType.VERTEX_LABEL,</span>
+                                 new HbaseTables.VertexLabel());
+<span class="nc" id="L460">            registerTableManager(HugeType.EDGE_LABEL,</span>
+                                 new HbaseTables.EdgeLabel());
+<span class="nc" id="L462">            registerTableManager(HugeType.PROPERTY_KEY,</span>
+                                 new HbaseTables.PropertyKey());
+<span class="nc" id="L464">            registerTableManager(HugeType.INDEX_LABEL,</span>
+                                 new HbaseTables.IndexLabel());
+
+<span class="nc" id="L467">            registerTableManager(HugeType.SECONDARY_INDEX,</span>
+                                 new HbaseTables.SecondaryIndex(store));
+<span class="nc" id="L469">        }</span>
+
+        @Override
+        protected List&lt;String&gt; tableNames() {
+<span class="nc" id="L473">            List&lt;String&gt; tableNames = super.tableNames();</span>
+<span class="nc" id="L474">            tableNames.add(this.counters.table());</span>
+<span class="nc" id="L475">            return tableNames;</span>
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long increment) {
+<span class="nc" id="L480">            super.checkOpened();</span>
+<span class="nc" id="L481">            this.counters.increaseCounter(super.sessions.session(),</span>
+                                          type, increment);
+<span class="nc" id="L483">        }</span>
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L487">            super.checkOpened();</span>
+<span class="nc" id="L488">            return this.counters.getCounter(super.sessions.session(), type);</span>
+        }
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L493">            return true;</span>
+        }
+    }
+
+    public static class HbaseGraphStore extends HbaseStore {
+        private boolean enablePartition;
+        public HbaseGraphStore(HugeConfig config, BackendStoreProvider provider,
+                               String namespace, String store) {
+<span class="nc" id="L501">            super(provider, namespace, store, </span>
+<span class="nc" id="L502">                  config.get(HbaseOptions.HBASE_ENABLE_PARTITION).booleanValue());</span>
+<span class="nc" id="L503">            this.enablePartition = config.get(HbaseOptions.HBASE_ENABLE_PARTITION).booleanValue();</span>
+<span class="nc" id="L504">            registerTableManager(HugeType.VERTEX,</span>
+                                 new HbaseTables.Vertex(store, enablePartition));
+
+<span class="nc" id="L507">            registerTableManager(HugeType.EDGE_OUT,</span>
+<span class="nc" id="L508">                                 HbaseTables.Edge.out(store, enablePartition));</span>
+<span class="nc" id="L509">            registerTableManager(HugeType.EDGE_IN,</span>
+<span class="nc" id="L510">                                 HbaseTables.Edge.in(store, enablePartition));</span>
+
+<span class="nc" id="L512">            registerTableManager(HugeType.SECONDARY_INDEX,</span>
+                                 new HbaseTables.SecondaryIndex(store));
+<span class="nc" id="L514">            registerTableManager(HugeType.VERTEX_LABEL_INDEX,</span>
+                                 new HbaseTables.VertexLabelIndex(store));
+<span class="nc" id="L516">            registerTableManager(HugeType.EDGE_LABEL_INDEX,</span>
+                                 new HbaseTables.EdgeLabelIndex(store));
+<span class="nc" id="L518">            registerTableManager(HugeType.RANGE_INT_INDEX,</span>
+<span class="nc" id="L519">                                 HbaseTables.RangeIndex.rangeInt(store));</span>
+<span class="nc" id="L520">            registerTableManager(HugeType.RANGE_FLOAT_INDEX,</span>
+<span class="nc" id="L521">                                 HbaseTables.RangeIndex.rangeFloat(store));</span>
+<span class="nc" id="L522">            registerTableManager(HugeType.RANGE_LONG_INDEX,</span>
+<span class="nc" id="L523">                                 HbaseTables.RangeIndex.rangeLong(store));</span>
+<span class="nc" id="L524">            registerTableManager(HugeType.RANGE_DOUBLE_INDEX,</span>
+<span class="nc" id="L525">                                 HbaseTables.RangeIndex.rangeDouble(store));</span>
+<span class="nc" id="L526">            registerTableManager(HugeType.SEARCH_INDEX,</span>
+                                 new HbaseTables.SearchIndex(store));
+<span class="nc" id="L528">            registerTableManager(HugeType.SHARD_INDEX,</span>
+                                 new HbaseTables.ShardIndex(store));
+<span class="nc" id="L530">            registerTableManager(HugeType.UNIQUE_INDEX,</span>
+                                 new HbaseTables.UniqueIndex(store));
+<span class="nc" id="L532">        }</span>
+
+        @Override
+        public boolean isSchemaStore() {
+<span class="nc" id="L536">            return false;</span>
+        }
+
+        @Override
+        public Id nextId(HugeType type) {
+<span class="nc" id="L541">            throw new UnsupportedOperationException(</span>
+                      &quot;HbaseGraphStore.nextId()&quot;);
+        }
+
+        @Override
+        public void increaseCounter(HugeType type, long num) {
+<span class="nc" id="L547">            throw new UnsupportedOperationException(</span>
+                      &quot;HbaseGraphStore.increaseCounter()&quot;);
+        }
+
+        @Override
+        public long getCounter(HugeType type) {
+<span class="nc" id="L553">            throw new UnsupportedOperationException(</span>
+                      &quot;HbaseGraphStore.getCounter()&quot;);
+        }
+    }
+
+    public static class HbaseSystemStore extends HbaseGraphStore {
+
+        private final HbaseTables.Meta meta;
+
+        public HbaseSystemStore(HugeConfig config, BackendStoreProvider provider,
+                                String namespace, String store) {
+<span class="nc" id="L564">            super(config, provider, namespace, store);</span>
+
+<span class="nc" id="L566">            this.meta = new HbaseTables.Meta();</span>
+<span class="nc" id="L567">        }</span>
+
+        @Override
+        protected List&lt;String&gt; tableNames() {
+<span class="nc" id="L571">            List&lt;String&gt; tableNames = super.tableNames();</span>
+<span class="nc" id="L572">            tableNames.add(this.meta.table());</span>
+<span class="nc" id="L573">            return tableNames;</span>
+        }
+
+        @Override
+        public void init() {
+<span class="nc" id="L578">            super.init();</span>
+<span class="nc" id="L579">            HbaseSessions.Session session = super.session(null);</span>
+<span class="nc" id="L580">            String driverVersion = this.provider().driverVersion();</span>
+<span class="nc" id="L581">            this.meta.writeVersion(session, driverVersion);</span>
+<span class="nc" id="L582">            LOG.info(&quot;Write down the backend version: {}&quot;, driverVersion);</span>
+<span class="nc" id="L583">        }</span>
+
+        @Override
+        public String storedVersion() {
+<span class="nc" id="L587">            HbaseSessions.Session session = super.session(null);</span>
+<span class="nc" id="L588">            return this.meta.readVersion(session);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

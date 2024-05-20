@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>LouvainAlgorithm.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.job.algorithm.comm</a> &gt; <span class="el_source">LouvainAlgorithm.java</span></div><h1>LouvainAlgorithm.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.job.algorithm.comm;
+
+import java.util.Map;
+
+import org.apache.hugegraph.job.UserJob;
+import org.apache.hugegraph.traversal.algorithm.HugeTraverser;
+import org.apache.hugegraph.util.ParameterUtil;
+
+<span class="nc" id="L26">public class LouvainAlgorithm extends AbstractCommAlgorithm {</span>
+
+    public static final String ALGO_NAME = &quot;louvain&quot;;
+
+    @Override
+    public String name() {
+<span class="nc" id="L32">        return ALGO_NAME;</span>
+    }
+
+    @Override
+    public void checkParameters(Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L37">        times(parameters);</span>
+<span class="nc" id="L38">        stableTimes(parameters);</span>
+<span class="nc" id="L39">        precision(parameters);</span>
+<span class="nc" id="L40">        degree(parameters);</span>
+<span class="nc" id="L41">        sourceLabel(parameters);</span>
+<span class="nc" id="L42">        sourceCLabel(parameters);</span>
+<span class="nc" id="L43">        showModularity(parameters);</span>
+<span class="nc" id="L44">        showCommunity(parameters);</span>
+<span class="nc" id="L45">        exportCommunity(parameters);</span>
+<span class="nc" id="L46">        skipIsolated(parameters);</span>
+<span class="nc" id="L47">        clearPass(parameters);</span>
+<span class="nc" id="L48">        workers(parameters);</span>
+<span class="nc" id="L49">    }</span>
+
+    @Override
+    public Object call(UserJob&lt;Object&gt; job, Map&lt;String, Object&gt; parameters) {
+<span class="nc" id="L53">        String label = sourceLabel(parameters);</span>
+<span class="nc" id="L54">        String clabel = sourceCLabel(parameters);</span>
+<span class="nc" id="L55">        long degree = degree(parameters);</span>
+<span class="nc" id="L56">        boolean skipIsolated = skipIsolated(parameters);</span>
+<span class="nc" id="L57">        int workers = workers(parameters);</span>
+
+<span class="nc" id="L59">        Long clearPass = clearPass(parameters);</span>
+<span class="nc" id="L60">        Long modPass = showModularity(parameters);</span>
+<span class="nc" id="L61">        String showComm = showCommunity(parameters);</span>
+<span class="nc" id="L62">        Long exportPass = exportCommunity(parameters);</span>
+
+<span class="nc" id="L64">        try (LouvainTraverser traverser = new LouvainTraverser(</span>
+                                          job, workers, degree,
+                                          label, clabel, skipIsolated)) {
+<span class="nc bnc" id="L67" title="All 2 branches missed.">            if (clearPass != null) {</span>
+<span class="nc" id="L68">                return traverser.clearPass(clearPass.intValue());</span>
+<span class="nc bnc" id="L69" title="All 2 branches missed.">            } else if (modPass != null) {</span>
+<span class="nc" id="L70">                return traverser.modularity(modPass.intValue());</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">            } else if (exportPass != null) {</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">                boolean vertexFirst = showComm == null;</span>
+<span class="nc" id="L73">                int pass = exportPass.intValue();</span>
+<span class="nc" id="L74">                return traverser.exportCommunity(pass, vertexFirst);</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">            } else if (showComm != null) {</span>
+<span class="nc" id="L76">                return traverser.showCommunity(showComm);</span>
+            } else {
+<span class="nc" id="L78">                return traverser.louvain(times(parameters),</span>
+<span class="nc" id="L79">                                         stableTimes(parameters),</span>
+<span class="nc" id="L80">                                         precision(parameters));</span>
+            }
+<span class="nc" id="L82">        } catch (Throwable e) {</span>
+<span class="nc" id="L83">            job.graph().tx().rollback();</span>
+<span class="nc" id="L84">            throw e;</span>
+        }
+    }
+
+    protected static Long clearPass(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L89" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_CLEAR)) {</span>
+<span class="nc" id="L90">            return null;</span>
+        }
+<span class="nc" id="L92">        long pass = ParameterUtil.parameterLong(parameters, KEY_CLEAR);</span>
+<span class="nc" id="L93">        HugeTraverser.checkNonNegativeOrNoLimit(pass, KEY_CLEAR);</span>
+<span class="nc" id="L94">        return pass;</span>
+    }
+
+    protected static Long showModularity(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L98" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_SHOW_MOD)) {</span>
+<span class="nc" id="L99">            return null;</span>
+        }
+<span class="nc" id="L101">        long pass = ParameterUtil.parameterLong(parameters, KEY_SHOW_MOD);</span>
+<span class="nc" id="L102">        HugeTraverser.checkNonNegative(pass, KEY_SHOW_MOD);</span>
+<span class="nc" id="L103">        return pass;</span>
+    }
+
+    protected static Long exportCommunity(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L107" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_EXPORT_COMM)) {</span>
+<span class="nc" id="L108">            return null;</span>
+        }
+<span class="nc" id="L110">        long pass = ParameterUtil.parameterLong(parameters, KEY_EXPORT_COMM);</span>
+<span class="nc" id="L111">        HugeTraverser.checkNonNegative(pass, KEY_EXPORT_COMM);</span>
+<span class="nc" id="L112">        return pass;</span>
+    }
+
+    protected static boolean skipIsolated(Map&lt;String, Object&gt; parameters) {
+<span class="nc bnc" id="L116" title="All 2 branches missed.">        if (!parameters.containsKey(KEY_SKIP_ISOLATED)) {</span>
+<span class="nc" id="L117">            return true;</span>
+        }
+<span class="nc" id="L119">        return ParameterUtil.parameterBoolean(parameters, KEY_SKIP_ISOLATED);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

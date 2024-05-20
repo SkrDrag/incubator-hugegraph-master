@@ -1,0 +1,605 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>IntMap.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.util.collection</a> &gt; <span class="el_source">IntMap.java</span></div><h1>IntMap.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.util.collection;
+
+import java.util.Arrays;
+import java.util.NoSuchElementException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+
+import org.eclipse.collections.api.map.primitive.MutableIntIntMap;
+import org.eclipse.collections.impl.map.mutable.primitive.IntIntHashMap;
+
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.collection.IntIterator.IntIterators;
+import org.apache.hugegraph.util.collection.IntIterator.MapperInt2IntIterator;
+
+import sun.misc.Unsafe;
+
+public interface IntMap {
+
+    boolean put(int key, int value);
+
+    int get(int key);
+
+    boolean remove(int key);
+
+    boolean containsKey(int key);
+
+    IntIterator keys();
+
+    IntIterator values();
+
+    void clear();
+
+    int size();
+
+    boolean concurrent();
+
+    /**
+     * NOTE: IntMapBySegments(backend by IntMapByFixedAddr) is:
+     * - slower 5x than IntMapByFixedAddr for single thread;
+     * - slower 5x than IntMapByFixedAddr for 4 threads;
+     * - faster 10x than ec IntIntHashMap-segment-lock for 4 threads;
+     * - faster 20x than ec IntIntHashMap-global-lock for 4 threads;
+     */
+    final class IntMapBySegments implements IntMap {
+
+        private final IntMap[] maps;
+        private final long capacity;
+        private final long unsignedSize;
+        private final int segmentSize;
+        private final int segmentShift;
+        private final int segmentMask;
+        private final Function&lt;Integer, IntMap&gt; creator;
+
+<span class="nc" id="L71">        private static final int DEFAULT_SEGMENTS = (IntSet.CPUS + 8) * 32;</span>
+<span class="nc" id="L72">        private static final Function&lt;Integer, IntMap&gt; DEFAULT_CREATOR =</span>
+<span class="nc" id="L73">                             size -&gt; new IntMapByFixedAddr(size);</span>
+
+        @SuppressWarnings(&quot;static-access&quot;)
+<span class="nc" id="L76">        private static final int BASE_OFFSET = UNSAFE.ARRAY_OBJECT_BASE_OFFSET;</span>
+        @SuppressWarnings(&quot;static-access&quot;)
+<span class="nc" id="L78">        private static final int SHIFT = 31 - Integer.numberOfLeadingZeros(</span>
+                                              UNSAFE.ARRAY_OBJECT_INDEX_SCALE);
+
+        public IntMapBySegments(int capacity) {
+<span class="nc" id="L82">            this(capacity, DEFAULT_SEGMENTS, DEFAULT_CREATOR);</span>
+<span class="nc" id="L83">        }</span>
+
+        public IntMapBySegments(int capacity, int segments) {
+<span class="nc" id="L86">            this(capacity, segments, DEFAULT_CREATOR);</span>
+<span class="nc" id="L87">        }</span>
+
+        public IntMapBySegments(int capacity, int segments,
+<span class="nc" id="L90">                                Function&lt;Integer, IntMap&gt; creator) {</span>
+<span class="nc bnc" id="L91" title="All 2 branches missed.">            E.checkArgument(segments &gt;= 1,</span>
+<span class="nc" id="L92">                            &quot;Invalid segments %s&quot;, segments);</span>
+<span class="nc bnc" id="L93" title="All 2 branches missed.">            E.checkArgument(capacity &gt;= segments,</span>
+                            &quot;Invalid capacity %s, expect &gt;= segments %s&quot;,
+<span class="nc" id="L95">                            capacity, segments);</span>
+
+<span class="nc" id="L97">            this.maps = new IntMap[segments];</span>
+            // include signed and unsigned number
+<span class="nc" id="L99">            this.unsignedSize = capacity;</span>
+<span class="nc" id="L100">            this.capacity = this.unsignedSize * 2L;</span>
+<span class="nc" id="L101">            this.segmentSize = IntSet.segmentSize(this.capacity, segments);</span>
+<span class="nc" id="L102">            this.segmentShift = Integer.numberOfTrailingZeros(this.segmentSize);</span>
+            /*
+             * The mask is lower bits of each segment size, like
+             * segmentSize=4096 (0x1000), segmentMask=4095 (0xfff),
+             * NOTE: `-1 &gt;&gt;&gt; 0` or `-1 &gt;&gt;&gt; 32` is -1.
+             */
+<span class="nc bnc" id="L108" title="All 2 branches missed.">            this.segmentMask = this.segmentShift == 0 ?</span>
+<span class="nc" id="L109">                               0 : -1 &gt;&gt;&gt; (32 - this.segmentShift);</span>
+<span class="nc" id="L110">            this.creator = creator;</span>
+<span class="nc" id="L111">        }</span>
+
+        @Override
+        public boolean put(int key, int value) {
+<span class="nc" id="L115">            int innerKey = (int) ((key + this.unsignedSize) &amp; this.segmentMask);</span>
+<span class="nc" id="L116">            return segment(key).put(innerKey, value);</span>
+        }
+
+        @Override
+        public boolean remove(int key) {
+<span class="nc" id="L121">            int innerKey = (int) ((key + this.unsignedSize) &amp; this.segmentMask);</span>
+<span class="nc" id="L122">            return segment(key).remove(innerKey);</span>
+        }
+
+        @Override
+        public int get(int key) {
+<span class="nc" id="L127">            long ukey = key + this.unsignedSize;</span>
+<span class="nc bnc" id="L128" title="All 4 branches missed.">            if (ukey &gt;= this.capacity || ukey &lt; 0L) {</span>
+<span class="nc" id="L129">                return NULL_VALUE;</span>
+            }
+<span class="nc" id="L131">            int innerKey = (int) (ukey &amp; this.segmentMask);</span>
+<span class="nc" id="L132">            return segment(key).get(innerKey);</span>
+        }
+
+        @Override
+        public boolean containsKey(int key) {
+<span class="nc" id="L137">            long ukey = key + this.unsignedSize;</span>
+<span class="nc bnc" id="L138" title="All 4 branches missed.">            if (ukey &gt;= this.capacity || ukey &lt; 0L) {</span>
+<span class="nc" id="L139">                return false;</span>
+            }
+<span class="nc" id="L141">            int innerKey = (int) (ukey &amp; this.segmentMask);</span>
+<span class="nc" id="L142">            return segment(key).containsKey(innerKey);</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="nc bnc" id="L147" title="All 2 branches missed.">            for (int i = 0; i &lt; this.maps.length; i++) {</span>
+<span class="nc" id="L148">                IntMap map = this.segmentAt(i);</span>
+<span class="nc bnc" id="L149" title="All 2 branches missed.">                if (map != null) {</span>
+<span class="nc" id="L150">                    map.clear();</span>
+                }
+            }
+<span class="nc" id="L153">        }</span>
+
+        @Override
+        public int size() {
+<span class="nc" id="L157">            int size = 0;</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">            for (int i = 0; i &lt; this.maps.length; i++) {</span>
+<span class="nc" id="L159">                IntMap map = this.segmentAt(i);</span>
+<span class="nc bnc" id="L160" title="All 2 branches missed.">                if (map != null) {</span>
+<span class="nc" id="L161">                    size += map.size();</span>
+                }
+            }
+<span class="nc" id="L164">            return size;</span>
+        }
+
+        @Override
+        public IntIterator keys() {
+<span class="nc" id="L169">            IntIterators iters = new IntIterators(this.maps.length);</span>
+<span class="nc bnc" id="L170" title="All 2 branches missed.">            for (int i = 0; i &lt; this.maps.length; i++) {</span>
+<span class="nc" id="L171">                IntMap map = this.segmentAt(i);</span>
+<span class="nc bnc" id="L172" title="All 4 branches missed.">                if (map == null || map.size() == 0) {</span>
+<span class="nc" id="L173">                    continue;</span>
+                }
+<span class="nc" id="L175">                int base = this.segmentSize * i;</span>
+<span class="nc" id="L176">                iters.extend(new MapperInt2IntIterator(map.keys(), k -&gt; {</span>
+<span class="nc" id="L177">                    return (int) (k + base - this.unsignedSize);</span>
+                }));
+            }
+<span class="nc" id="L180">            return iters;</span>
+        }
+
+        @Override
+        public IntIterator values() {
+<span class="nc" id="L185">            IntIterators iters = new IntIterators(this.maps.length);</span>
+<span class="nc bnc" id="L186" title="All 2 branches missed.">            for (int i = 0; i &lt; this.maps.length; i++) {</span>
+<span class="nc" id="L187">                IntMap map = this.segmentAt(i);</span>
+<span class="nc bnc" id="L188" title="All 4 branches missed.">                if (map != null &amp;&amp; map.size() &gt; 0) {</span>
+<span class="nc" id="L189">                    iters.extend(map.values());</span>
+                }
+            }
+<span class="nc" id="L192">            return iters;</span>
+        }
+
+        @Override
+        public boolean concurrent() {
+<span class="nc" id="L197">            return true;</span>
+        }
+
+        private IntMap segment(int key) {
+<span class="nc" id="L201">            long ukey = key + this.unsignedSize;</span>
+<span class="nc bnc" id="L202" title="All 4 branches missed.">            if (ukey &gt;= this.capacity || ukey &lt; 0L) {</span>
+<span class="nc" id="L203">                E.checkArgument(false,</span>
+                                &quot;The key %s is out of bound %s&quot;,
+<span class="nc" id="L205">                                key, this.capacity);</span>
+            }
+
+<span class="nc" id="L208">            long index = ukey &gt;&gt;&gt; this.segmentShift;</span>
+<span class="nc" id="L209">            IntMap exist = this.maps[(int) index];</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            if (exist != null) {</span>
+<span class="nc" id="L211">                return exist;</span>
+            }
+
+            // volatile get this.maps[index]
+<span class="nc" id="L215">            long offset = (index &lt;&lt; SHIFT) + BASE_OFFSET;</span>
+<span class="nc" id="L216">            Object old = UNSAFE.getObjectVolatile(this.maps, offset);</span>
+<span class="nc bnc" id="L217" title="All 2 branches missed.">            if (old != null) {</span>
+<span class="nc" id="L218">                return (IntMap) old;</span>
+            }
+
+            // set this.maps[index] = new IntMap()
+<span class="nc" id="L222">            IntMap map = this.creator.apply(this.segmentSize);</span>
+            while (true) {
+<span class="nc bnc" id="L224" title="All 2 branches missed.">                if (UNSAFE.compareAndSwapObject(this.maps, offset, null, map)) {</span>
+<span class="nc" id="L225">                    return map;</span>
+                }
+<span class="nc" id="L227">                old = UNSAFE.getObjectVolatile(this.maps, offset);</span>
+<span class="nc bnc" id="L228" title="All 2 branches missed.">                if (old != null) {</span>
+<span class="nc" id="L229">                    return (IntMap) old;</span>
+                }
+            }
+        }
+
+        private IntMap segmentAt(int index) {
+            // volatile get this.maps[index]
+<span class="nc" id="L236">            long offset = (index &lt;&lt; SHIFT) + BASE_OFFSET;</span>
+<span class="nc" id="L237">            IntMap map = (IntMap) UNSAFE.getObjectVolatile(this.maps, offset);</span>
+<span class="nc" id="L238">            return map;</span>
+        }
+    }
+
+    /**
+     * NOTE: IntMapByFixedAddr is:
+     * - faster 3x than ec IntIntHashMap for single thread;
+     * - faster 8x than ec IntIntHashMap for 4 threads, 4x operations
+     *   with 0.5x cost;
+     */
+    final class IntMapByFixedAddr implements IntMap {
+
+        private final int[] values;
+        private final int capacity;
+        private final AtomicInteger size;
+
+        private final int indexBlocksNum;
+        private final int indexBlockSize;
+        private final int indexBlockSizeShift;
+        private final IntSet.IntSetByFixedAddr4Unsigned indexBlocksSet;
+
+        @SuppressWarnings(&quot;static-access&quot;)
+<span class="nc" id="L260">        private static final int BASE_OFFSET = UNSAFE.ARRAY_INT_BASE_OFFSET;</span>
+        @SuppressWarnings(&quot;static-access&quot;)
+<span class="nc" id="L262">        private static final int MUL4 = 31 - Integer.numberOfLeadingZeros(</span>
+                                             UNSAFE.ARRAY_INT_INDEX_SCALE);
+
+<span class="nc" id="L265">        public IntMapByFixedAddr(int capacity) {</span>
+<span class="nc" id="L266">            this.capacity = capacity;</span>
+<span class="nc" id="L267">            this.values = new int[capacity];</span>
+<span class="nc" id="L268">            this.size = new AtomicInteger();</span>
+
+            // each block at least &gt;= 1kb
+<span class="nc" id="L271">            int minBlockSize = 1 &lt;&lt; 10;</span>
+            // 64k index blocks by default (indexBlocksSet will cost 8kb memory)
+<span class="nc" id="L273">            int indexBlocksNum = 1 &lt;&lt; 16;</span>
+<span class="nc" id="L274">            int indexBlockSize = IntSet.segmentSize(capacity, indexBlocksNum);</span>
+<span class="nc bnc" id="L275" title="All 2 branches missed.">            if (indexBlockSize &lt; minBlockSize) {</span>
+<span class="nc" id="L276">                indexBlockSize = minBlockSize;</span>
+<span class="nc" id="L277">                indexBlocksNum = IntSet.segmentSize(capacity, indexBlockSize);</span>
+            }
+<span class="nc" id="L279">            this.indexBlocksNum = indexBlocksNum;</span>
+<span class="nc" id="L280">            this.indexBlockSize = IntSet.segmentSize(capacity,</span>
+                                                     this.indexBlocksNum);
+<span class="nc" id="L282">            this.indexBlockSizeShift = Integer.numberOfTrailingZeros(</span>
+                                       this.indexBlockSize);
+<span class="nc" id="L284">            this.indexBlocksSet = new IntSet.IntSetByFixedAddr4Unsigned(</span>
+                                  this.indexBlocksNum);
+
+<span class="nc" id="L287">            this.clear();</span>
+<span class="nc" id="L288">        }</span>
+
+        @Override
+        public boolean put(int key, int value) {
+<span class="nc bnc" id="L292" title="All 2 branches missed.">            assert value != NULL_VALUE : &quot;put value can't be &quot; + NULL_VALUE;</span>
+<span class="nc bnc" id="L293" title="All 2 branches missed.">            if (value == NULL_VALUE) {</span>
+<span class="nc" id="L294">                return false;</span>
+            }
+<span class="nc" id="L296">            long offset = this.offset(key);</span>
+<span class="nc" id="L297">            int oldV = UNSAFE.getIntVolatile(this.values, offset);</span>
+<span class="nc" id="L298">            int newV = value;</span>
+<span class="nc bnc" id="L299" title="All 2 branches missed.">            if (newV == oldV) {</span>
+<span class="nc" id="L300">                return true;</span>
+            }
+<span class="nc bnc" id="L302" title="All 2 branches missed.">            if (oldV != NULL_VALUE) {</span>
+<span class="nc" id="L303">                UNSAFE.putIntVolatile(this.values, offset, newV);</span>
+            } else {
+<span class="nc bnc" id="L305" title="All 2 branches missed.">                if (UNSAFE.compareAndSwapInt(this.values, offset, oldV, newV)) {</span>
+<span class="nc" id="L306">                    this.size.incrementAndGet();</span>
+<span class="nc" id="L307">                    this.indexBlocksSet.add(key &gt;&gt;&gt; this.indexBlockSizeShift);</span>
+                }
+            }
+<span class="nc" id="L310">            return true;</span>
+        }
+
+        public boolean putIfAbsent(int key, int value) {
+<span class="nc bnc" id="L314" title="All 2 branches missed.">            assert value != NULL_VALUE;</span>
+<span class="nc" id="L315">            long offset = this.offset(key);</span>
+
+<span class="nc" id="L317">            int oldV = UNSAFE.getIntVolatile(this.values, offset);</span>
+<span class="nc" id="L318">            int newV = value;</span>
+<span class="nc bnc" id="L319" title="All 4 branches missed.">            if (newV == oldV || oldV != NULL_VALUE) {</span>
+<span class="nc" id="L320">                return false;</span>
+            }
+<span class="nc bnc" id="L322" title="All 2 branches missed.">            if (UNSAFE.compareAndSwapInt(this.values, offset, oldV, newV)) {</span>
+<span class="nc bnc" id="L323" title="All 2 branches missed.">                assert oldV == NULL_VALUE;</span>
+<span class="nc" id="L324">                this.size.incrementAndGet();</span>
+<span class="nc" id="L325">                this.indexBlocksSet.add(key &gt;&gt;&gt; this.indexBlockSizeShift);</span>
+<span class="nc" id="L326">                return true;</span>
+            }
+<span class="nc" id="L328">            return false;</span>
+        }
+
+        @Override
+        public int get(int key) {
+<span class="nc bnc" id="L333" title="All 2 branches missed.">            if (key &gt;= this.capacity) {</span>
+<span class="nc" id="L334">                return NULL_VALUE;</span>
+            }
+<span class="nc" id="L336">            long offset = this.offset(key);</span>
+<span class="nc" id="L337">            int value = UNSAFE.getIntVolatile(this.values, offset);</span>
+<span class="nc" id="L338">            return value;</span>
+        }
+
+        @Override
+        public boolean containsKey(int key) {
+<span class="nc bnc" id="L343" title="All 2 branches missed.">            if (key &gt;= this.capacity) {</span>
+<span class="nc" id="L344">                return false;</span>
+            }
+<span class="nc" id="L346">            long offset = this.offset(key);</span>
+<span class="nc" id="L347">            int value = UNSAFE.getIntVolatile(this.values, offset);</span>
+<span class="nc bnc" id="L348" title="All 2 branches missed.">            return value != NULL_VALUE;</span>
+        }
+
+        @Override
+        public boolean remove(int key) {
+<span class="nc" id="L353">            long offset = this.offset(key);</span>
+
+            while (true) {
+<span class="nc" id="L356">                int oldV = UNSAFE.getIntVolatile(this.values, offset);</span>
+<span class="nc" id="L357">                int newV = NULL_VALUE;</span>
+<span class="nc bnc" id="L358" title="All 2 branches missed.">                if (newV == oldV) {</span>
+<span class="nc" id="L359">                    return false;</span>
+                }
+<span class="nc bnc" id="L361" title="All 2 branches missed.">                assert oldV != NULL_VALUE;</span>
+<span class="nc bnc" id="L362" title="All 2 branches missed.">                if (UNSAFE.compareAndSwapInt(this.values, offset, oldV, newV)) {</span>
+<span class="nc" id="L363">                    this.size.decrementAndGet();</span>
+<span class="nc" id="L364">                    return true;</span>
+                }
+<span class="nc" id="L366">            }</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="nc" id="L371">            Arrays.fill(this.values, NULL_VALUE);</span>
+<span class="nc" id="L372">            this.size.set(0);</span>
+<span class="nc" id="L373">            this.indexBlocksSet.clear();</span>
+<span class="nc" id="L374">        }</span>
+
+        @Override
+        public int size() {
+<span class="nc" id="L378">            return this.size.get();</span>
+        }
+
+        @Override
+        public IntIterator keys() {
+            // NOTE: it's slow to scan KVs when a large number of empty slots
+<span class="nc" id="L384">            return new KeyIterator();</span>
+        }
+
+        @Override
+        public IntIterator values() {
+            // NOTE: it's slow to scan KVs when a large number of empty slots
+<span class="nc" id="L390">            return new ValueIterator();</span>
+        }
+
+        @Override
+        public boolean concurrent() {
+<span class="nc" id="L395">            return true;</span>
+        }
+
+        private long offset(int key) {
+<span class="nc bnc" id="L399" title="All 4 branches missed.">            if (key &gt;= this.capacity || key &lt; 0) {</span>
+<span class="nc" id="L400">                E.checkArgument(false, &quot;The key %s is out of bound %s&quot;,</span>
+<span class="nc" id="L401">                                key, this.capacity);</span>
+            }
+            // int key to int offset
+<span class="nc" id="L404">            long index = key;</span>
+            // int offset to byte offset
+<span class="nc" id="L406">            long offset = index &lt;&lt; MUL4;</span>
+            // add the array base offset
+<span class="nc" id="L408">            offset += BASE_OFFSET;</span>
+<span class="nc" id="L409">            return offset;</span>
+        }
+
+<span class="nc" id="L412">        private final class KeyIterator implements IntIterator {</span>
+
+            private int indexOfBlock;
+            private int indexInBlock;
+
+            private boolean fetched;
+            private int current;
+
+<span class="nc" id="L420">            public KeyIterator() {</span>
+<span class="nc" id="L421">                this.indexOfBlock = indexBlocksSet.nextKey(0);</span>
+<span class="nc" id="L422">                this.indexInBlock = 0;</span>
+<span class="nc" id="L423">                this.fetched = false;</span>
+<span class="nc" id="L424">                this.current = 0;</span>
+<span class="nc" id="L425">            }</span>
+
+            @Override
+            public boolean hasNext() {
+<span class="nc bnc" id="L429" title="All 2 branches missed.">                if (this.fetched) {</span>
+<span class="nc" id="L430">                    return true;</span>
+                }
+<span class="nc bnc" id="L432" title="All 2 branches missed.">                while (this.indexOfBlock &lt; indexBlocksNum) {</span>
+<span class="nc bnc" id="L433" title="All 2 branches missed.">                    while (this.indexInBlock &lt; indexBlockSize) {</span>
+<span class="nc" id="L434">                        int index = this.indexOfBlock &lt;&lt; indexBlockSizeShift;</span>
+<span class="nc" id="L435">                        index += this.indexInBlock++;</span>
+<span class="nc" id="L436">                        int value = get(index);</span>
+<span class="nc bnc" id="L437" title="All 2 branches missed.">                        if (value != NULL_VALUE) {</span>
+<span class="nc" id="L438">                            this.fetched = true;</span>
+<span class="nc" id="L439">                            this.current = index;</span>
+<span class="nc" id="L440">                            return true;</span>
+                        }
+<span class="nc" id="L442">                    }</span>
+<span class="nc" id="L443">                    this.indexOfBlock = indexBlocksSet.nextKey(</span>
+                                        this.indexOfBlock + 1);
+<span class="nc" id="L445">                    this.indexInBlock = 0;</span>
+                }
+<span class="nc bnc" id="L447" title="All 2 branches missed.">                assert !this.fetched;</span>
+<span class="nc" id="L448">                return false;</span>
+            }
+
+            @Override
+            public int next() {
+<span class="nc bnc" id="L453" title="All 2 branches missed.">                if (!fetched) {</span>
+<span class="nc bnc" id="L454" title="All 2 branches missed.">                    if (!this.hasNext()) {</span>
+<span class="nc" id="L455">                        throw new NoSuchElementException();</span>
+                    }
+                }
+<span class="nc" id="L458">                this.fetched = false;</span>
+<span class="nc" id="L459">                return this.current;</span>
+            }
+        }
+
+        private final class ValueIterator implements IntIterator {
+
+<span class="nc" id="L465">            private int indexOfBlock = 0;</span>
+<span class="nc" id="L466">            private int indexInBlock = 0;</span>
+
+<span class="nc" id="L468">            private int current = NULL_VALUE;</span>
+
+<span class="nc" id="L470">            public ValueIterator() {</span>
+<span class="nc" id="L471">                this.indexOfBlock = indexBlocksSet.nextKey(this.indexOfBlock);</span>
+<span class="nc" id="L472">            }</span>
+
+            @Override
+            public boolean hasNext() {
+<span class="nc bnc" id="L476" title="All 2 branches missed.">                if (this.current != NULL_VALUE) {</span>
+<span class="nc" id="L477">                    return true;</span>
+                }
+<span class="nc bnc" id="L479" title="All 2 branches missed.">                while (this.indexOfBlock &lt; indexBlocksNum) {</span>
+<span class="nc bnc" id="L480" title="All 2 branches missed.">                    while (this.indexInBlock &lt; indexBlockSize) {</span>
+<span class="nc" id="L481">                        int index = this.indexOfBlock &lt;&lt; indexBlockSizeShift;</span>
+<span class="nc" id="L482">                        index += this.indexInBlock++;</span>
+<span class="nc" id="L483">                        int value = get(index);</span>
+<span class="nc bnc" id="L484" title="All 2 branches missed.">                        if (value != NULL_VALUE) {</span>
+<span class="nc" id="L485">                            this.current = value;</span>
+<span class="nc" id="L486">                            return true;</span>
+                        }
+<span class="nc" id="L488">                    }</span>
+<span class="nc" id="L489">                    this.indexOfBlock = indexBlocksSet.nextKey(</span>
+                                        this.indexOfBlock + 1);
+<span class="nc" id="L491">                    this.indexInBlock = 0;</span>
+                }
+<span class="nc" id="L493">                return false;</span>
+            }
+
+            @Override
+            public int next() {
+<span class="nc bnc" id="L498" title="All 2 branches missed.">                if (this.current == NULL_VALUE) {</span>
+<span class="nc bnc" id="L499" title="All 2 branches missed.">                    if (!this.hasNext()) {</span>
+<span class="nc" id="L500">                        throw new NoSuchElementException();</span>
+                    }
+                }
+<span class="nc" id="L503">                int result = this.current;</span>
+<span class="nc" id="L504">                this.current = NULL_VALUE;</span>
+<span class="nc" id="L505">                return result;</span>
+            }
+        }
+    }
+
+    final class IntMapByEcSegment implements IntMap {
+
+        private final MutableIntIntMap[] maps;
+        private final int segmentMask;
+
+        public IntMapByEcSegment() {
+<span class="nc" id="L516">            this(IntMapBySegments.DEFAULT_SEGMENTS);</span>
+<span class="nc" id="L517">        }</span>
+
+<span class="nc" id="L519">        public IntMapByEcSegment(int segments) {</span>
+<span class="nc" id="L520">            segments = IntSet.sizeToPowerOf2Size(segments);</span>
+<span class="nc" id="L521">            this.segmentMask = segments - 1;</span>
+<span class="nc" id="L522">            this.maps = new MutableIntIntMap[segments];</span>
+<span class="nc bnc" id="L523" title="All 2 branches missed.">            for (int i = 0; i &lt; segments; i++) {</span>
+                /*
+                 * NOTE: asSynchronized() is:
+                 * - about slower 3x for single thread;
+                 * - about slower 5x for 4 threads, 4x operations with 20x cost;
+                 * - about faster 2x than global-lock for 4 threads;
+                 */
+<span class="nc" id="L530">                this.maps[i] = new IntIntHashMap().asSynchronized();</span>
+            }
+<span class="nc" id="L532">        }</span>
+
+        private MutableIntIntMap map(int key) {
+            // NOTE '%' is slower 20% ~ 50% than '&amp;': key % this.maps.length;
+<span class="nc" id="L536">            int index = key &amp; this.segmentMask;</span>
+<span class="nc" id="L537">            return this.maps[index];</span>
+        }
+
+        @Override
+        public boolean put(int key, int value) {
+<span class="nc" id="L542">            map(key).put(key, value);</span>
+<span class="nc" id="L543">            return true;</span>
+        }
+
+        @Override
+        public int get(int key) {
+<span class="nc" id="L548">            return map(key).get(key);</span>
+        }
+
+        @Override
+        public boolean containsKey(int key) {
+<span class="nc" id="L553">            return map(key).containsKey(key);</span>
+        }
+
+        @Override
+        public boolean remove(int key) {
+<span class="nc" id="L558">            map(key).remove(key);</span>
+<span class="nc" id="L559">            return true;</span>
+        }
+
+        @Override
+        public void clear() {
+<span class="nc bnc" id="L564" title="All 2 branches missed.">            for (MutableIntIntMap map : this.maps) {</span>
+<span class="nc" id="L565">                map.clear();</span>
+            }
+<span class="nc" id="L567">        }</span>
+
+        @Override
+        public int size() {
+<span class="nc" id="L571">            int size = 0;</span>
+<span class="nc bnc" id="L572" title="All 2 branches missed.">            for (MutableIntIntMap map : this.maps) {</span>
+<span class="nc" id="L573">                size += map.size();</span>
+            }
+<span class="nc" id="L575">            return size;</span>
+        }
+
+        @Override
+        public IntIterator keys() {
+<span class="nc" id="L580">            IntIterators iters = new IntIterators(this.maps.length);</span>
+<span class="nc bnc" id="L581" title="All 2 branches missed.">            for (MutableIntIntMap map : this.maps) {</span>
+<span class="nc" id="L582">                iters.extend(IntIterator.wrap(map.keySet().intIterator()));</span>
+            }
+<span class="nc" id="L584">            return iters;</span>
+        }
+
+        @Override
+        public IntIterator values() {
+<span class="nc" id="L589">            IntIterators iters = new IntIterators(this.maps.length);</span>
+<span class="nc bnc" id="L590" title="All 2 branches missed.">            for (MutableIntIntMap map : this.maps) {</span>
+<span class="nc" id="L591">                iters.extend(IntIterator.wrap(map.values().intIterator()));</span>
+            }
+<span class="nc" id="L593">            return iters;</span>
+        }
+
+        @Override
+        public boolean concurrent() {
+<span class="nc" id="L598">            return false;</span>
+        }
+    }
+
+    int NULL_VALUE = Integer.MIN_VALUE;
+<span class="nc" id="L603">    Unsafe UNSAFE = IntSet.UNSAFE;</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>CassandraOptions.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-cassandra</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.backend.store.cassandra</a> &gt; <span class="el_source">CassandraOptions.java</span></div><h1>CassandraOptions.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.backend.store.cassandra;
+
+import static org.apache.hugegraph.config.OptionChecker.allowValues;
+import static org.apache.hugegraph.config.OptionChecker.disallowEmpty;
+import static org.apache.hugegraph.config.OptionChecker.positiveInt;
+import static org.apache.hugegraph.config.OptionChecker.rangeInt;
+
+import org.apache.hugegraph.config.ConfigListOption;
+import org.apache.hugegraph.config.ConfigOption;
+import org.apache.hugegraph.config.OptionHolder;
+
+public class CassandraOptions extends OptionHolder {
+
+    private CassandraOptions() {
+        super();
+    }
+
+    private static volatile CassandraOptions instance;
+
+    public static synchronized CassandraOptions instance() {
+<span class="nc bnc" id="L38" title="All 2 branches missed.">        if (instance == null) {</span>
+<span class="nc" id="L39">            instance = new CassandraOptions();</span>
+<span class="nc" id="L40">            instance.registerOptions();</span>
+        }
+<span class="nc" id="L42">        return instance;</span>
+    }
+
+<span class="nc" id="L45">    public static final ConfigOption&lt;String&gt; CASSANDRA_HOST =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.host&quot;,
+                    &quot;The seeds hostname or ip address of cassandra cluster.&quot;,
+<span class="nc" id="L49">                    disallowEmpty(),</span>
+                    &quot;localhost&quot;
+            );
+
+<span class="nc" id="L53">    public static final ConfigOption&lt;Integer&gt; CASSANDRA_PORT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.port&quot;,
+                    &quot;The seeds port address of cassandra cluster.&quot;,
+<span class="nc" id="L57">                    rangeInt(1, 65535),</span>
+<span class="nc" id="L58">                    9042</span>
+            );
+
+<span class="nc" id="L61">    public static final ConfigOption&lt;String&gt; CASSANDRA_USERNAME =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.username&quot;,
+                    &quot;The username to use to login to cassandra cluster.&quot;,
+                    &quot;&quot;
+            );
+
+<span class="nc" id="L68">    public static final ConfigOption&lt;String&gt; CASSANDRA_PASSWORD =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.password&quot;,
+                    &quot;The password corresponding to cassandra.username.&quot;,
+                    &quot;&quot;
+            );
+
+<span class="nc" id="L75">    public static final ConfigOption&lt;Integer&gt; CASSANDRA_CONN_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.connect_timeout&quot;,
+                    &quot;The cassandra driver connect server timeout(seconds).&quot;,
+<span class="nc" id="L79">                    rangeInt(1, 30),</span>
+<span class="nc" id="L80">                    5</span>
+            );
+
+<span class="nc" id="L83">    public static final ConfigOption&lt;Integer&gt; CASSANDRA_READ_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.read_timeout&quot;,
+                    &quot;The cassandra driver read from server timeout(seconds).&quot;,
+<span class="nc" id="L87">                    rangeInt(1, 120),</span>
+<span class="nc" id="L88">                    20</span>
+            );
+
+<span class="nc" id="L91">    public static final ConfigOption&lt;String&gt; CASSANDRA_STRATEGY =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.keyspace.strategy&quot;,
+                    &quot;The replication strategy of keyspace, valid value is &quot; +
+                    &quot;SimpleStrategy or NetworkTopologyStrategy.&quot;,
+<span class="nc" id="L96">                    allowValues(&quot;SimpleStrategy&quot;, &quot;NetworkTopologyStrategy&quot;),</span>
+                    &quot;SimpleStrategy&quot;
+            );
+
+<span class="nc" id="L100">    public static final ConfigListOption&lt;String&gt; CASSANDRA_REPLICATION =</span>
+            new ConfigListOption&lt;&gt;(
+                    &quot;cassandra.keyspace.replication&quot;,
+                    &quot;The keyspace replication factor of SimpleStrategy, &quot; +
+                    &quot;like '[3]'. Or replicas in each datacenter of &quot; +
+                    &quot;NetworkTopologyStrategy, like '[dc1:2,dc2:1]'.&quot;,
+<span class="nc" id="L106">                    disallowEmpty(),</span>
+                    &quot;3&quot;
+            );
+
+<span class="nc" id="L110">    public static final ConfigOption&lt;String&gt; CASSANDRA_COMPRESSION =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.compression_type&quot;,
+                    &quot;The compression algorithm of cassandra transport: none/snappy/lz4.&quot;,
+<span class="nc" id="L114">                    allowValues(&quot;none&quot;, &quot;snappy&quot;, &quot;lz4&quot;),</span>
+                    &quot;none&quot;
+            );
+
+<span class="nc" id="L118">    public static final ConfigOption&lt;Integer&gt; CASSANDRA_JMX_PORT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.jmx_port&quot;,
+                    &quot;The port of JMX API service for cassandra&quot;,
+<span class="nc" id="L122">                    rangeInt(1, 65535),</span>
+<span class="nc" id="L123">                    7199</span>
+            );
+
+<span class="nc" id="L126">    public static final ConfigOption&lt;Integer&gt; AGGR_TIMEOUT =</span>
+            new ConfigOption&lt;&gt;(
+                    &quot;cassandra.aggregation_timeout&quot;,
+                    &quot;The timeout in seconds of waiting for aggregation.&quot;,
+<span class="nc" id="L130">                    positiveInt(),</span>
+<span class="nc" id="L131">                    12 * 60 * 60</span>
+            );
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

@@ -1,0 +1,298 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>HugeIndex.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-core</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.structure</a> &gt; <span class="el_source">HugeIndex.java</span></div><h1>HugeIndex.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.structure;
+
+import java.util.Collections;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
+import org.apache.hugegraph.HugeException;
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.backend.id.Id;
+import org.apache.hugegraph.backend.id.Id.IdType;
+import org.apache.hugegraph.backend.id.IdGenerator;
+import org.apache.hugegraph.backend.id.SplicingIdGenerator;
+import org.apache.hugegraph.schema.IndexLabel;
+import org.apache.hugegraph.schema.SchemaElement;
+import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.DataType;
+import org.apache.hugegraph.backend.serializer.BytesBuffer;
+import org.apache.hugegraph.util.E;
+import org.apache.hugegraph.util.HashUtil;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.NumericUtil;
+
+<span class="nc" id="L41">public class HugeIndex implements GraphType, Cloneable {</span>
+
+    private final HugeGraph graph;
+    private Object fieldValues;
+    private IndexLabel indexLabel;
+    private Set&lt;IdWithExpiredTime&gt; elementIds;
+
+<span class="nc" id="L48">    public HugeIndex(HugeGraph graph, IndexLabel indexLabel) {</span>
+<span class="nc" id="L49">        E.checkNotNull(graph, &quot;graph&quot;);</span>
+<span class="nc" id="L50">        E.checkNotNull(indexLabel, &quot;label&quot;);</span>
+<span class="nc" id="L51">        E.checkNotNull(indexLabel.id(), &quot;label id&quot;);</span>
+<span class="nc" id="L52">        this.graph = graph;</span>
+<span class="nc" id="L53">        this.indexLabel = indexLabel;</span>
+<span class="nc" id="L54">        this.elementIds = new LinkedHashSet&lt;&gt;();</span>
+<span class="nc" id="L55">        this.fieldValues = null;</span>
+<span class="nc" id="L56">    }</span>
+
+    @Override
+    public String name() {
+<span class="nc" id="L60">        return this.indexLabel.name();</span>
+    }
+
+    @Override
+    public HugeType type() {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        if (this.indexLabel == IndexLabel.label(HugeType.VERTEX)) {</span>
+<span class="nc" id="L66">            return HugeType.VERTEX_LABEL_INDEX;</span>
+<span class="nc bnc" id="L67" title="All 2 branches missed.">        } else if (this.indexLabel == IndexLabel.label(HugeType.EDGE)) {</span>
+<span class="nc" id="L68">            return HugeType.EDGE_LABEL_INDEX;</span>
+        }
+<span class="nc" id="L70">        return this.indexLabel.indexType().type();</span>
+    }
+
+    public HugeGraph graph() {
+<span class="nc" id="L74">        return this.graph;</span>
+    }
+
+    public Id id() {
+<span class="nc" id="L78">        return formatIndexId(type(), this.indexLabelId(), this.fieldValues());</span>
+    }
+
+    public Id hashId() {
+<span class="nc" id="L82">        return formatIndexHashId(type(), this.indexLabelId(), this.fieldValues());</span>
+    }
+
+    public Object fieldValues() {
+<span class="nc" id="L86">        return this.fieldValues;</span>
+    }
+
+    public void fieldValues(Object fieldValues) {
+<span class="nc" id="L90">        this.fieldValues = fieldValues;</span>
+<span class="nc" id="L91">    }</span>
+
+    public Id indexLabelId() {
+<span class="nc" id="L94">        return this.indexLabel.id();</span>
+    }
+
+    public IndexLabel indexLabel() {
+<span class="nc" id="L98">        return this.indexLabel;</span>
+    }
+
+    public IdWithExpiredTime elementIdWithExpiredTime() {
+<span class="nc bnc" id="L102" title="All 2 branches missed.">        E.checkState(this.elementIds.size() == 1,</span>
+                     &quot;Expect one element id, actual %s&quot;,
+<span class="nc" id="L104">                     this.elementIds.size());</span>
+<span class="nc" id="L105">        return this.elementIds.iterator().next();</span>
+    }
+
+    public Id elementId() {
+<span class="nc" id="L109">        return this.elementIdWithExpiredTime().id();</span>
+    }
+
+    public Set&lt;Id&gt; elementIds() {
+<span class="nc" id="L113">        Set&lt;Id&gt; ids = InsertionOrderUtil.newSet(this.elementIds.size());</span>
+<span class="nc bnc" id="L114" title="All 2 branches missed.">        for (IdWithExpiredTime idWithExpiredTime : this.elementIds) {</span>
+<span class="nc" id="L115">            ids.add(idWithExpiredTime.id());</span>
+<span class="nc" id="L116">        }</span>
+<span class="nc" id="L117">        return Collections.unmodifiableSet(ids);</span>
+    }
+
+    public Set&lt;IdWithExpiredTime&gt; expiredElementIds() {
+<span class="nc" id="L121">        long now = this.graph.now();</span>
+<span class="nc" id="L122">        Set&lt;IdWithExpiredTime&gt; expired = InsertionOrderUtil.newSet();</span>
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        for (IdWithExpiredTime id : this.elementIds) {</span>
+<span class="nc bnc" id="L124" title="All 4 branches missed.">            if (0L &lt; id.expiredTime &amp;&amp; id.expiredTime &lt; now) {</span>
+<span class="nc" id="L125">                expired.add(id);</span>
+            }
+<span class="nc" id="L127">        }</span>
+<span class="nc" id="L128">        this.elementIds.removeAll(expired);</span>
+<span class="nc" id="L129">        return expired;</span>
+    }
+
+    public void elementIds(Id elementId) {
+<span class="nc" id="L133">        this.elementIds(elementId, 0L);</span>
+<span class="nc" id="L134">    }</span>
+
+    public void elementIds(Id elementId, long expiredTime) {
+<span class="nc" id="L137">        this.elementIds.add(new IdWithExpiredTime(elementId, expiredTime));</span>
+<span class="nc" id="L138">    }</span>
+
+    public void resetElementIds() {
+<span class="nc" id="L141">        this.elementIds = new LinkedHashSet&lt;&gt;();</span>
+<span class="nc" id="L142">    }</span>
+
+    public long expiredTime() {
+<span class="nc" id="L145">        return this.elementIdWithExpiredTime().expiredTime();</span>
+    }
+
+    public boolean hasTtl() {
+<span class="nc bnc" id="L149" title="All 2 branches missed.">        if (this.indexLabel.system()) {</span>
+<span class="nc" id="L150">            return false;</span>
+        }
+<span class="nc bnc" id="L152" title="All 2 branches missed.">        return this.indexLabel.baseLabel().ttl() &gt; 0L;</span>
+    }
+
+    public long ttl() {
+<span class="nc" id="L156">        return this.expiredTime() - this.graph.now();</span>
+    }
+
+    @Override
+    public HugeIndex clone() {
+        try {
+<span class="nc" id="L162">            return (HugeIndex) super.clone();</span>
+<span class="nc" id="L163">        } catch (CloneNotSupportedException e) {</span>
+<span class="nc" id="L164">            throw new HugeException(&quot;Failed to clone HugeIndex&quot;, e);</span>
+        }
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+<span class="nc bnc" id="L170" title="All 2 branches missed.">        if (!(obj instanceof HugeIndex)) {</span>
+<span class="nc" id="L171">            return false;</span>
+        }
+
+<span class="nc" id="L174">        HugeIndex other = (HugeIndex) obj;</span>
+<span class="nc" id="L175">        return this.id().equals(other.id());</span>
+    }
+
+    @Override
+    public int hashCode() {
+<span class="nc" id="L180">        return this.id().hashCode();</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L185">        return String.format(&quot;{label=%s&lt;%s&gt;, fieldValues=%s, elementIds=%s}&quot;,</span>
+<span class="nc" id="L186">                             this.indexLabel.name(),</span>
+<span class="nc" id="L187">                             this.indexLabel.indexType().string(),</span>
+                             this.fieldValues, this.elementIds);
+    }
+
+    public static Id formatIndexHashId(HugeType type, Id indexLabel,
+                                       Object fieldValues) {
+<span class="nc bnc" id="L193" title="All 2 branches missed.">        E.checkState(!type.isRangeIndex(),</span>
+                     &quot;RangeIndex can't return a hash id&quot;);
+<span class="nc bnc" id="L195" title="All 2 branches missed.">        String value = fieldValues == null ? &quot;&quot; : fieldValues.toString();</span>
+<span class="nc" id="L196">        return formatIndexId(type, indexLabel, HashUtil.hash(value));</span>
+    }
+
+    public static Id formatIndexId(HugeType type, Id indexLabelId,
+                                   Object fieldValues) {
+<span class="nc bnc" id="L201" title="All 2 branches missed.">        if (type.isStringIndex()) {</span>
+<span class="nc" id="L202">            String value = &quot;&quot;;</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">            if (fieldValues instanceof Id) {</span>
+<span class="nc" id="L204">                value = IdGenerator.asStoredString((Id) fieldValues);</span>
+<span class="nc bnc" id="L205" title="All 2 branches missed.">            } else if (fieldValues != null) {</span>
+<span class="nc" id="L206">                value = fieldValues.toString();</span>
+            }
+            /*
+             * Modify order between index label and field-values to put the
+             * index label in front(hugegraph-1317)
+             */
+<span class="nc" id="L212">            String strIndexLabelId = IdGenerator.asStoredString(indexLabelId);</span>
+<span class="nc" id="L213">            return SplicingIdGenerator.splicing(strIndexLabelId, value);</span>
+        } else {
+<span class="nc bnc" id="L215" title="All 2 branches missed.">            assert type.isRangeIndex();</span>
+<span class="nc bnc" id="L216" title="All 2 branches missed.">            int length = type.isRange4Index() ? 4 : 8;</span>
+<span class="nc" id="L217">            BytesBuffer buffer = BytesBuffer.allocate(4 + length);</span>
+<span class="nc" id="L218">            buffer.writeInt(SchemaElement.schemaId(indexLabelId));</span>
+<span class="nc bnc" id="L219" title="All 2 branches missed.">            if (fieldValues != null) {</span>
+<span class="nc" id="L220">                E.checkState(fieldValues instanceof Number,</span>
+                             &quot;Field value of range index must be number:&quot; +
+<span class="nc" id="L222">                             &quot; %s&quot;, fieldValues.getClass().getSimpleName());</span>
+<span class="nc" id="L223">                byte[] bytes = number2bytes((Number) fieldValues);</span>
+<span class="nc" id="L224">                buffer.write(bytes);</span>
+            }
+<span class="nc" id="L226">            return buffer.asId();</span>
+        }
+    }
+
+    public static HugeIndex parseIndexId(HugeGraph graph, HugeType type,
+                                         byte[] id) {
+        Object values;
+        IndexLabel indexLabel;
+<span class="nc bnc" id="L234" title="All 2 branches missed.">        if (type.isStringIndex()) {</span>
+<span class="nc" id="L235">            Id idObject = IdGenerator.of(id, IdType.STRING);</span>
+<span class="nc" id="L236">            String[] parts = SplicingIdGenerator.parse(idObject);</span>
+<span class="nc bnc" id="L237" title="All 2 branches missed.">            E.checkState(parts.length == 2, &quot;Invalid secondary index id&quot;);</span>
+<span class="nc" id="L238">            Id label = IdGenerator.ofStoredString(parts[0], IdType.LONG);</span>
+<span class="nc" id="L239">            indexLabel = IndexLabel.label(graph, label);</span>
+<span class="nc" id="L240">            values = parts[1];</span>
+<span class="nc" id="L241">        } else {</span>
+<span class="nc bnc" id="L242" title="All 4 branches missed.">            assert type.isRange4Index() || type.isRange8Index();</span>
+<span class="nc" id="L243">            final int labelLength = 4;</span>
+<span class="nc bnc" id="L244" title="All 2 branches missed.">            E.checkState(id.length &gt; labelLength, &quot;Invalid range index id&quot;);</span>
+<span class="nc" id="L245">            BytesBuffer buffer = BytesBuffer.wrap(id);</span>
+<span class="nc" id="L246">            Id label = IdGenerator.of(buffer.readInt());</span>
+<span class="nc" id="L247">            indexLabel = IndexLabel.label(graph, label);</span>
+<span class="nc" id="L248">            List&lt;Id&gt; fields = indexLabel.indexFields();</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            E.checkState(fields.size() == 1, &quot;Invalid range index fields&quot;);</span>
+<span class="nc" id="L250">            DataType dataType = graph.propertyKey(fields.get(0)).dataType();</span>
+<span class="nc bnc" id="L251" title="All 4 branches missed.">            E.checkState(dataType.isNumber() || dataType.isDate(),</span>
+                         &quot;Invalid range index field type&quot;);
+<span class="nc bnc" id="L253" title="All 2 branches missed.">            Class&lt;?&gt; clazz = dataType.isNumber() ?</span>
+<span class="nc" id="L254">                             dataType.clazz() : DataType.LONG.clazz();</span>
+<span class="nc" id="L255">            values = bytes2number(buffer.read(id.length - labelLength), clazz);</span>
+        }
+<span class="nc" id="L257">        HugeIndex index = new HugeIndex(graph, indexLabel);</span>
+<span class="nc" id="L258">        index.fieldValues(values);</span>
+<span class="nc" id="L259">        return index;</span>
+    }
+
+    public static byte[] number2bytes(Number number) {
+<span class="nc bnc" id="L263" title="All 2 branches missed.">        if (number instanceof Byte) {</span>
+            // Handle byte as integer to store as 4 bytes in RANGE4_INDEX
+<span class="nc" id="L265">            number = number.intValue();</span>
+        }
+<span class="nc" id="L267">        return NumericUtil.numberToSortableBytes(number);</span>
+    }
+
+    public static Number bytes2number(byte[] bytes, Class&lt;?&gt; clazz) {
+<span class="nc" id="L271">        return NumericUtil.sortableBytesToNumber(bytes, clazz);</span>
+    }
+
+    public static class IdWithExpiredTime {
+
+        private Id id;
+        private long expiredTime;
+
+<span class="nc" id="L279">        public IdWithExpiredTime(Id id, long expiredTime) {</span>
+<span class="nc" id="L280">            this.id = id;</span>
+<span class="nc" id="L281">            this.expiredTime = expiredTime;</span>
+<span class="nc" id="L282">        }</span>
+
+        public Id id() {
+<span class="nc" id="L285">            return this.id;</span>
+        }
+
+        public long expiredTime() {
+<span class="nc" id="L289">            return this.expiredTime;</span>
+        }
+
+        @Override
+        public String toString() {
+<span class="nc" id="L294">            return String.format(&quot;%s(%s)&quot;, this.id, this.expiredTime);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>

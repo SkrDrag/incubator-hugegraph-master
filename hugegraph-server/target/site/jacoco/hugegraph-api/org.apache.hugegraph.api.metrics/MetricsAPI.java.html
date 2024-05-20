@@ -1,0 +1,431 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="zh"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../../jacoco-resources/report.gif" type="image/gif"/><title>MetricsAPI.java</title><link rel="stylesheet" href="../../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../../index.html" class="el_report">hugegraph-test</a> &gt; <a href="../index.html" class="el_bundle">hugegraph-api</a> &gt; <a href="index.source.html" class="el_package">org.apache.hugegraph.api.metrics</a> &gt; <span class="el_source">MetricsAPI.java</span></div><h1>MetricsAPI.java</h1><pre class="source lang-java linenums">/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the &quot;License&quot;); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.hugegraph.api.metrics;
+
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.apache.hugegraph.metrics.MetricsUtil.COUNT_ATTR;
+import static org.apache.hugegraph.metrics.MetricsUtil.END_LSTR;
+import static org.apache.hugegraph.metrics.MetricsUtil.FIFT_MIN_RATE_ATRR;
+import static org.apache.hugegraph.metrics.MetricsUtil.FIVE_MIN_RATE_ATRR;
+import static org.apache.hugegraph.metrics.MetricsUtil.GAUGE_TYPE;
+import static org.apache.hugegraph.metrics.MetricsUtil.HISTOGRAM_TYPE;
+import static org.apache.hugegraph.metrics.MetricsUtil.LEFT_NAME_STR;
+import static org.apache.hugegraph.metrics.MetricsUtil.MEAN_RATE_ATRR;
+import static org.apache.hugegraph.metrics.MetricsUtil.METRICS_PATH_FAILED_COUNTER;
+import static org.apache.hugegraph.metrics.MetricsUtil.METRICS_PATH_RESPONSE_TIME_HISTOGRAM;
+import static org.apache.hugegraph.metrics.MetricsUtil.METRICS_PATH_SUCCESS_COUNTER;
+import static org.apache.hugegraph.metrics.MetricsUtil.METRICS_PATH_TOTAL_COUNTER;
+import static org.apache.hugegraph.metrics.MetricsUtil.ONE_MIN_RATE_ATRR;
+import static org.apache.hugegraph.metrics.MetricsUtil.PROM_HELP_NAME;
+import static org.apache.hugegraph.metrics.MetricsUtil.RIGHT_NAME_STR;
+import static org.apache.hugegraph.metrics.MetricsUtil.SPACE_STR;
+import static org.apache.hugegraph.metrics.MetricsUtil.STR_HELP;
+import static org.apache.hugegraph.metrics.MetricsUtil.STR_TYPE;
+import static org.apache.hugegraph.metrics.MetricsUtil.UNTYPED;
+import static org.apache.hugegraph.metrics.MetricsUtil.VERSION_STR;
+import static org.apache.hugegraph.metrics.MetricsUtil.exportSnapshot;
+import static org.apache.hugegraph.metrics.MetricsUtil.replaceDotDashInKey;
+import static org.apache.hugegraph.metrics.MetricsUtil.replaceSlashInKey;
+
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import org.apache.hugegraph.HugeGraph;
+import org.apache.hugegraph.api.API;
+import org.apache.hugegraph.backend.store.BackendMetrics;
+import org.apache.hugegraph.core.GraphManager;
+import org.apache.hugegraph.metrics.MetricsKeys;
+import org.apache.hugegraph.metrics.MetricsModule;
+import org.apache.hugegraph.metrics.MetricsUtil;
+import org.apache.hugegraph.metrics.ServerReporter;
+import org.apache.hugegraph.metrics.SystemMetrics;
+import org.apache.hugegraph.util.InsertionOrderUtil;
+import org.apache.hugegraph.util.JsonUtil;
+import org.apache.hugegraph.util.Log;
+import org.apache.hugegraph.version.ApiVersion;
+import org.apache.tinkerpop.gremlin.server.util.MetricManager;
+import org.slf4j.Logger;
+
+import com.codahale.metrics.Counter;
+import com.codahale.metrics.Gauge;
+import com.codahale.metrics.Histogram;
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.Metric;
+import com.codahale.metrics.annotation.Timed;
+
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+
+import jakarta.annotation.security.RolesAllowed;
+import jakarta.inject.Singleton;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.Context;
+
+@Singleton
+@Path(&quot;metrics&quot;)
+@Tag(name = &quot;MetricsAPI&quot;)
+public class MetricsAPI extends API {
+
+<span class="nc" id="L89">    private static final Logger LOG = Log.logger(MetricsAPI.class);</span>
+
+    private static final String JSON_STR = &quot;json&quot;;
+
+    static {
+<span class="nc" id="L94">        JsonUtil.registerModule(new MetricsModule(SECONDS, MILLISECONDS, false));</span>
+<span class="nc" id="L95">    }</span>
+
+    private final SystemMetrics systemMetrics;
+
+<span class="nc" id="L99">    public MetricsAPI() {</span>
+<span class="nc" id="L100">        this.systemMetrics = new SystemMetrics();</span>
+<span class="nc" id="L101">    }</span>
+
+    @GET
+    @Timed
+    @Path(&quot;system&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner= $action=metrics_read&quot;})
+    @Operation(summary = &quot;get the system metrics&quot;)
+    public String system() {
+<span class="nc" id="L110">        return JsonUtil.toJson(this.systemMetrics.metrics());</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;backend&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner= $action=metrics_read&quot;})
+    @Operation(summary = &quot;get the backend metrics&quot;)
+    public String backend(@Context GraphManager manager) {
+<span class="nc" id="L120">        Map&lt;String, Map&lt;String, Object&gt;&gt; results = InsertionOrderUtil.newMap();</span>
+<span class="nc bnc" id="L121" title="All 2 branches missed.">        for (String graph : manager.graphs()) {</span>
+<span class="nc" id="L122">            HugeGraph g = manager.graph(graph);</span>
+<span class="nc" id="L123">            Map&lt;String, Object&gt; metrics = InsertionOrderUtil.newMap();</span>
+<span class="nc" id="L124">            metrics.put(BackendMetrics.BACKEND, g.backend());</span>
+            try {
+<span class="nc" id="L126">                metrics.putAll(g.metadata(null, &quot;metrics&quot;));</span>
+<span class="nc" id="L127">            } catch (Throwable e) {</span>
+<span class="nc" id="L128">                metrics.put(BackendMetrics.EXCEPTION, e.toString());</span>
+<span class="nc" id="L129">                LOG.debug(&quot;Failed to get backend metrics&quot;, e);</span>
+<span class="nc" id="L130">            }</span>
+<span class="nc" id="L131">            results.put(graph, metrics);</span>
+<span class="nc" id="L132">        }</span>
+<span class="nc" id="L133">        return JsonUtil.toJson(results);</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;gauges&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner= $action=metrics_read&quot;})
+    @Operation(summary = &quot;get the gauges metrics&quot;)
+    public String gauges() {
+<span class="nc" id="L143">        ServerReporter reporter = ServerReporter.instance();</span>
+<span class="nc" id="L144">        return JsonUtil.toJson(reporter.gauges());</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;counters&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner= $action=metrics_read&quot;})
+    @Operation(summary = &quot;get the counters metrics&quot;)
+    public String counters() {
+<span class="nc" id="L154">        ServerReporter reporter = ServerReporter.instance();</span>
+<span class="nc" id="L155">        return JsonUtil.toJson(reporter.counters());</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;histograms&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner= $action=metrics_read&quot;})
+    @Operation(summary = &quot;get the histograms metrics&quot;)
+    public String histograms() {
+<span class="nc" id="L165">        ServerReporter reporter = ServerReporter.instance();</span>
+<span class="nc" id="L166">        return JsonUtil.toJson(reporter.histograms());</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;meters&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner= $action=metrics_read&quot;})
+    @Operation(summary = &quot;get the meters metrics&quot;)
+    public String meters() {
+<span class="nc" id="L176">        ServerReporter reporter = ServerReporter.instance();</span>
+<span class="nc" id="L177">        return JsonUtil.toJson(reporter.meters());</span>
+    }
+
+    @GET
+    @Timed
+    @Path(&quot;timers&quot;)
+    @Produces(APPLICATION_JSON_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner= $action=metrics_read&quot;})
+    @Operation(summary = &quot;get the timers metrics&quot;)
+    public String timers() {
+<span class="nc" id="L187">        ServerReporter reporter = ServerReporter.instance();</span>
+<span class="nc" id="L188">        return JsonUtil.toJson(reporter.timers());</span>
+    }
+
+    @GET
+    @Timed
+    @Produces(APPLICATION_TEXT_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner= $action=metrics_read&quot;})
+    @Operation(summary = &quot;get all base metrics&quot;)
+    public String all(@Context GraphManager manager,
+                      @QueryParam(&quot;type&quot;) String type) {
+<span class="nc bnc" id="L198" title="All 4 branches missed.">        if (type != null &amp;&amp; type.equals(JSON_STR)) {</span>
+<span class="nc" id="L199">            return baseMetricAll();</span>
+        } else {
+<span class="nc" id="L201">            return baseMetricPrometheusAll();</span>
+        }
+    }
+
+    @GET
+    @Path(&quot;statistics&quot;)
+    @Timed
+    @Produces(APPLICATION_TEXT_WITH_CHARSET)
+    @RolesAllowed({&quot;admin&quot;, &quot;$owner= $action=metrics_read&quot;})
+    @Operation(summary = &quot;get all statistics metrics&quot;)
+    public String statistics(@QueryParam(&quot;type&quot;) String type) {
+<span class="nc" id="L212">        Map&lt;String, Map&lt;String, Object&gt;&gt; metricMap = statistics();</span>
+
+<span class="nc bnc" id="L214" title="All 4 branches missed.">        if (type != null &amp;&amp; type.equals(JSON_STR)) {</span>
+<span class="nc" id="L215">            return JsonUtil.toJson(metricMap);</span>
+        }
+<span class="nc" id="L217">        return statisticsProm(metricMap);</span>
+    }
+
+    public String baseMetricAll() {
+<span class="nc" id="L221">        ServerReporter reporter = ServerReporter.instance();</span>
+<span class="nc" id="L222">        Map&lt;String, Map&lt;String, ? extends Metric&gt;&gt; result = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L223">        result.put(&quot;gauges&quot;, reporter.gauges());</span>
+<span class="nc" id="L224">        result.put(&quot;counters&quot;, reporter.counters());</span>
+<span class="nc" id="L225">        result.put(&quot;histograms&quot;, reporter.histograms());</span>
+<span class="nc" id="L226">        result.put(&quot;meters&quot;, reporter.meters());</span>
+<span class="nc" id="L227">        result.put(&quot;timers&quot;, reporter.timers());</span>
+<span class="nc" id="L228">        return JsonUtil.toJson(result);</span>
+    }
+
+    private String baseMetricPrometheusAll() {
+<span class="nc" id="L232">        StringBuilder promMetric = new StringBuilder();</span>
+<span class="nc" id="L233">        ServerReporter reporter = ServerReporter.instance();</span>
+<span class="nc" id="L234">        String helpName = PROM_HELP_NAME;</span>
+        // build version info
+<span class="nc" id="L236">        promMetric.append(STR_HELP)</span>
+<span class="nc" id="L237">                  .append(helpName).append(END_LSTR);</span>
+<span class="nc" id="L238">        promMetric.append(STR_TYPE)</span>
+<span class="nc" id="L239">                  .append(helpName)</span>
+<span class="nc" id="L240">                  .append(SPACE_STR + UNTYPED + END_LSTR);</span>
+<span class="nc" id="L241">        promMetric.append(helpName)</span>
+<span class="nc" id="L242">                  .append(VERSION_STR)</span>
+<span class="nc" id="L243">                  .append(ApiVersion.VERSION.toString()).append(&quot;\&quot;,}&quot;)</span>
+<span class="nc" id="L244">                  .append(SPACE_STR + &quot;1.0&quot; + END_LSTR);</span>
+
+        // build gauges metric info
+<span class="nc bnc" id="L247" title="All 2 branches missed.">        for (String key : reporter.gauges().keySet()) {</span>
+<span class="nc" id="L248">            final Gauge&lt;?&gt; gauge</span>
+<span class="nc" id="L249">                    = reporter.gauges().get(key);</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">            if (gauge != null) {</span>
+<span class="nc" id="L251">                helpName = replaceDotDashInKey(key);</span>
+<span class="nc" id="L252">                promMetric.append(STR_HELP)</span>
+<span class="nc" id="L253">                          .append(helpName).append(END_LSTR);</span>
+<span class="nc" id="L254">                promMetric.append(STR_TYPE)</span>
+<span class="nc" id="L255">                          .append(helpName).append(SPACE_STR + GAUGE_TYPE + END_LSTR);</span>
+<span class="nc" id="L256">                promMetric.append(helpName)</span>
+<span class="nc" id="L257">                          .append(SPACE_STR + gauge.getValue() + END_LSTR);</span>
+            }
+<span class="nc" id="L259">        }</span>
+
+        // build histograms metric info
+<span class="nc bnc" id="L262" title="All 2 branches missed.">        for (String histogramkey : reporter.histograms().keySet()) {</span>
+<span class="nc" id="L263">            final Histogram histogram = reporter.histograms().get(histogramkey);</span>
+<span class="nc bnc" id="L264" title="All 2 branches missed.">            if (histogram != null) {</span>
+<span class="nc" id="L265">                helpName = replaceDotDashInKey(histogramkey);</span>
+<span class="nc" id="L266">                promMetric.append(STR_HELP)</span>
+<span class="nc" id="L267">                          .append(helpName).append(END_LSTR);</span>
+<span class="nc" id="L268">                promMetric.append(STR_TYPE)</span>
+<span class="nc" id="L269">                          .append(helpName)</span>
+<span class="nc" id="L270">                          .append(SPACE_STR + HISTOGRAM_TYPE + END_LSTR);</span>
+
+<span class="nc" id="L272">                promMetric.append(helpName)</span>
+<span class="nc" id="L273">                          .append(COUNT_ATTR)</span>
+<span class="nc" id="L274">                          .append(histogram.getCount() + END_LSTR);</span>
+<span class="nc" id="L275">                promMetric.append(</span>
+<span class="nc" id="L276">                        exportSnapshot(helpName, histogram.getSnapshot()));</span>
+            }
+<span class="nc" id="L278">        }</span>
+
+        // build meters metric info
+<span class="nc bnc" id="L281" title="All 2 branches missed.">        for (String meterkey : reporter.meters().keySet()) {</span>
+<span class="nc" id="L282">            final Meter metric = reporter.meters().get(meterkey);</span>
+<span class="nc bnc" id="L283" title="All 2 branches missed.">            if (metric != null) {</span>
+<span class="nc" id="L284">                helpName = replaceDotDashInKey(meterkey);</span>
+<span class="nc" id="L285">                promMetric.append(STR_HELP)</span>
+<span class="nc" id="L286">                          .append(helpName).append(END_LSTR);</span>
+<span class="nc" id="L287">                promMetric.append(STR_TYPE)</span>
+<span class="nc" id="L288">                          .append(helpName)</span>
+<span class="nc" id="L289">                          .append(SPACE_STR + HISTOGRAM_TYPE + END_LSTR);</span>
+
+<span class="nc" id="L291">                promMetric.append(helpName)</span>
+<span class="nc" id="L292">                          .append(COUNT_ATTR)</span>
+<span class="nc" id="L293">                          .append(metric.getCount() + END_LSTR);</span>
+<span class="nc" id="L294">                promMetric.append(helpName)</span>
+<span class="nc" id="L295">                          .append(MEAN_RATE_ATRR)</span>
+<span class="nc" id="L296">                          .append(metric.getMeanRate() + END_LSTR);</span>
+<span class="nc" id="L297">                promMetric.append(helpName)</span>
+<span class="nc" id="L298">                          .append(ONE_MIN_RATE_ATRR)</span>
+<span class="nc" id="L299">                          .append(metric.getOneMinuteRate() + END_LSTR);</span>
+<span class="nc" id="L300">                promMetric.append(helpName)</span>
+<span class="nc" id="L301">                          .append(FIVE_MIN_RATE_ATRR)</span>
+<span class="nc" id="L302">                          .append(metric.getFiveMinuteRate() + END_LSTR);</span>
+<span class="nc" id="L303">                promMetric.append(helpName)</span>
+<span class="nc" id="L304">                          .append(FIFT_MIN_RATE_ATRR)</span>
+<span class="nc" id="L305">                          .append(metric.getFifteenMinuteRate() + END_LSTR);</span>
+            }
+<span class="nc" id="L307">        }</span>
+
+        // build timer metric info
+<span class="nc bnc" id="L310" title="All 2 branches missed.">        for (String timerkey : reporter.timers().keySet()) {</span>
+<span class="nc" id="L311">            final com.codahale.metrics.Timer timer = reporter.timers()</span>
+<span class="nc" id="L312">                                                             .get(timerkey);</span>
+<span class="nc bnc" id="L313" title="All 2 branches missed.">            if (timer != null) {</span>
+<span class="nc" id="L314">                helpName = replaceDotDashInKey(timerkey);</span>
+<span class="nc" id="L315">                promMetric.append(STR_HELP)</span>
+<span class="nc" id="L316">                          .append(helpName).append(END_LSTR);</span>
+<span class="nc" id="L317">                promMetric.append(STR_TYPE)</span>
+<span class="nc" id="L318">                          .append(helpName)</span>
+<span class="nc" id="L319">                          .append(SPACE_STR + HISTOGRAM_TYPE + END_LSTR);</span>
+
+<span class="nc" id="L321">                promMetric.append(helpName)</span>
+<span class="nc" id="L322">                          .append(COUNT_ATTR)</span>
+<span class="nc" id="L323">                          .append(timer.getCount() + END_LSTR);</span>
+<span class="nc" id="L324">                promMetric.append(helpName)</span>
+<span class="nc" id="L325">                          .append(ONE_MIN_RATE_ATRR)</span>
+<span class="nc" id="L326">                          .append(timer.getOneMinuteRate() + END_LSTR);</span>
+<span class="nc" id="L327">                promMetric.append(helpName)</span>
+<span class="nc" id="L328">                          .append(FIVE_MIN_RATE_ATRR)</span>
+<span class="nc" id="L329">                          .append(timer.getFiveMinuteRate() + END_LSTR);</span>
+<span class="nc" id="L330">                promMetric.append(helpName)</span>
+<span class="nc" id="L331">                          .append(FIFT_MIN_RATE_ATRR)</span>
+<span class="nc" id="L332">                          .append(timer.getFifteenMinuteRate() + END_LSTR);</span>
+<span class="nc" id="L333">                promMetric.append(</span>
+<span class="nc" id="L334">                        exportSnapshot(helpName, timer.getSnapshot()));</span>
+            }
+<span class="nc" id="L336">        }</span>
+
+<span class="nc" id="L338">        MetricsUtil.writePrometheusFormat(promMetric, MetricManager.INSTANCE.getRegistry());</span>
+
+<span class="nc" id="L340">        return promMetric.toString();</span>
+    }
+
+    private Map&lt;String, Map&lt;String, Object&gt;&gt; statistics() {
+<span class="nc" id="L344">        Map&lt;String, Map&lt;String, Object&gt;&gt; metricsMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L345">        ServerReporter reporter = ServerReporter.instance();</span>
+<span class="nc bnc" id="L346" title="All 2 branches missed.">        for (Map.Entry&lt;String, Histogram&gt; entry : reporter.histograms().entrySet()) {</span>
+            // entryKey = path/method/responseTimeHistogram
+<span class="nc" id="L348">            String entryKey = entry.getKey();</span>
+<span class="nc" id="L349">            String[] split = entryKey.split(&quot;/&quot;);</span>
+<span class="nc" id="L350">            String lastWord = split[split.length - 1];</span>
+<span class="nc bnc" id="L351" title="All 2 branches missed.">            if (!lastWord.equals(METRICS_PATH_RESPONSE_TIME_HISTOGRAM)) {</span>
+                // original metrics dont report
+<span class="nc" id="L353">                continue;</span>
+            }
+            // metricsName = path/method
+<span class="nc" id="L356">            String metricsName =</span>
+<span class="nc" id="L357">                    entryKey.substring(0, entryKey.length() - lastWord.length() - 1);</span>
+
+<span class="nc" id="L359">            Counter totalCounter = reporter.counters().get(</span>
+<span class="nc" id="L360">                    joinWithSlash(metricsName, METRICS_PATH_TOTAL_COUNTER));</span>
+<span class="nc" id="L361">            Counter failedCounter = reporter.counters().get(</span>
+<span class="nc" id="L362">                    joinWithSlash(metricsName, METRICS_PATH_FAILED_COUNTER));</span>
+<span class="nc" id="L363">            Counter successCounter = reporter.counters().get(</span>
+<span class="nc" id="L364">                    joinWithSlash(metricsName, METRICS_PATH_SUCCESS_COUNTER));</span>
+
+
+<span class="nc" id="L367">            Histogram histogram = entry.getValue();</span>
+<span class="nc" id="L368">            Map&lt;String, Object&gt; entryMetricsMap = new HashMap&lt;&gt;();</span>
+<span class="nc" id="L369">            entryMetricsMap.put(MetricsKeys.MAX_RESPONSE_TIME.name(),</span>
+<span class="nc" id="L370">                                histogram.getSnapshot().getMax());</span>
+<span class="nc" id="L371">            entryMetricsMap.put(MetricsKeys.MEAN_RESPONSE_TIME.name(),</span>
+<span class="nc" id="L372">                                histogram.getSnapshot().getMean());</span>
+
+<span class="nc" id="L374">            entryMetricsMap.put(MetricsKeys.TOTAL_REQUEST.name(),</span>
+<span class="nc" id="L375">                                totalCounter.getCount());</span>
+
+<span class="nc bnc" id="L377" title="All 2 branches missed.">            if (failedCounter == null) {</span>
+<span class="nc" id="L378">                entryMetricsMap.put(MetricsKeys.FAILED_REQUEST.name(), 0);</span>
+            } else {
+<span class="nc" id="L380">                entryMetricsMap.put(MetricsKeys.FAILED_REQUEST.name(),</span>
+<span class="nc" id="L381">                                    failedCounter.getCount());</span>
+            }
+
+<span class="nc bnc" id="L384" title="All 2 branches missed.">            if (successCounter == null) {</span>
+<span class="nc" id="L385">                entryMetricsMap.put(MetricsKeys.SUCCESS_REQUEST.name(), 0);</span>
+            } else {
+<span class="nc" id="L387">                entryMetricsMap.put(MetricsKeys.SUCCESS_REQUEST.name(),</span>
+<span class="nc" id="L388">                                    successCounter.getCount());</span>
+            }
+
+<span class="nc" id="L391">            metricsMap.put(metricsName, entryMetricsMap);</span>
+
+<span class="nc" id="L393">        }</span>
+<span class="nc" id="L394">        return metricsMap;</span>
+    }
+
+    private String statisticsProm(Map&lt;String, Map&lt;String, Object&gt;&gt; metricMap) {
+<span class="nc" id="L398">        StringBuilder promMetric = new StringBuilder();</span>
+
+        // build version info
+<span class="nc" id="L401">        promMetric.append(STR_HELP)</span>
+<span class="nc" id="L402">                  .append(PROM_HELP_NAME).append(END_LSTR);</span>
+<span class="nc" id="L403">        promMetric.append(STR_TYPE)</span>
+<span class="nc" id="L404">                  .append(PROM_HELP_NAME)</span>
+<span class="nc" id="L405">                  .append(SPACE_STR + UNTYPED + END_LSTR);</span>
+<span class="nc" id="L406">        promMetric.append(PROM_HELP_NAME)</span>
+<span class="nc" id="L407">                  .append(VERSION_STR)</span>
+<span class="nc" id="L408">                  .append(ApiVersion.VERSION.toString()).append(&quot;\&quot;,}&quot;)</span>
+<span class="nc" id="L409">                  .append(SPACE_STR + &quot;1.0&quot; + END_LSTR);</span>
+
+<span class="nc bnc" id="L411" title="All 2 branches missed.">        for (String methodKey : metricMap.keySet()) {</span>
+<span class="nc" id="L412">            String metricName = replaceSlashInKey(methodKey);</span>
+<span class="nc" id="L413">            promMetric.append(STR_HELP)</span>
+<span class="nc" id="L414">                      .append(metricName).append(END_LSTR);</span>
+<span class="nc" id="L415">            promMetric.append(STR_TYPE)</span>
+<span class="nc" id="L416">                      .append(metricName).append(SPACE_STR + GAUGE_TYPE + END_LSTR);</span>
+<span class="nc" id="L417">            Map&lt;String, Object&gt; itemMetricMap = metricMap.get(methodKey);</span>
+<span class="nc bnc" id="L418" title="All 2 branches missed.">            for (String labelName : itemMetricMap.keySet()) {</span>
+<span class="nc" id="L419">                promMetric.append(metricName).append(LEFT_NAME_STR).append(labelName)</span>
+<span class="nc" id="L420">                          .append(RIGHT_NAME_STR).append(itemMetricMap.get(labelName))</span>
+<span class="nc" id="L421">                          .append(END_LSTR);</span>
+<span class="nc" id="L422">            }</span>
+<span class="nc" id="L423">        }</span>
+<span class="nc" id="L424">        return promMetric.toString();</span>
+    }
+
+    private String joinWithSlash(String path1, String path2) {
+<span class="nc" id="L428">        return String.join(&quot;/&quot;, path1, path2);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.8.202204050719</span></div></body></html>
